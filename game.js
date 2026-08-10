@@ -1116,29 +1116,6 @@
     middle: 0.48,
     near: 0.22,
   });
-  // When the worm is outside solid ground these expanded contour slices are
-  // composited immediately below the worm, making nearby terrain read as
-  // camera-facing depth while keeping the worm itself on the active plane.
-  const TERRAIN_FOREGROUND_LAYERS = Object.freeze([
-    Object.freeze({
-      id: "outer",
-      perspectiveScale: 1.04,
-      visibleDepthPixels: 58,
-      shadeBlend: 0.2,
-    }),
-    Object.freeze({
-      id: "middle",
-      perspectiveScale: 1.022,
-      visibleDepthPixels: 30,
-      shadeBlend: 0.12,
-    }),
-    Object.freeze({
-      id: "inner",
-      perspectiveScale: 1.008,
-      visibleDepthPixels: 14,
-      shadeBlend: 0.05,
-    }),
-  ]);
   const MATERIAL_TILE_VALUES = Object.freeze({
     [BLOCK_TYPES.GROUND]: 1,
     [BLOCK_TYPES.STONE]: 2,
@@ -1965,60 +1942,6 @@
             ),
           ),
         ]),
-    ),
-  );
-
-  function createTerrainForegroundTexturePattern(material, layer, variant) {
-    const size = TERRAIN_TEXTURE_PATTERN_SIZE;
-    const patternCanvas = document.createElement("canvas");
-    patternCanvas.width = size;
-    patternCanvas.height = size;
-    const patternContext = patternCanvas.getContext("2d");
-    const sourceBaseColor =
-      material === BLOCK_TYPES.STONE ? palette.stone : palette.soil;
-    const baseColor = mixHexColors(
-      sourceBaseColor,
-      palette.ink,
-      layer.shadeBlend,
-    );
-
-    patternContext.fillStyle = baseColor;
-    patternContext.fillRect(0, 0, size, size);
-    patternContext.globalAlpha = 0.88;
-    patternContext.drawImage(terrainTexturePatterns[material][variant], 0, 0);
-    patternContext.globalAlpha = layer.shadeBlend * 0.24;
-    patternContext.fillStyle = palette.ink;
-    patternContext.fillRect(0, 0, size, size);
-    patternContext.globalAlpha = 1;
-    return patternCanvas;
-  }
-
-  const terrainForegroundTexturePatterns = Object.freeze(
-    Object.fromEntries(
-      TERRAIN_MATERIALS.map((material) => [
-        material,
-        Object.freeze(
-          Object.fromEntries(
-            TERRAIN_FOREGROUND_LAYERS.map((layer) => [
-              layer.id,
-              Object.freeze(
-                Array.from(
-                  { length: TERRAIN_TEXTURE_PATTERN_VARIANTS },
-                  (_, variant) =>
-                    ctx.createPattern(
-                      createTerrainForegroundTexturePattern(
-                        material,
-                        layer,
-                        variant,
-                      ),
-                      "repeat",
-                    ),
-                ),
-              ),
-            ]),
-          ),
-        ),
-      ]),
     ),
   );
 
@@ -12591,20 +12514,6 @@
     );
   }
 
-  function drawTerrainForegroundLayers() {
-    if (game.inGround || terrainLayerRenderState.drawItems.length === 0) {
-      return;
-    }
-    TERRAIN_FOREGROUND_LAYERS.forEach((layer) => {
-      drawTerrainContourLayer(
-        layer,
-        terrainLayerRenderState.drawItems,
-        terrainLayerRenderState.zoom,
-        terrainForegroundTexturePatterns,
-      );
-    });
-  }
-
   function drawMap() {
     const foregroundVisible = getVisibleWorldBounds(2);
     const depthPadding = terrainDepthSourcePadding();
@@ -14435,7 +14344,6 @@
     drawTargets();
     drawParticles("back");
     drawTongues();
-    drawTerrainForegroundLayers();
     drawWorm();
     drawParticles("front");
     drawEnemyHealthBars();
