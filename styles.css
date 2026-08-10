@@ -1,0 +1,2224 @@
+:root {
+  --ink: #73210c;
+  --cream: #fff7ef;
+  --sun: #ec5170;
+  --acid: #ff4d00;
+  --rust: #cf020c;
+  --sky: #f6c6ab;
+  --soil: #74412d;
+  --stone: #6f5357;
+  --line: rgba(115, 33, 12, 0.28);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--ink);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+button {
+  color: inherit;
+  font: inherit;
+}
+
+.game-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+#game {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.masthead {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 28px 34px;
+  pointer-events: none;
+}
+
+.minimap {
+  position: relative;
+  width: 184px;
+  height: 132px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: var(--ink);
+}
+
+.minimap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.minimap-label {
+  position: absolute;
+  top: 6px;
+  left: 7px;
+  padding: 3px 5px;
+  border: 1px solid rgba(115, 33, 12, 0.55);
+  border-radius: 2px;
+  background: rgba(255, 247, 239, 0.82);
+  font: 700 8px/1 "Courier New", ui-monospace, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  margin: 0;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.telemetry {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 10px 13px;
+  border: 1px solid rgba(24, 34, 29, 0.32);
+  border-radius: 3px;
+  background: rgba(248, 240, 221, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.metric {
+  display: grid;
+  justify-items: end;
+}
+
+.metric-label {
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(24px, 3vw, 36px);
+  font-style: italic;
+  line-height: 1;
+}
+
+.target-metric strong {
+  color: var(--rust);
+}
+
+.target-metric.cleared strong {
+  color: var(--acid);
+}
+
+.growth-copy {
+  color: rgba(24, 34, 29, 0.56);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: right;
+}
+
+.boost-metric {
+  min-width: 110px;
+}
+
+.boost-meter {
+  width: 110px;
+  height: 12px;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 2px;
+  background: rgba(24, 34, 29, 0.18);
+}
+
+.boost-meter > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--acid);
+  transform: scaleX(1);
+  transform-origin: left center;
+  transition: transform 80ms linear, background-color 120ms ease;
+}
+
+.boost-metric.boosting .boost-meter > span {
+  background: var(--rust);
+}
+
+.boost-metric.depleted .boost-meter > span {
+  background: var(--sun);
+}
+
+.boost-copy {
+  color: rgba(24, 34, 29, 0.56);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: right;
+}
+
+.metric small {
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: 0.05em;
+}
+
+.state-pill {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  min-width: 126px;
+  padding: 10px 13px;
+  border: 1px solid rgba(24, 34, 29, 0.42);
+  border-radius: 99px;
+  background: rgba(248, 240, 221, 0.72);
+  backdrop-filter: blur(8px);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.game-shell.dev-tools-open .state-pill {
+  display: flex;
+}
+
+.state-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--rust);
+}
+
+.state-pill.airborne .state-dot {
+  background: var(--sun);
+}
+
+.home-screen {
+  position: absolute;
+  z-index: 7;
+  inset: 0;
+  display: grid;
+  visibility: hidden;
+  padding: 32px;
+  place-items: center;
+  background:
+    radial-gradient(circle at 75% 22%, rgba(255, 77, 0, 0.22), transparent 32%),
+    linear-gradient(145deg, #f6c6ab 0 45%, #e59a79 45% 47%, #74412d 47% 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, visibility 180ms;
+}
+
+.home-screen.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.home-card {
+  position: relative;
+  width: min(560px, 100%);
+  padding: 32px;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: var(--cream);
+  box-shadow: 12px 12px 0 rgba(115, 33, 12, 0.22);
+}
+
+.home-card::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 92px;
+  height: 8px;
+  background: var(--acid);
+  content: "";
+}
+
+.home-heading h1 {
+  margin: 8px 0 6px;
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(58px, 12vw, 94px);
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.07em;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+
+.home-heading > p:last-child {
+  margin: 0;
+  color: rgba(24, 34, 29, 0.74);
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 1.45;
+}
+
+.home-selections {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin: 26px 0 12px;
+}
+
+.home-choice,
+.home-edit-button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(24, 34, 29, 0.42);
+  border-radius: 2px;
+  background: rgba(231, 214, 170, 0.42);
+  cursor: pointer;
+  text-align: left;
+}
+
+.home-choice {
+  grid-column: 1 / -1;
+}
+
+.home-choice span,
+.home-choice small,
+.home-edit-button small {
+  color: rgba(24, 34, 29, 0.58);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.home-choice strong {
+  grid-column: 1;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-choice small {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.home-edit-button {
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr;
+  gap: 3px;
+  background: transparent;
+}
+
+.home-edit-button strong {
+  font: 900 10px "Courier New", monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.home-choice:hover,
+.home-edit-button:hover,
+.home-choice:focus-visible,
+.home-edit-button:focus-visible {
+  border-color: var(--ink);
+  outline: 0;
+  background: rgba(231, 214, 170, 0.72);
+}
+
+.start-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border: 2px solid var(--ink);
+  border-radius: 2px;
+  background: var(--acid);
+  cursor: pointer;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: transform 120ms ease;
+}
+
+.start-button:hover {
+  transform: translate(-2px, -2px);
+}
+
+.start-button:active {
+  transform: translate(0, 0);
+}
+
+kbd {
+  display: inline-grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.28);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.game-shell.home-active .masthead,
+.game-shell.home-active .utility,
+.game-shell.home-active .touch-controls,
+.game-shell.home-active .dev-menu {
+  display: none;
+}
+
+.utility {
+  position: absolute;
+  z-index: 7;
+  right: 30px;
+  bottom: 27px;
+  display: flex;
+  gap: 9px;
+}
+
+.utility button {
+  border: 1px solid rgba(248, 240, 221, 0.34);
+  border-radius: 99px;
+  background: rgba(24, 34, 29, 0.86);
+  color: rgba(248, 240, 221, 0.82);
+  cursor: pointer;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.main-menu-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  backdrop-filter: blur(8px);
+}
+
+.game-menu {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  display: grid;
+  visibility: hidden;
+  padding: 24px;
+  place-items: center;
+  background: rgba(24, 34, 29, 0.78);
+  opacity: 0;
+  pointer-events: none;
+  backdrop-filter: blur(7px);
+  transition:
+    opacity 160ms ease,
+    visibility 160ms;
+}
+
+.game-menu.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.game-menu-card {
+  display: grid;
+  width: min(540px, 100%);
+  max-height: calc(100vh - 48px);
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: var(--cream);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.game-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 22px 16px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.game-menu-heading h2 {
+  margin: 4px 0 0;
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(34px, 7vw, 54px);
+  font-style: italic;
+  letter-spacing: -0.06em;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+
+.game-menu-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.game-menu-actions button {
+  display: grid;
+  gap: 4px;
+  min-height: 70px;
+  padding: 13px 14px;
+  border: 1px solid rgba(24, 34, 29, 0.32);
+  border-radius: 2px;
+  background: rgba(231, 214, 170, 0.24);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.game-menu-actions button:hover,
+.game-menu-actions button:focus-visible {
+  border-color: var(--ink);
+  outline: 0;
+  background: rgba(231, 214, 170, 0.52);
+}
+
+.game-menu-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.game-menu-actions .game-menu-primary {
+  grid-column: 1 / -1;
+  min-height: 62px;
+  border: 2px solid var(--ink);
+  background: var(--acid);
+}
+
+.game-menu-actions .game-menu-home {
+  border-color: rgba(207, 2, 12, 0.62);
+}
+
+.game-menu-actions strong {
+  font: 900 12px "Courier New", monospace;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.game-menu-actions small {
+  color: rgba(24, 34, 29, 0.58);
+  font: 700 8px/1.35 "Courier New", monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.enemy-info-overlay {
+  position: absolute;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  visibility: hidden;
+  padding: 28px;
+  place-items: center;
+  background: rgba(58, 36, 31, 0.82);
+  opacity: 0;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  transition:
+    opacity 160ms ease,
+    visibility 160ms;
+}
+
+.enemy-info-overlay.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.worm-type-overlay {
+  position: absolute;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  visibility: hidden;
+  padding: 28px;
+  place-items: center;
+  background: rgba(58, 36, 31, 0.82);
+  opacity: 0;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  transition:
+    opacity 160ms ease,
+    visibility 160ms;
+}
+
+.worm-type-overlay.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.worm-type-select-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(820px, 100%);
+  max-height: min(720px, calc(100vh - 56px));
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.worm-type-heading,
+.worm-type-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.worm-type-heading {
+  padding: 22px 24px 18px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.worm-type-heading h2 {
+  margin: 4px 0 0;
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(30px, 5vw, 48px);
+  font-style: italic;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.worm-type-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.worm-type-option {
+  display: grid;
+  grid-template-rows: auto auto minmax(44px, 1fr) auto auto;
+  gap: 11px;
+  padding: 18px;
+  border: 2px solid rgba(115, 33, 12, 0.3);
+  border-radius: 3px;
+  background: rgba(231, 214, 170, 0.24);
+}
+
+.worm-type-option.active {
+  border-color: var(--acid);
+  background: rgba(255, 77, 0, 0.1);
+}
+
+.worm-type-option-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.worm-type-option h3 {
+  margin: 0;
+  font: italic 900 28px/1 "Arial Black", Impact, sans-serif;
+  letter-spacing: -0.045em;
+  text-transform: uppercase;
+}
+
+.worm-type-index,
+.worm-type-ability-label,
+.worm-type-scaling {
+  font: 700 8px/1.4 "Courier New", ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worm-type-index,
+.worm-type-scaling,
+.worm-type-option > p {
+  color: rgba(115, 33, 12, 0.62);
+}
+
+.worm-type-ability-label {
+  padding: 4px 6px;
+  border: 1px solid rgba(115, 33, 12, 0.38);
+  border-radius: 2px;
+  background: rgba(236, 81, 112, 0.18);
+}
+
+.worm-type-option > p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.worm-type-option button {
+  min-height: 38px;
+  border: 2px solid var(--ink);
+  border-radius: 2px;
+  background: var(--acid);
+  color: var(--ink);
+  cursor: pointer;
+  font: 900 9px "Courier New", ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worm-type-option button:disabled {
+  border-color: rgba(115, 33, 12, 0.4);
+  background: rgba(115, 33, 12, 0.1);
+  cursor: default;
+}
+
+.worm-type-footer {
+  padding: 14px 24px;
+  border-top: 1px solid rgba(115, 33, 12, 0.24);
+}
+
+.worm-type-footer p {
+  margin: 0;
+  color: rgba(115, 33, 12, 0.62);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.enemy-info-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(860px, 100%);
+  max-height: min(720px, calc(100vh - 56px));
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.enemy-info-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 24px 18px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.enemy-info-heading h2 {
+  margin: 4px 0 0;
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(34px, 6vw, 54px);
+  font-style: italic;
+  letter-spacing: -0.06em;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+
+.enemy-info-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.enemy-info-entry {
+  display: grid;
+  grid-template-rows: 180px auto auto;
+  min-width: 0;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: rgba(232, 201, 154, 0.34);
+}
+
+.enemy-info-artwork {
+  display: grid;
+  min-height: 0;
+  place-items: center;
+  border-bottom: 2px solid var(--ink);
+  background: var(--sky);
+}
+
+.enemy-info-artwork img {
+  display: block;
+  width: 152px;
+  height: 152px;
+  object-fit: contain;
+}
+
+.enemy-info-entry-heading {
+  padding: 15px 16px 12px;
+}
+
+.enemy-info-entry-heading span {
+  color: rgba(58, 36, 31, 0.58);
+  font: 700 8px "Courier New", monospace;
+  letter-spacing: 0.1em;
+}
+
+.enemy-info-entry-heading h3 {
+  margin: 3px 0 0;
+  font: italic 900 30px/1 "Arial Black", Impact, sans-serif;
+  letter-spacing: -0.055em;
+  text-transform: uppercase;
+}
+
+.enemy-info-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0;
+  border-top: 1px solid rgba(58, 36, 31, 0.3);
+}
+
+.enemy-info-stats > div {
+  display: grid;
+  gap: 3px;
+  padding: 12px 16px 14px;
+}
+
+.enemy-info-stats > div + div {
+  border-left: 1px solid rgba(58, 36, 31, 0.3);
+}
+
+.enemy-info-stats dt {
+  font: 700 8px "Courier New", monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.enemy-info-stats dd {
+  margin: 0;
+  color: var(--rust);
+  font: italic 900 30px/1 "Arial Black", Impact, sans-serif;
+}
+
+.enemy-info-stats > div:nth-child(3) dd {
+  font-size: 18px;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+}
+
+.dev-menu {
+  position: absolute;
+  z-index: 7;
+  bottom: 27px;
+  left: 30px;
+  display: grid;
+  grid-template-columns: auto auto auto;
+  gap: 10px;
+  align-items: end;
+  justify-items: start;
+  font-family: "Courier New", ui-monospace, monospace;
+}
+
+.dev-menu-panel,
+.dev-gameplay-panel,
+.dev-profiler-panel {
+  width: 270px;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: rgba(248, 240, 221, 0.96);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transform-origin: bottom left;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease,
+    visibility 150ms;
+}
+
+.dev-gameplay-panel {
+  width: 240px;
+}
+
+.dev-profiler-panel {
+  width: 280px;
+}
+
+.dev-menu.open .dev-menu-panel,
+.dev-menu.open .dev-gameplay-panel,
+.dev-menu.open .dev-profiler-panel {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.dev-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 13px;
+  border-bottom: 1px solid rgba(24, 34, 29, 0.22);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dev-menu-heading small {
+  color: rgba(24, 34, 29, 0.5);
+  font-size: 8px;
+}
+
+.dev-performance {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 13px;
+  border-bottom: 1px solid rgba(24, 34, 29, 0.18);
+  background: rgba(245, 194, 98, 0.2);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.dev-performance > span {
+  color: rgba(24, 34, 29, 0.62);
+}
+
+.dev-performance strong {
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: 12px;
+  font-style: italic;
+  letter-spacing: -0.02em;
+}
+
+.dev-performance strong span {
+  font-size: 18px;
+}
+
+.dev-profiler-gate {
+  display: grid;
+  gap: 3px;
+  padding: 12px 13px;
+  border-bottom: 1px solid rgba(24, 34, 29, 0.18);
+  background: rgba(245, 194, 98, 0.2);
+}
+
+.dev-profiler-gate > span,
+.dev-profiler-gate > small {
+  color: rgba(24, 34, 29, 0.62);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  line-height: 1.35;
+}
+
+.dev-profiler-gate > span,
+.dev-profiler-gate > strong {
+  text-transform: uppercase;
+}
+
+.dev-profiler-gate > strong {
+  font: italic 900 18px/1 "Arial Black", Impact, sans-serif;
+  letter-spacing: -0.04em;
+}
+
+.dev-profiler-gate[data-gate="ok"] {
+  background: rgba(214, 238, 88, 0.48);
+}
+
+.dev-profiler-gate[data-gate="cache"] {
+  background: rgba(255, 77, 0, 0.34);
+}
+
+.dev-profiler-gate[data-gate="cpu"] {
+  background: rgba(236, 111, 81, 0.5);
+}
+
+.dev-profiler-gate[data-gate="gpu"] {
+  background: rgba(85, 214, 229, 0.48);
+}
+
+.dev-profiler-gate[data-gate="mixed"] {
+  background: rgba(240, 100, 145, 0.4);
+}
+
+.dev-profiler-budget {
+  display: flex;
+  height: 9px;
+  margin: 12px 13px 7px;
+  overflow: hidden;
+  border: 1px solid rgba(24, 34, 29, 0.58);
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.dev-profiler-budget > span {
+  width: 0;
+  height: 100%;
+  transition: width 120ms linear;
+}
+
+.dev-profiler-budget .update,
+.dev-profiler-legend i.update {
+  background: var(--sun);
+}
+
+.dev-profiler-budget .render,
+.dev-profiler-legend i.render {
+  background: var(--acid);
+}
+
+.dev-profiler-legend {
+  display: flex;
+  gap: 10px;
+  padding: 0 13px 11px;
+  color: rgba(24, 34, 29, 0.58);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.dev-profiler-legend span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.dev-profiler-legend i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgba(24, 34, 29, 0.36);
+}
+
+.dev-profiler-legend i.available {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.dev-profiler-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid rgba(24, 34, 29, 0.14);
+}
+
+.dev-profiler-stats > div {
+  display: grid;
+  gap: 3px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(24, 34, 29, 0.12);
+}
+
+.dev-profiler-stats > div:nth-child(even):not(.wide) {
+  border-left: 1px solid rgba(24, 34, 29, 0.12);
+}
+
+.dev-profiler-stats > div.wide {
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+}
+
+.dev-profiler-stats dt {
+  color: rgba(24, 34, 29, 0.58);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dev-profiler-stats dd {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.dev-profiler-note {
+  margin: 0;
+  padding: 9px 12px 11px;
+  color: rgba(24, 34, 29, 0.54);
+  font-size: 7px;
+  line-height: 1.45;
+}
+
+.dev-setting {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 13px;
+  border-bottom: 1px solid rgba(24, 34, 29, 0.14);
+}
+
+.dev-setting select,
+.dev-setting input[type="number"] {
+  min-width: 91px;
+  padding: 7px 24px 7px 9px;
+  border: 1px solid rgba(24, 34, 29, 0.42);
+  border-radius: 2px;
+  background-color: rgba(255, 255, 255, 0.45);
+  color: var(--ink);
+  cursor: pointer;
+  font: 800 9px "Courier New", ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.dev-setting input[type="number"] {
+  box-sizing: border-box;
+  width: 76px;
+  min-width: 76px;
+  padding-right: 7px;
+  text-align: right;
+}
+
+.dev-setting select:focus-visible,
+.dev-setting input[type="number"]:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+
+.dev-enemy-spawner {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+}
+
+.dev-enemy-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.dev-enemy-buttons button {
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid rgba(24, 34, 29, 0.55);
+  border-radius: 2px;
+  background: rgba(245, 194, 98, 0.38);
+  color: var(--ink);
+  cursor: pointer;
+  font: 800 9px "Courier New", ui-monospace, monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.dev-enemy-buttons button:hover {
+  background: var(--acid);
+}
+
+.dev-enemy-buttons button:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+
+.dev-menu-close {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgba(24, 34, 29, 0.34);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.dev-option {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 13px;
+  cursor: pointer;
+}
+
+.dev-option + .dev-option {
+  border-top: 1px solid rgba(24, 34, 29, 0.14);
+}
+
+.dev-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.dev-checkbox {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--ink);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.dev-option input:checked + .dev-checkbox {
+  background: var(--acid);
+}
+
+.dev-option input:checked + .dev-checkbox::after {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  width: 5px;
+  height: 9px;
+  border-right: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.dev-option input:focus-visible + .dev-checkbox {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+
+.dev-option-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.dev-option-copy strong {
+  font-size: 12px;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dev-option-copy small {
+  color: rgba(24, 34, 29, 0.56);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.touch-controls {
+  position: absolute;
+  z-index: 4;
+  bottom: 20px;
+  left: 50%;
+  display: none;
+  gap: 10px;
+  transform: translateX(-50%);
+}
+
+.touch-controls button {
+  width: clamp(48px, 15vw, 58px);
+  height: clamp(48px, 15vw, 58px);
+  border: 1px solid rgba(248, 240, 221, 0.48);
+  border-radius: 50%;
+  background: rgba(24, 34, 29, 0.8);
+  color: var(--cream);
+  font-size: 22px;
+  backdrop-filter: blur(8px);
+  touch-action: none;
+}
+
+.touch-controls .thrust {
+  background: var(--acid);
+  color: var(--ink);
+}
+
+.touch-controls .brake {
+  background: var(--sun);
+  color: var(--ink);
+}
+
+.touch-controls .boost {
+  background: var(--worm);
+  color: var(--cream);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.touch-controls button.active {
+  transform: scale(0.92);
+}
+
+.world-select-overlay,
+.world-editor,
+.worm-editor {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.world-select-overlay {
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(24, 34, 29, 0.82);
+  backdrop-filter: blur(8px);
+  transition:
+    opacity 160ms ease,
+    visibility 160ms;
+}
+
+.world-select-overlay.visible,
+.world-editor.visible,
+.worm-editor.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.world-select-card {
+  display: grid;
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 56px));
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: var(--cream);
+}
+
+.world-select-heading,
+.world-select-footer,
+.editor-header,
+.editor-toolbar,
+.editor-help {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.world-select-heading {
+  padding: 22px 24px 18px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.world-select-heading h2 {
+  margin: 4px 0 0;
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(30px, 5vw, 48px);
+  font-style: italic;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.worm-editor {
+  z-index: 11;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--ink);
+  color: var(--cream);
+}
+
+.worm-editor-header,
+.worm-editor-actions,
+.worm-paint-toolbar,
+.worm-tool-group,
+.worm-editor-help,
+.worm-panel-heading {
+  display: flex;
+  align-items: center;
+}
+
+.worm-editor-header {
+  justify-content: space-between;
+  gap: 20px;
+  padding: 15px 20px;
+  border-bottom: 1px solid rgba(248, 240, 221, 0.24);
+  background: #34231f;
+}
+
+.worm-editor-header h2 {
+  margin: 3px 0 0;
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(25px, 3.5vw, 38px);
+  font-style: italic;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.worm-editor-actions,
+.worm-tool-group {
+  gap: 7px;
+}
+
+.worm-editor-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.worm-editor-actions input[hidden] {
+  display: none;
+}
+
+.worm-editor-actions button,
+.worm-paint-toolbar button,
+.worm-layer-panel button,
+.worm-file-control {
+  border: 1px solid rgba(248, 240, 221, 0.46);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--cream);
+  cursor: pointer;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.worm-editor-actions button,
+.worm-paint-toolbar button,
+.worm-file-control {
+  padding: 9px 11px;
+}
+
+.worm-editor-actions .primary-action {
+  border-color: var(--ink);
+  background: var(--acid);
+  color: var(--ink);
+}
+
+.worm-editor-layout {
+  display: grid;
+  grid-template-columns: 205px minmax(330px, 1fr) minmax(300px, 0.82fr);
+  min-height: 0;
+}
+
+.worm-layer-panel,
+.worm-preview-panel {
+  min-width: 0;
+  background: #34231f;
+}
+
+.worm-layer-panel {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  border-right: 1px solid rgba(248, 240, 221, 0.18);
+  overflow-y: auto;
+}
+
+.worm-panel-heading {
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 14px;
+  border-bottom: 1px solid rgba(248, 240, 221, 0.18);
+  font: 800 9px "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worm-panel-heading small {
+  color: rgba(248, 240, 221, 0.45);
+  font-size: 7px;
+}
+
+.worm-layer-panel button {
+  display: grid;
+  gap: 3px;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(248, 240, 221, 0.12);
+  border-radius: 0;
+  text-align: left;
+}
+
+.worm-layer-panel button.active {
+  padding-left: 10px;
+  border-left: 4px solid var(--acid);
+  background: rgba(245, 194, 98, 0.1);
+  color: var(--acid);
+}
+
+.worm-layer-panel button:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+.worm-layer-panel button small {
+  color: rgba(248, 240, 221, 0.46);
+  font-size: 7px;
+}
+
+.worm-paint-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.worm-paint-toolbar {
+  z-index: 1;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(248, 240, 221, 0.18);
+  background: #4a2f29;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.worm-paint-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.worm-paint-toolbar label {
+  display: grid;
+  gap: 3px;
+  flex: 0 0 auto;
+  color: rgba(248, 240, 221, 0.62);
+  font: 700 8px "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worm-paint-toolbar select {
+  min-width: 80px;
+  padding: 6px 22px 6px 8px;
+  border: 1px solid rgba(248, 240, 221, 0.42);
+  border-radius: 2px;
+  background: var(--ink);
+  color: var(--cream);
+  font: 700 10px "Courier New", monospace;
+}
+
+.worm-color-control input {
+  width: 50px;
+  height: 29px;
+  padding: 2px;
+  border: 1px solid rgba(248, 240, 221, 0.42);
+  border-radius: 2px;
+  background: var(--ink);
+  cursor: pointer;
+}
+
+.worm-file-control {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow: hidden;
+}
+
+.worm-file-control span {
+  color: rgba(248, 240, 221, 0.48);
+  font-size: 7px;
+}
+
+.worm-file-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.worm-tool-group button.active {
+  border-color: var(--acid);
+  background: var(--acid);
+  color: var(--ink);
+}
+
+.worm-guide-toggle[aria-pressed="true"] {
+  border-color: var(--acid);
+  background: rgba(245, 194, 98, 0.14);
+  color: var(--acid);
+}
+
+.worm-paint-toolbar .worm-guide-toggle[hidden] {
+  display: none;
+}
+
+.worm-paint-stage {
+  display: grid;
+  min-height: 0;
+  padding: clamp(18px, 4vw, 48px);
+  place-items: center;
+  overflow: hidden;
+  background-color: #241714;
+  background-image:
+    linear-gradient(45deg, rgba(248, 240, 221, 0.055) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(248, 240, 221, 0.055) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(248, 240, 221, 0.055) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(248, 240, 221, 0.055) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+#worm-layer-canvas {
+  display: block;
+  width: min(100%, 650px);
+  max-height: 100%;
+  border: 2px solid rgba(248, 240, 221, 0.55);
+  background: transparent;
+  cursor: crosshair;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+.worm-paint-status {
+  padding: 8px 12px;
+  border-top: 1px solid rgba(248, 240, 221, 0.16);
+  background: #34231f;
+  color: rgba(248, 240, 221, 0.62);
+  font: 700 8px "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worm-preview-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  border-left: 1px solid rgba(248, 240, 221, 0.18);
+}
+
+#worm-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 230px;
+  object-fit: contain;
+}
+
+.worm-preview-panel p {
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(248, 240, 221, 0.16);
+  color: rgba(248, 240, 221, 0.5);
+  font: 700 8px/1.55 "Courier New", monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.worm-editor-help {
+  justify-content: center;
+  gap: 24px;
+  padding: 8px 16px;
+  background: #34231f;
+  color: rgba(248, 240, 221, 0.56);
+  font: 700 8px "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.icon-button {
+  width: 38px;
+  height: 38px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.world-list {
+  display: grid;
+  gap: 10px;
+  min-height: 170px;
+  padding: 18px 24px;
+  overflow-y: auto;
+}
+
+.world-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 15px;
+  border: 1px solid rgba(24, 34, 29, 0.3);
+  border-left: 6px solid var(--soil);
+  border-radius: 2px;
+  background: rgba(231, 214, 170, 0.28);
+}
+
+.world-card.active {
+  border-color: var(--ink);
+  border-left-color: var(--acid);
+}
+
+.world-card-copy {
+  min-width: 0;
+}
+
+.world-card-copy strong {
+  display: block;
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.world-card-copy small {
+  color: rgba(24, 34, 29, 0.58);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.world-card-actions,
+.editor-actions,
+.editor-tool-group {
+  display: flex;
+  gap: 7px;
+}
+
+.world-card-actions button,
+.editor-actions button,
+.editor-toolbar button,
+.primary-action {
+  padding: 9px 11px;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.world-card-actions .play-world,
+.primary-action,
+.editor-actions .primary-action {
+  border-width: 2px;
+  background: var(--acid);
+}
+
+.world-card-actions .delete-world {
+  color: var(--rust);
+}
+
+.world-select-footer {
+  gap: 16px;
+  padding: 15px 24px;
+  border-top: 1px solid rgba(24, 34, 29, 0.24);
+}
+
+.world-select-footer p {
+  margin: 0;
+  color: rgba(24, 34, 29, 0.58);
+  font-size: 11px;
+}
+
+.world-editor {
+  z-index: 10;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  background: var(--ink);
+  color: var(--cream);
+}
+
+.editor-header {
+  gap: 20px;
+  padding: 15px 20px;
+  border-bottom: 1px solid rgba(248, 240, 221, 0.24);
+  background: #34231f;
+}
+
+.editor-title-group {
+  min-width: 0;
+}
+
+.editor-title-group input {
+  width: min(440px, 55vw);
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  outline: 0;
+  background: transparent;
+  color: var(--cream);
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(22px, 3.5vw, 36px);
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.045em;
+}
+
+.editor-title-group input:focus {
+  border-bottom-color: var(--acid);
+}
+
+.editor-actions button,
+.editor-toolbar button {
+  border-color: rgba(248, 240, 221, 0.48);
+  color: var(--cream);
+}
+
+.editor-actions .primary-action {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.editor-toolbar {
+  z-index: 1;
+  gap: 14px;
+  justify-content: flex-start;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(248, 240, 221, 0.2);
+  background: #4a2f29;
+  overflow-x: auto;
+}
+
+.editor-tool-group button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.editor-tool-group button.active {
+  border-color: var(--acid);
+  background: var(--acid);
+  color: var(--ink);
+}
+
+.tool-swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+
+.tool-swatch.ground {
+  background: var(--soil);
+}
+
+.tool-swatch.stone {
+  background: var(--stone);
+}
+
+.tool-swatch.erase {
+  background: var(--cream);
+}
+
+.tool-swatch.spawn {
+  border-radius: 50%;
+  background: var(--acid);
+}
+
+.editor-toolbar label {
+  display: grid;
+  gap: 3px;
+  color: rgba(248, 240, 221, 0.62);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.editor-toolbar select {
+  min-width: 108px;
+  padding: 6px 24px 6px 8px;
+  border: 1px solid rgba(248, 240, 221, 0.42);
+  border-radius: 2px;
+  background: var(--ink);
+  color: var(--cream);
+  font: 700 10px "Courier New", monospace;
+}
+
+.editor-canvas-wrap {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #241714;
+}
+
+#editor-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.world-editor[data-tool="pan"] #editor-canvas {
+  cursor: grab;
+}
+
+.world-editor[data-tool="pan"] #editor-canvas:active {
+  cursor: grabbing;
+}
+
+.editor-status {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  padding: 7px 9px;
+  border: 1px solid rgba(248, 240, 221, 0.24);
+  border-radius: 2px;
+  background: rgba(24, 34, 29, 0.84);
+  color: rgba(248, 240, 221, 0.74);
+  font: 700 9px "Courier New", monospace;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.editor-help {
+  justify-content: center;
+  gap: 24px;
+  padding: 8px 16px;
+  background: #34231f;
+  color: rgba(248, 240, 221, 0.56);
+  font: 700 8px "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+  .dev-menu {
+    grid-template-columns: 1fr;
+    width: min(300px, calc(100vw - 60px));
+    max-height: calc(100vh - 54px);
+    overflow-y: auto;
+  }
+
+  .dev-menu-panel,
+  .dev-gameplay-panel,
+  .dev-profiler-panel {
+    box-sizing: border-box;
+    width: min(300px, calc(100vw - 60px));
+  }
+}
+
+@media (max-width: 720px) {
+  .masthead {
+    padding: 18px;
+  }
+
+  .metric-label,
+  .metric small,
+  .growth-copy,
+  .boost-copy {
+    display: none;
+  }
+
+  .minimap {
+    width: 138px;
+    height: 99px;
+  }
+
+  .telemetry {
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .metric strong {
+    font-size: 22px;
+  }
+
+  .boost-metric {
+    min-width: 72px;
+  }
+
+  .boost-meter {
+    width: 72px;
+  }
+
+  .state-pill {
+    min-width: auto;
+    padding: 8px 10px;
+    font-size: 8px;
+  }
+
+  .home-card {
+    padding: 25px;
+  }
+
+  .utility {
+    right: 18px;
+    bottom: 92px;
+  }
+
+  .touch-controls {
+    display: flex;
+  }
+
+  .dev-menu {
+    bottom: 92px;
+    left: 18px;
+    grid-template-columns: 1fr;
+    width: min(270px, calc(100vw - 36px));
+    max-height: calc(100vh - 116px);
+    overflow-y: auto;
+  }
+
+  .dev-menu-panel,
+  .dev-gameplay-panel,
+  .dev-profiler-panel {
+    width: min(270px, calc(100vw - 36px));
+    box-sizing: border-box;
+  }
+
+  .world-select-overlay {
+    padding: 14px;
+  }
+
+  .enemy-info-overlay {
+    padding: 14px;
+  }
+
+  .worm-type-overlay {
+    padding: 14px;
+  }
+
+  .world-select-card {
+    max-height: calc(100vh - 28px);
+  }
+
+  .enemy-info-card {
+    max-height: calc(100vh - 28px);
+  }
+
+  .worm-type-select-card {
+    max-height: calc(100vh - 28px);
+  }
+
+  .world-select-heading,
+  .world-select-footer {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .world-list {
+    padding: 14px 16px;
+  }
+
+  .enemy-info-heading {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .worm-type-heading,
+  .worm-type-footer {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .enemy-info-list {
+    padding: 14px 16px;
+  }
+
+  .worm-type-list {
+    padding: 14px 16px;
+  }
+
+  .world-card {
+    grid-template-columns: 1fr;
+  }
+
+  .world-select-footer,
+  .editor-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .editor-header {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .editor-title-group input {
+    width: 100%;
+  }
+
+  .editor-actions > * {
+    flex: 1;
+  }
+
+  .editor-toolbar {
+    padding: 8px 12px;
+  }
+
+  .editor-help {
+    gap: 10px;
+    justify-content: flex-start;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .worm-editor-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+    padding: 10px 12px;
+  }
+
+  .worm-editor-actions > * {
+    flex: 1 1 105px;
+  }
+
+  .worm-editor-layout {
+    grid-template-columns: 145px minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .worm-preview-panel {
+    grid-column: 1 / -1;
+    min-height: 320px;
+    border-top: 1px solid rgba(248, 240, 221, 0.18);
+    border-left: 0;
+  }
+
+  .worm-paint-toolbar {
+    padding: 8px;
+  }
+
+  .worm-editor-help {
+    gap: 10px;
+    justify-content: flex-start;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 520px) {
+  .masthead {
+    padding: 12px;
+  }
+
+  .minimap {
+    width: 104px;
+    height: 75px;
+  }
+
+  .minimap-label {
+    top: 4px;
+    left: 4px;
+    padding: 2px 4px;
+    font-size: 7px;
+  }
+
+  .telemetry {
+    gap: 7px;
+  }
+
+  .boost-metric {
+    min-width: 56px;
+  }
+
+  .boost-meter {
+    width: 56px;
+  }
+
+  .worm-editor-layout {
+    display: block;
+  }
+
+  .worm-layer-panel {
+    grid-template-columns: none;
+    grid-auto-columns: minmax(100px, 1fr);
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+
+  .worm-layer-panel .worm-panel-heading {
+    display: none;
+  }
+
+  .worm-layer-panel button {
+    border-right: 1px solid rgba(248, 240, 221, 0.12);
+  }
+
+  .worm-paint-panel {
+    min-height: 520px;
+  }
+
+  .worm-preview-panel {
+    min-height: 300px;
+  }
+}
+
+@media (max-width: 520px) {
+  .game-menu {
+    padding: 14px;
+  }
+
+  .game-menu-card {
+    max-height: calc(100vh - 28px);
+  }
+
+  .game-menu-heading {
+    padding: 16px;
+  }
+
+  .game-menu-actions {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .game-menu-actions .game-menu-primary {
+    grid-column: auto;
+  }
+
+  .worm-type-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (pointer: coarse) {
+  .touch-controls {
+    display: flex;
+  }
+
+  .utility {
+    bottom: 92px;
+  }
+
+  .dev-menu {
+    bottom: 92px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

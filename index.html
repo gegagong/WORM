@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="WORM — a tiny, high-speed underground flight experiment."
+    />
+    <title>WORM — Dig. Launch. Dive.</title>
+    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260808-material-removal" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-head-upper.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-head-lower.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-mouth-upper.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-mouth-lower.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-segment.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-segment-band.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-segment-outline.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-tongue.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/worm/licker-default-tongue-ring.png?v=20260808-saved-licker-default" />
+    <link rel="preload" as="image" href="./assets/enemies/beetle-handdrawn.png?v=20260803-new-default-art" />
+    <link rel="preload" as="image" href="./assets/enemies/beetle-scurry-handdrawn.png?v=20260803-new-default-art" />
+    <link rel="preload" as="image" href="./assets/enemies/mole-handdrawn.png?v=20260803-new-default-art" />
+    <link rel="preload" as="image" href="./assets/enemies/mole-scurry-handdrawn.png?v=20260803-new-default-art" />
+    <link rel="preload" as="image" href="./assets/enemies/rabbit-handdrawn.png?v=20260805-side-profile" />
+    <link rel="preload" as="image" href="./assets/enemies/rabbit-jump-handdrawn.png?v=20260805-side-profile" />
+    <link rel="preload" as="image" href="./assets/enemies/meat-handdrawn.png?v=20260803-new-default-art" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <canvas id="game" aria-label="Worm digging game"></canvas>
+
+      <header class="masthead" aria-hidden="true">
+        <section class="minimap" id="minimap" aria-label="Local area map">
+          <canvas id="minimap-canvas" width="184" height="132"></canvas>
+          <span class="minimap-label">Local map</span>
+        </section>
+
+        <div class="telemetry">
+          <div class="metric target-metric" id="target-metric">
+            <span class="metric-label">Enemies</span>
+            <strong><span id="target-count">00</span> <small>LEFT</small></strong>
+          </div>
+          <div class="metric growth-metric">
+            <span class="metric-label">Score / Size</span>
+            <strong><span id="score">000</span> <small>LV <span id="size-level">0</span></small></strong>
+            <span class="growth-copy"><span id="growth-progress">0</span>/<span id="growth-cost">5</span> TO GROW</span>
+          </div>
+          <div class="metric boost-metric" id="boost-metric">
+            <span class="metric-label">Boost</span>
+            <div
+              class="boost-meter"
+              id="boost-meter"
+              role="progressbar"
+              aria-label="Boost remaining"
+              aria-valuemin="0"
+              aria-valuemax="2"
+              aria-valuenow="2"
+            >
+              <span id="boost-meter-fill"></span>
+            </div>
+            <span class="boost-copy"><span id="boost-time">2.0</span>S / <span id="boost-capacity">2</span>S</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Velocity</span>
+            <strong><span id="speed">000</span> <small>KM/H</small></strong>
+          </div>
+          <div class="state-pill" id="state-pill" aria-hidden="true">
+            <span class="state-dot"></span>
+            <span id="state">Subterranean</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="home-screen" id="home-screen" aria-labelledby="home-title">
+        <div class="home-card">
+          <header class="home-heading">
+            <p class="eyebrow">Burrow select</p>
+            <h1 id="home-title">Worm</h1>
+            <p>Choose your worm and world, then start the run.</p>
+          </header>
+          <div class="home-selections">
+            <button class="home-choice" id="home-worm-select" type="button">
+              <span>Selected worm</span>
+              <strong id="current-worm-name">Licker</strong>
+              <small>Choose</small>
+            </button>
+            <button class="home-edit-button" id="home-worm-edit" type="button">
+              <strong>Edit selected worm</strong>
+              <small>Customize this worm type's appearance</small>
+            </button>
+            <button class="home-choice" id="home-world-select" type="button">
+              <span>Selected world</span>
+              <strong id="current-world-name">Flat World</strong>
+              <small>Choose</small>
+            </button>
+          </div>
+          <button class="start-button" id="home-play-button" type="button">
+            <span>Play selected world</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </section>
+
+      <div class="utility">
+        <button class="main-menu-button" id="main-menu-button" type="button" aria-expanded="false">
+          <span>Menu</span><span aria-hidden="true">☰</span>
+        </button>
+      </div>
+
+      <section class="game-menu" id="game-menu" aria-hidden="true">
+        <div class="game-menu-card" role="dialog" aria-modal="true" aria-labelledby="game-menu-title">
+          <header class="game-menu-heading">
+            <div>
+              <p class="eyebrow">Worm control</p>
+              <h2 id="game-menu-title">Menu</h2>
+            </div>
+            <button class="icon-button" id="main-menu-close" type="button" aria-label="Close menu">×</button>
+          </header>
+          <nav class="game-menu-actions" aria-label="Game features">
+            <button class="game-menu-primary" id="menu-continue" type="button">
+              <strong>Continue</strong><small>Return to the worm</small>
+            </button>
+            <button id="enemy-info-button" type="button">
+              <strong>Enemy information</strong><small>View points, HP, and prey class</small>
+            </button>
+            <button id="reset-button" type="button">
+              <strong>Reset run</strong><small>Return to the current spawn point</small>
+            </button>
+            <button id="menu-dev-tools" type="button">
+              <strong>Developer tools</strong><small>Diagnostics, worm level, and enemy placement</small>
+            </button>
+            <button class="game-menu-home" id="menu-return-home" type="button">
+              <strong>Return home</strong><small>Unload this world and return to selection</small>
+            </button>
+          </nav>
+        </div>
+      </section>
+
+      <section class="worm-type-overlay" id="worm-type-select" aria-hidden="true">
+        <div class="worm-type-select-card" role="dialog" aria-modal="true" aria-labelledby="worm-type-title">
+          <header class="worm-type-heading">
+            <div>
+              <p class="eyebrow">Worm library</p>
+              <h2 id="worm-type-title">Choose a worm</h2>
+            </div>
+            <button class="icon-button" id="worm-type-close" type="button" aria-label="Close worm type select">×</button>
+          </header>
+          <div class="worm-type-list" id="worm-type-list"></div>
+          <footer class="worm-type-footer">
+            <p>Types share the same growth system, with independently configurable scaling and abilities.</p>
+          </footer>
+        </div>
+      </section>
+
+      <section class="enemy-info-overlay" id="enemy-info" aria-hidden="true">
+        <div class="enemy-info-card" role="dialog" aria-modal="true" aria-labelledby="enemy-info-title">
+          <header class="enemy-info-heading">
+            <div>
+              <p class="eyebrow">Field guide</p>
+              <h2 id="enemy-info-title">Enemies</h2>
+            </div>
+            <button class="icon-button" id="enemy-info-close" type="button" aria-label="Close enemy information">×</button>
+          </header>
+          <div class="enemy-info-list" id="enemy-info-list"></div>
+        </div>
+      </section>
+
+      <aside class="dev-menu" id="dev-menu">
+        <div class="dev-menu-panel">
+          <div class="dev-menu-heading">
+            <span>Developer controls</span>
+            <button class="dev-menu-close" id="dev-menu-toggle" type="button" aria-label="Close developer tools">×</button>
+          </div>
+          <div class="dev-performance">
+            <span>Frame rate</span>
+            <strong><span id="dev-fps">000</span> FPS</strong>
+          </div>
+          <label class="dev-setting" for="fps-limit">
+            <span class="dev-option-copy">
+              <strong>FPS limit</strong>
+              <small>Maximum rendered frames</small>
+            </span>
+            <select id="fps-limit">
+              <option value="0">Uncapped</option>
+              <option value="30">30 FPS</option>
+              <option value="60">60 FPS</option>
+              <option value="120">120 FPS</option>
+            </select>
+          </label>
+          <label class="dev-option" for="reveal-grid">
+            <input id="reveal-grid" type="checkbox" />
+            <span class="dev-checkbox" aria-hidden="true"></span>
+            <span class="dev-option-copy">
+              <strong>Reveal grid</strong>
+              <small>Show block boundaries</small>
+            </span>
+          </label>
+          <label class="dev-option" for="reveal-vectors">
+            <input id="reveal-vectors" type="checkbox" />
+            <span class="dev-checkbox" aria-hidden="true"></span>
+            <span class="dev-option-copy">
+              <strong>Direction vectors</strong>
+              <small>Velocity + acceleration</small>
+            </span>
+          </label>
+          <label class="dev-option" for="reveal-steering">
+            <input id="reveal-steering" type="checkbox" />
+            <span class="dev-checkbox" aria-hidden="true"></span>
+            <span class="dev-option-copy">
+              <strong>Steering math</strong>
+              <small>Facing + turn input</small>
+            </span>
+          </label>
+          <label class="dev-option" for="reveal-hitboxes">
+            <input id="reveal-hitboxes" type="checkbox" />
+            <span class="dev-checkbox" aria-hidden="true"></span>
+            <span class="dev-option-copy">
+              <strong>Hitboxes / hurtboxes</strong>
+              <small>Eating, targets + tongue avoidance</small>
+            </span>
+          </label>
+          <label class="dev-option" for="reveal-combat-stats">
+            <input id="reveal-combat-stats" type="checkbox" />
+            <span class="dev-checkbox" aria-hidden="true"></span>
+            <span class="dev-option-copy">
+              <strong>Combat stats</strong>
+              <small>Enemy HP, prey class + bite force</small>
+            </span>
+          </label>
+          <label class="dev-option" for="swarm-mode">
+            <input id="swarm-mode" type="checkbox" />
+            <span class="dev-checkbox" aria-hidden="true"></span>
+            <span class="dev-option-copy">
+              <strong>Swarm</strong>
+              <small>Eaten enemies spawn two of the same kind</small>
+            </span>
+          </label>
+        </div>
+        <div class="dev-gameplay-panel" id="dev-gameplay-panel">
+          <div class="dev-menu-heading">
+            <span>Gameplay controls</span>
+          </div>
+          <label class="dev-setting" for="dev-worm-level">
+            <span class="dev-option-copy">
+              <strong>Worm level</strong>
+              <small id="dev-worm-level-mode">Following score</small>
+            </span>
+            <input id="dev-worm-level" type="number" min="0" max="100" step="1" placeholder="Auto" inputmode="numeric" />
+          </label>
+          <section class="dev-enemy-spawner" aria-labelledby="dev-enemy-heading">
+            <span class="dev-option-copy" id="dev-enemy-heading">
+              <strong>Place enemy</strong>
+              <small>Add an enemy inside the current view</small>
+            </span>
+            <div class="dev-enemy-buttons" id="dev-enemy-buttons"></div>
+          </section>
+        </div>
+        <section class="dev-profiler-panel" id="dev-profiler-panel" aria-labelledby="dev-profiler-heading">
+          <div class="dev-menu-heading">
+            <span id="dev-profiler-heading">Performance gate</span>
+            <small>Heuristic</small>
+          </div>
+          <div class="dev-profiler-gate" id="dev-profiler-gate" data-gate="idle">
+            <span>Likely limit</span>
+            <strong id="dev-profiler-label">Collecting</strong>
+            <small id="dev-profiler-detail">Move through the world to sample frame pressure.</small>
+          </div>
+          <div class="dev-profiler-budget" aria-hidden="true">
+            <span class="update" id="dev-profiler-update-bar"></span>
+            <span class="render" id="dev-profiler-render-bar"></span>
+          </div>
+          <div class="dev-profiler-legend" aria-hidden="true">
+            <span><i class="update"></i>Update</span>
+            <span><i class="render"></i>Canvas</span>
+            <span><i class="available"></i>Available</span>
+          </div>
+          <dl class="dev-profiler-stats">
+            <div>
+              <dt>Frame</dt>
+              <dd><span id="dev-profiler-frame">0.0</span> ms</dd>
+            </div>
+            <div>
+              <dt>Budget</dt>
+              <dd><span id="dev-profiler-budget">16.7</span> ms</dd>
+            </div>
+            <div>
+              <dt>Update</dt>
+              <dd><span id="dev-profiler-update">0.0</span> ms</dd>
+            </div>
+            <div>
+              <dt>Canvas</dt>
+              <dd><span id="dev-profiler-render">0.0</span> ms</dd>
+            </div>
+            <div>
+              <dt>Peak</dt>
+              <dd><span id="dev-profiler-peak">0.0</span> ms</dd>
+            </div>
+            <div>
+              <dt>Frames lost</dt>
+              <dd id="dev-profiler-dropped">0</dd>
+            </div>
+            <div class="wide">
+              <dt>Terrain builds</dt>
+              <dd><span id="dev-profiler-chunks">0</span> · <span id="dev-profiler-chunk-time">0.0</span> ms</dd>
+            </div>
+            <div class="wide">
+              <dt>Terrain cache</dt>
+              <dd><span id="dev-profiler-cache">0 / 0</span> · <span id="dev-profiler-memory">0.0</span> MB</dd>
+            </div>
+            <div class="wide">
+              <dt>Evictions</dt>
+              <dd id="dev-profiler-evictions">0</dd>
+            </div>
+          </dl>
+          <p class="dev-profiler-note">GPU is suspected only when frame presentation is late while measured main-thread work remains below budget.</p>
+        </section>
+      </aside>
+
+      <nav class="touch-controls" aria-label="Touch controls">
+        <button data-control="left" type="button" aria-label="Turn or choose left">←</button>
+        <button class="thrust" data-control="up" type="button" aria-label="Accelerate or grapple pull">↑</button>
+        <button class="boost" data-control="boost" type="button" aria-label="Boost or amplify grapple pull">1.5×</button>
+        <button class="brake" data-control="down" type="button" aria-label="Brake">↓</button>
+        <button data-control="right" type="button" aria-label="Turn or choose right">→</button>
+      </nav>
+
+      <section class="world-select-overlay" id="world-select" aria-hidden="true">
+        <div class="world-select-card" role="dialog" aria-modal="true" aria-labelledby="world-select-title">
+          <header class="world-select-heading">
+            <div>
+              <p class="eyebrow">World library</p>
+              <h2 id="world-select-title">Choose terrain</h2>
+            </div>
+            <button class="icon-button" id="world-select-close" type="button" aria-label="Close world select">×</button>
+          </header>
+          <div class="world-list" id="world-list"></div>
+          <footer class="world-select-footer">
+            <p>Custom worlds are saved in this browser.</p>
+            <button class="primary-action" id="new-world-button" type="button">Create new world</button>
+          </footer>
+        </div>
+      </section>
+
+      <section class="world-editor" id="world-editor" aria-hidden="true">
+        <header class="editor-header">
+          <div class="editor-title-group">
+            <p class="eyebrow">World editor</p>
+            <input id="world-name-input" type="text" maxlength="40" value="Untitled World" aria-label="World name" />
+          </div>
+          <div class="editor-actions">
+            <button id="editor-cancel" type="button">Cancel</button>
+            <button class="primary-action" id="editor-save" type="button">Save world</button>
+          </div>
+        </header>
+
+        <div class="editor-toolbar" aria-label="World editor tools">
+          <div class="editor-tool-group" role="group" aria-label="Editing tool">
+            <button class="active" data-editor-tool="ground" type="button"><span class="tool-swatch ground"></span>Ground</button>
+            <button data-editor-tool="stone" type="button"><span class="tool-swatch stone"></span>Stone</button>
+            <button data-editor-tool="erase" type="button"><span class="tool-swatch erase"></span>Erase</button>
+            <button data-editor-tool="fill" type="button" title="Fill using the last selected Ground, Stone, or Erase material">Fill</button>
+            <button data-editor-tool="spawn" type="button"><span class="tool-swatch spawn"></span>Spawn</button>
+            <button data-editor-tool="pan" type="button">Pan</button>
+          </div>
+          <label>
+            <span>Brush</span>
+            <select id="brush-shape">
+              <option value="circle">Round</option>
+              <option value="square">Square</option>
+              <option value="horizontal">Horizontal</option>
+              <option value="vertical">Vertical</option>
+            </select>
+          </label>
+          <label>
+            <span>Size</span>
+            <select id="brush-size">
+              <option value="1">1 block</option>
+              <option value="3">3 blocks</option>
+              <option value="5" selected>5 blocks</option>
+              <option value="9">9 blocks</option>
+              <option value="15">15 blocks</option>
+            </select>
+          </label>
+          <button id="editor-fit" type="button">Fit world</button>
+        </div>
+
+        <div class="editor-canvas-wrap" id="editor-canvas-wrap">
+          <canvas id="editor-canvas" aria-label="Editable world block grid"></canvas>
+          <div class="editor-status" id="editor-status">Ground · Round 5 · 0, 0</div>
+        </div>
+        <footer class="editor-help">
+          <span>Drag to paint</span>
+          <span>Choose a material, then Fill connected blocks</span>
+          <span>Right-drag to erase</span>
+          <span>Mouse wheel to zoom</span>
+          <span>Pan tool to move</span>
+        </footer>
+      </section>
+
+      <section class="worm-editor" id="worm-editor" aria-hidden="true">
+        <header class="worm-editor-header">
+          <div>
+            <p class="eyebrow">Appearance workshop</p>
+            <h2>Create your <span id="worm-editor-type-name">Licker</span></h2>
+          </div>
+          <div class="worm-editor-actions">
+            <button id="worm-load-defaults" type="button">Load defaults</button>
+            <button id="worm-package-import-button" type="button">Import worm</button>
+            <input id="worm-package-import" type="file" accept=".worm.json,.json,application/json" hidden />
+            <button id="worm-package-export" type="button">Export worm</button>
+            <button id="worm-editor-cancel" type="button">Cancel</button>
+            <button class="primary-action" id="worm-editor-save" type="button">Save worm</button>
+          </div>
+        </header>
+
+        <div class="worm-editor-layout">
+          <aside class="worm-layer-panel" aria-label="Worm sprite layers">
+            <div class="worm-panel-heading">
+              <span>Sprite layers</span>
+              <small>Transparent PNG</small>
+            </div>
+            <button class="active" data-worm-layer="headUpper" type="button">
+              <strong>Upper jaw</strong><small>Top face and eye</small>
+            </button>
+            <button data-worm-layer="headLower" type="button">
+              <strong>Lower jaw</strong><small>Bottom face and eye</small>
+            </button>
+            <button data-worm-layer="mouthUpper" type="button">
+              <strong>Upper mouth</strong><small>Top interior and teeth</small>
+            </button>
+            <button data-worm-layer="mouthLower" type="button">
+              <strong>Lower mouth</strong><small>Bottom interior and teeth</small>
+            </button>
+            <button data-worm-layer="segment" type="button">
+              <strong>Body</strong><small>Main segment color</small>
+            </button>
+            <button data-worm-layer="segmentBand" type="button">
+              <strong>Rings</strong><small>Alternating overlay</small>
+            </button>
+            <button data-worm-layer="segmentOutline" type="button">
+              <strong>Outline</strong><small>Body silhouette</small>
+            </button>
+            <button data-worm-layer="tongue" type="button">
+              <strong>Tongue</strong><small>Repeating tongue segment</small>
+            </button>
+            <button data-worm-layer="tongueRing" type="button">
+              <strong>Tongue rings</strong><small>Repeated joint overlay</small>
+            </button>
+          </aside>
+
+          <main class="worm-paint-panel">
+            <div class="worm-paint-toolbar" aria-label="Worm painting tools">
+              <div class="worm-tool-group" role="group" aria-label="Painting tool">
+                <button class="active" data-worm-tool="paint" type="button">Paint</button>
+                <button data-worm-tool="erase" type="button">Erase</button>
+                <button data-worm-tool="fill" type="button">Fill</button>
+              </div>
+              <label class="worm-color-control">
+                <span>Color</span>
+                <input id="worm-brush-color" type="color" value="#ec6f51" />
+              </label>
+              <label>
+                <span>Brush</span>
+                <select id="worm-brush-size">
+                  <option value="1">1 px</option>
+                  <option value="2">2 px</option>
+                  <option value="4" selected>4 px</option>
+                  <option value="8">8 px</option>
+                  <option value="12">12 px</option>
+                  <option value="20">20 px</option>
+                </select>
+              </label>
+              <label>
+                <span>Symmetry</span>
+                <select id="worm-symmetry-mode">
+                  <option value="off">Off</option>
+                  <option value="horizontal" selected>Horizontal</option>
+                  <option value="vertical">Vertical</option>
+                  <option value="both">Both axes</option>
+                </select>
+              </label>
+              <button
+                class="worm-guide-toggle"
+                id="worm-reflection-toggle"
+                type="button"
+                aria-pressed="false"
+              >
+                Reflection line
+              </button>
+              <button
+                class="worm-guide-toggle"
+                id="worm-mirror-pair-toggle"
+                type="button"
+                aria-pressed="false"
+              >
+                Mirror this jaw
+              </button>
+              <button
+                class="worm-guide-toggle"
+                id="worm-mouth-jaw-overlay-toggle"
+                type="button"
+                aria-pressed="false"
+                hidden
+              >
+                Open jaw overlay
+              </button>
+              <label class="worm-file-control">
+                <span>Replace layer</span>
+                <strong>Import PNG</strong>
+                <input id="worm-import-layer" type="file" accept="image/png" />
+              </label>
+              <button id="worm-clear-layer" type="button">Clear layer</button>
+            </div>
+            <div class="worm-paint-stage">
+              <canvas id="worm-layer-canvas" width="128" height="96" aria-label="Editable worm sprite layer"></canvas>
+            </div>
+            <div class="worm-paint-status" id="worm-paint-status">Jaw · 128 × 96 · Paint</div>
+          </main>
+
+          <aside class="worm-preview-panel">
+            <div class="worm-panel-heading">
+              <span>Live preview</span>
+              <small>Size level 0</small>
+            </div>
+            <canvas id="worm-preview-canvas" width="720" height="420" aria-label="Custom worm preview"></canvas>
+            <p>The isolated preview randomly accelerates, brakes, turns, breaches, falls, and dives without moving the player worm. When editing Licker, its tongue repeatedly extends, swings in changing directions, and retracts so both the tongue segments and editable ring overlay remain visible in motion.</p>
+          </aside>
+        </div>
+
+        <footer class="worm-editor-help">
+          <span>Drag to paint</span>
+          <span>Fill replaces connected pixels</span>
+          <span>Right-drag to erase</span>
+          <span>Edits remain temporary until saved</span>
+          <span>Export packages can be shared</span>
+        </footer>
+      </section>
+
+    </main>
+
+    <script src="./game.js?v=20260810-under-worm-terrain-layers"></script>
+  </body>
+</html>
