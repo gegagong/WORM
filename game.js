@@ -111,7 +111,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260808-material-removal";
+    const styleUrl = "./styles.css?v=20260811-tongue-click-hit-test";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -841,6 +841,7 @@
     retractRate: 6.5,
     firstSegmentTurnLimit: Math.PI / 18,
     lastSegmentTurnLimit: Math.PI / 6,
+    rearAimThreshold: Math.PI * 0.5,
     targetingRadiusBlocks: 15,
     capturedRetractRate: 1.2,
     retractAvoidanceLookahead: 0.075,
@@ -6958,6 +6959,97 @@
     return { points };
   }
 
+  function rearTongueRoute(
+    front,
+    angle,
+    target,
+    maximumCurveLength,
+    segmentLength,
+    progress = 1,
+  ) {
+    const offsetX = target.x - front.x;
+    const offsetY = target.y - front.y;
+    const targetDistance = magnitude(offsetX, offsetY);
+    if (targetDistance < 0.0001) return { points: [] };
+
+    const directionX = offsetX / targetDistance;
+    const directionY = offsetY / targetDistance;
+    const linkLength = Math.max(1, segmentLength);
+    const targetAngle = Math.atan2(offsetY, offsetX);
+    const angleDifference = Math.atan2(
+      Math.sin(targetAngle - angle),
+      Math.cos(targetAngle - angle),
+    );
+    const normalX = -directionY;
+    const normalY = directionX;
+    const detourSide = angleDifference < 0 ? 1 : -1;
+    const bendDistance = Math.min(
+      maximumCurveLength * 0.22,
+      targetDistance * 0.35,
+      linkLength * 2.5,
+    );
+    const clearance = Math.min(
+      Math.max(
+        linkLength * 1.5,
+        TONGUE_RULES.outerBaseWidth * wormScale() * 2.25,
+      ),
+      targetDistance * 0.3,
+    );
+    const controlDistance = Math.min(linkLength, targetDistance * 0.15);
+    const control = {
+      x: front.x + Math.cos(angle) * controlDistance,
+      y: front.y + Math.sin(angle) * controlDistance,
+    };
+    const bend = {
+      x:
+        front.x +
+        directionX * bendDistance +
+        normalX * clearance * detourSide,
+      y:
+        front.y +
+        directionY * bendDistance +
+        normalY * clearance * detourSide,
+    };
+    const guidePoints = [{ x: front.x, y: front.y }];
+    const curveSamples = 8;
+    for (let sample = 1; sample <= curveSamples; sample += 1) {
+      const amount = sample / curveSamples;
+      const inverse = 1 - amount;
+      guidePoints.push({
+        x:
+          inverse * inverse * front.x +
+          2 * inverse * amount * control.x +
+          amount * amount * bend.x,
+        y:
+          inverse * inverse * front.y +
+          2 * inverse * amount * control.y +
+          amount * amount * bend.y,
+      });
+    }
+    guidePoints.push({ x: target.x, y: target.y });
+
+    const metrics = tonguePathMetrics(guidePoints);
+    const routeLength = Math.min(
+      metrics.totalLength,
+      maximumCurveLength * clamp(progress, 0, 1),
+    );
+    const points = [];
+    let distance = Math.min(linkLength, routeLength);
+    while (distance < routeLength) {
+      const point = tonguePathSample(guidePoints, metrics, distance);
+      points.push({ x: point.x, y: point.y });
+      distance += linkLength;
+    }
+    if (routeLength > 0) {
+      const point = tonguePathSample(guidePoints, metrics, routeLength);
+      points.push({
+        x: point.x,
+        y: point.y,
+      });
+    }
+    return { points };
+  }
+
   function getTongueGeometry(tongue, progress = tongue?.progress ?? 0) {
     if (!tongue) return null;
     const { pose, back, front } = tongueHeadAnchors();
@@ -6970,10 +7062,26 @@
     const lockedTarget = activeTongueTarget(tongue);
     const target = lockedTarget && !tongue.freefallNodes
       ? { x: lockedTarget.x, y: lockedTarget.y }
+      : tongue.aimOnly &&
+          Number.isFinite(tongue.selectionX) &&
+          Number.isFinite(tongue.selectionY)
+        ? { x: tongue.selectionX, y: tongue.selectionY }
       : {
           x: game.head.x + tongue.aimOffsetX,
           y: game.head.y + tongue.aimOffsetY,
         };
+    const targetAngle = Math.atan2(target.y - front.y, target.x - front.x);
+    const targetAngleDifference = Math.abs(
+      Math.atan2(
+        Math.sin(targetAngle - pose.angle),
+        Math.cos(targetAngle - pose.angle),
+      ),
+    );
+    const useRearAim =
+      !tongue.freefallNodes &&
+      targetAngleDifference >= TONGUE_RULES.rearAimThreshold;
+    const tongueSegmentLength =
+      wormSegmentSpacing() * TONGUE_RULES.segmentSpacingMultiplier;
 
     const route = tongue.freefallNodes
       ? {
@@ -6982,14 +7090,23 @@
             y: node.y,
           })),
         }
-      : segmentedTongueRoute(
-          front,
-          pose.angle,
-          target,
-          maximumCurveLength,
-          wormSegmentSpacing() * TONGUE_RULES.segmentSpacingMultiplier,
-          progress,
-        );
+      : useRearAim
+        ? rearTongueRoute(
+            front,
+            pose.angle,
+            target,
+            maximumCurveLength,
+            tongueSegmentLength,
+            progress,
+          )
+        : segmentedTongueRoute(
+            front,
+            pose.angle,
+            target,
+            maximumCurveLength,
+            tongueSegmentLength,
+            progress,
+          );
 
     return {
       pose,
@@ -9716,6 +9833,21 @@
       availableTongues,
     );
     const selectionRadius = tongueTargetingRadius();
+    if (selectedTargets.length === 0) {
+      game.tongues.push({
+        aimOnly: true,
+        aimOffsetX: targetX - game.head.x,
+        aimOffsetY: targetY - game.head.y,
+        selectionX: targetX,
+        selectionY: targetY,
+        selectionRadius,
+        targetId: null,
+        progress: 0,
+        phase: "extending",
+        holdRemaining: TONGUE_RULES.holdDuration,
+      });
+      return true;
+    }
     selectedTargets.forEach((selectedTarget) => {
       game.tongues.push({
         aimOffsetX: targetX - game.head.x,
@@ -9785,7 +9917,11 @@
       return;
     }
 
-    if (!activeTongueTarget(tongue) && !tongue.freefallNodes) {
+    if (
+      !tongue.aimOnly &&
+      !activeTongueTarget(tongue) &&
+      !tongue.freefallNodes
+    ) {
       tongue.phase = "retracting";
       tongue.holdRemaining = 0;
     }

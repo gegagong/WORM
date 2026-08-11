@@ -129,7 +129,10 @@ each tongue's starting tangent before a chain of fixed-length segments turns tow
 Each segment begins at the endpoint of the previous segment and can change direction by
 an increasing amount: the first rung after the mouth has 10 degrees of turn freedom,
 the final rung has 30 degrees, and the limits between them are interpolated evenly.
-This gives the tongue an articulated bend instead of a continuous mathematical curve.
+This gives the tongue an articulated bend instead of a continuous mathematical curve. Targets
+anywhere in the half-plane behind the mouth use a short clearance bend around the worm before
+following the target bearing, avoiding the finite chain's rear-angle blind spot without hiding
+the tongue underneath the body.
 The worm has one simultaneous tongue at levels 0–2 and gains one additional tongue every
 three levels: levels 3, 6, 9, and so on. Before launch, a circle centered on the click searches
 for eligible enemies and meat chunks.
@@ -140,8 +143,9 @@ back to the mouth also clears its post-drop overlap protection so it can enter t
 Available
 tongues claim qualifying enemies from highest to lowest point value, using proximity to the
 click and then target ID to break ties, and every tongue must have a unique target. Only the
-number of tongues needed for the acquired targets appears; a click with no
-qualifying target launches nothing.
+number of tongues needed for the acquired targets appears. A click with no qualifying target
+launches one tongue toward the center of the clicked targeting circle, after which it holds
+briefly and retracts normally.
 Each tongue's flexible mouth-to-tip reach equals the worm's current head-to-tail length,
 including growth levels. Its straight rear-to-front passage through the head is additional
 and no longer deducted from that usable range. The tip reaches the selected point when the

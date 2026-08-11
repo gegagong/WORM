@@ -12,6 +12,10 @@
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 html,
@@ -416,6 +420,7 @@ kbd {
   bottom: 27px;
   display: flex;
   gap: 9px;
+  pointer-events: none;
 }
 
 .utility button {
@@ -428,6 +433,7 @@ kbd {
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.08em;
+  pointer-events: auto;
   text-transform: uppercase;
 }
 
@@ -848,6 +854,7 @@ kbd {
   align-items: end;
   justify-items: start;
   font-family: "Courier New", ui-monospace, monospace;
+  pointer-events: none;
 }
 
 .dev-menu-panel,
@@ -874,6 +881,10 @@ kbd {
 
 .dev-profiler-panel {
   width: 280px;
+}
+
+.dev-menu.open {
+  pointer-events: auto;
 }
 
 .dev-menu.open .dev-menu-panel,
@@ -1236,6 +1247,7 @@ kbd {
   left: 50%;
   display: none;
   gap: 10px;
+  pointer-events: none;
   transform: translateX(-50%);
 }
 
@@ -1248,6 +1260,7 @@ kbd {
   color: var(--cream);
   font-size: 22px;
   backdrop-filter: blur(8px);
+  pointer-events: auto;
   touch-action: none;
 }
 
