@@ -5942,8 +5942,6 @@
     if (surfaceY >= -6 && surfaceY <= height + 6) {
       wormPreviewContext.fillStyle = palette.ink;
       wormPreviewContext.fillRect(0, surfaceY - 3, width, 5);
-      wormPreviewContext.fillStyle = palette.acid;
-      wormPreviewContext.fillRect(0, surfaceY + 2, width, 2);
     }
   }
 
@@ -11737,8 +11735,6 @@
       appendTerrainDepthEdge(depthPath, x, y, x + size, y);
       targetContext.fillStyle = palette.ink;
       targetContext.fillRect(x, y, size, 5);
-      targetContext.fillStyle = palette.acid;
-      targetContext.fillRect(x, y + 5, size, 2);
     }
     targetContext.fillStyle = palette.ink;
     if (isExposed(column - 1, row)) {
