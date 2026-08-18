@@ -197,11 +197,11 @@
           <label class="dev-option" for="reveal-hitboxes">
           <input id="reveal-hitboxes" type="checkbox" />
           <span class="dev-checkbox" aria-hidden="true"></span>
-          <span class="dev-option-copy">
-            <strong>Hitboxes / hurtboxes</strong>
-              <small>Eating, targets + tongue avoidance</small>
-          </span>
-        </label>
+            <span class="dev-option-copy">
+              <strong>Hitboxes / hurtboxes</strong>
+              <small>Eating, acid, targets + tongue avoidance</small>
+            </span>
+          </label>
         <label class="dev-option" for="reveal-combat-stats">
           <input id="reveal-combat-stats" type="checkbox" />
           <span class="dev-checkbox" aria-hidden="true"></span>
@@ -395,6 +395,13 @@
   const tonguePointer = {
     pointerId: null,
   };
+  const spitterPointer = {
+    pointerId: null,
+    clientX: 0,
+    clientY: 0,
+    screenX: 0,
+    screenY: 0,
+  };
   const palette = {
     ink: "#73210c",
     cream: "#fff7ef",
@@ -414,6 +421,8 @@
     wormDark: "#750000",
     tongue: "#cf020c",
     tongueHighlight: "#ff8b83",
+    acidFluid: "#a9cf35",
+    acidHighlight: "#e5ff7a",
     beetle: "#750000",
     beetleShell: "#ec6f51",
     beetleHighlight: "#fff7ef",
@@ -509,6 +518,12 @@
     segmentsPerLevel: 1,
     maximumSpeedPerLevel: 30,
   });
+  const SPITTER_GROWTH_RULES = Object.freeze({
+    // Spitter gains the same approximate overall body length with fewer,
+    // substantially larger sections, giving it a heavier silhouette.
+    scalePerLevel: 0.18,
+    segmentsPerLevel: 0.5,
+  });
   const CAMERA_RULES = Object.freeze({
     levelsPerZoomStep: 5,
     zoomPerStep: 0.9,
@@ -529,6 +544,7 @@
   });
   const WORM_ABILITIES = Object.freeze({
     TONGUE: "tongue",
+    ACID: "acid",
   });
   const WORM_TYPES = Object.freeze({
     [WORM_TYPE_IDS.LICKER]: Object.freeze({
@@ -545,6 +561,7 @@
         segmentsPerLevel: GROWTH_RULES.segmentsPerLevel,
         baseMaximumSpeed: motion.maximumSpeed,
         maximumSpeedPerLevel: GROWTH_RULES.maximumSpeedPerLevel,
+        stoneLocomotionScalePerLevel: GROWTH_RULES.scalePerLevel,
         initialGrowthCost: GROWTH_RULES.initialCost,
         growthCostMultiplier: GROWTH_RULES.costMultiplier,
         baseBiteDamage: COMBAT_RULES.baseBiteDamage,
@@ -556,17 +573,18 @@
     [WORM_TYPE_IDS.SPITTER]: Object.freeze({
       id: WORM_TYPE_IDS.SPITTER,
       label: "Spitter",
-      ability: null,
-      abilityLabel: "Pending",
+      ability: WORM_ABILITIES.ACID,
+      abilityLabel: "Acid hose",
       description:
-        "Uses the standard worm movement and growth rules. Its unique ability will be added later.",
+        "Cranes toward the pointer and pours a persistent stream of damaging acid.",
       scaling: Object.freeze({
         baseEntityScale: ENTITY_SCALE,
-        scalePerLevel: GROWTH_RULES.scalePerLevel,
+        scalePerLevel: SPITTER_GROWTH_RULES.scalePerLevel,
         baseSegmentCount: WORM_SHAPE.segmentCount,
-        segmentsPerLevel: GROWTH_RULES.segmentsPerLevel,
+        segmentsPerLevel: SPITTER_GROWTH_RULES.segmentsPerLevel,
         baseMaximumSpeed: motion.maximumSpeed,
         maximumSpeedPerLevel: GROWTH_RULES.maximumSpeedPerLevel,
+        stoneLocomotionScalePerLevel: GROWTH_RULES.scalePerLevel,
         initialGrowthCost: GROWTH_RULES.initialCost,
         growthCostMultiplier: GROWTH_RULES.costMultiplier,
         baseBiteDamage: COMBAT_RULES.baseBiteDamage,
@@ -876,45 +894,86 @@
     bodyDrag: 0.94,
     bodyMaximumSpeedMultiplier: 3.5,
   });
-  // The active appearance is entirely file-backed. Replacing these PNGs (or
-  // pointing these paths at another set) changes the worm without touching
-  // its movement, collision, growth, or segment-following logic.
-  const BASE_WORM_SPRITE_FILES = Object.freeze({
-    headUpper: "./assets/worm/default-head-upper.png?v=20260803-custom-default",
-    headLower: "./assets/worm/default-head-lower.png?v=20260803-custom-default",
-    mouthUpper: "./assets/worm/default-mouth-upper.png?v=20260803-custom-default",
-    mouthLower: "./assets/worm/default-mouth-lower.png?v=20260803-custom-default",
-    segment: "./assets/worm/default-segment.png?v=20260803-custom-default",
-    segmentBand: "./assets/worm/default-segment-band.png?v=20260803-custom-default",
-    segmentOutline:
-      "./assets/worm/default-segment-outline.png?v=20260803-custom-default",
-    tongue: "./assets/worm/default-tongue.png?v=20260804-tongue-editor",
-    tongueRing:
-      "./assets/worm/default-tongue-ring.png?v=20260805-tongue-ring-editor",
+  const ACID_RULES = Object.freeze({
+    particlesPerSecond: 78,
+    particlesPerSecondSqrtLevelScale: 0.05,
+    maximumParticlesPerSecond: 120,
+    // Keep enough pooled capacity for a continuous hose even if a developer
+    // changes levels while older, longer-lived particles are still active.
+    maximumParticles: 1152,
+    maximumEmissionsPerFrame: 4,
+    particleRadius: 3.6,
+    particleRadiusVariance: 0.42,
+    baseVisualDropletsPerParticle: 4,
+    minimumVisualDensityMultiplier: 0.5,
+    maximumVisualDensityMultiplier: 10,
+    visualDensityTiers: Object.freeze([2, 4, 8, 16, 24, 32, 40]),
+    visualDropletMinimumRadiusScale: 0.68,
+    visualDropletMaximumRadiusScale: 0.94,
+    visualDropletMaximumOffset: 1.16,
+    visualClusterVariants: 16,
+    visualClusterAtlasColumns: 4,
+    visualClusterTileSize: 96,
+    visualClusterExtent: 2.62,
+    maximumClusterHighlights: 5,
+    minimumNozzleSpeed: 650,
+    maximumNozzleSpeed: 920,
+    maximumScalingLevel: 100,
+    nozzleSpeedVariance: 0.24,
+    nozzleJitter: 4.2,
+    spreadAngle: 0.13,
+    flowWobbleAngle: 0.06,
+    flowWobbleFrequency: 12.5,
+    lateralSpeedJitter: 70,
+    minimumLife: 0.8,
+    maximumLife: 1.1,
+    maximumLifeBonus: 3.5,
+    fadeDuration: 0.16,
+    damageReferenceDuration: 0.25,
+    latchedDamageDivisor: 33,
+    soilSpeedMultiplier: 0.5,
+    soilVelocityRetentionPerSecond: 0.78,
+    maximumTunneledTilesPerFrame: 32,
+    maximumTunnelDecayEntriesPerFrame: 256,
+    maximumTunnelRestorationsPerFrame: 64,
+    maximumMovementSubsteps: 48,
+    gravity: 680,
+    airDrag: 0.985,
+    surfaceFriction: 0.82,
+    restitution: 0.045,
+    collisionInset: 0.08,
+    maximumCollisionsPerFrame: 2,
+    craneBodyFraction: 1 / 3,
+    aimTurnSpeed: 11,
+    sprayJawAngleMultiplier: 1.18,
+    linkDistanceMultiplier: 4.5,
+    linkCoreRadiusScale: 1.2,
   });
-  const LICKER_WORM_SPRITE_FILES = Object.freeze({
+  // Both worm types share the current player-edited appearance by default.
+  // Their abilities and scaling remain independent of these sprite sources.
+  const SHARED_WORM_SPRITE_FILES = Object.freeze({
     headUpper:
-      "./assets/worm/licker-default-head-upper.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-head-upper.png?v=20260815-shared-current-default",
     headLower:
-      "./assets/worm/licker-default-head-lower.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-head-lower.png?v=20260815-shared-current-default",
     mouthUpper:
-      "./assets/worm/licker-default-mouth-upper.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-mouth-upper.png?v=20260815-shared-current-default",
     mouthLower:
-      "./assets/worm/licker-default-mouth-lower.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-mouth-lower.png?v=20260815-shared-current-default",
     segment:
-      "./assets/worm/licker-default-segment.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-segment.png?v=20260815-shared-current-default",
     segmentBand:
-      "./assets/worm/licker-default-segment-band.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-segment-band.png?v=20260815-shared-current-default",
     segmentOutline:
-      "./assets/worm/licker-default-segment-outline.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-segment-outline.png?v=20260815-shared-current-default",
     tongue:
-      "./assets/worm/licker-default-tongue.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-tongue.png?v=20260815-shared-current-default",
     tongueRing:
-      "./assets/worm/licker-default-tongue-ring.png?v=20260808-saved-licker-default",
+      "./assets/worm/shared-default-tongue-ring.png?v=20260815-shared-current-default",
   });
   const WORM_TYPE_DEFAULT_SPRITE_FILES = Object.freeze({
-    [WORM_TYPE_IDS.LICKER]: LICKER_WORM_SPRITE_FILES,
-    [WORM_TYPE_IDS.SPITTER]: BASE_WORM_SPRITE_FILES,
+    [WORM_TYPE_IDS.LICKER]: SHARED_WORM_SPRITE_FILES,
+    [WORM_TYPE_IDS.SPITTER]: SHARED_WORM_SPRITE_FILES,
   });
   function defaultWormSpriteFiles(typeId) {
     return (
@@ -1030,6 +1089,7 @@
   };
   const gameplayBodyLayoutCache = {
     segmentCount: 0,
+    scale: Number.NaN,
     renderIndices: [],
     cumulativeDistances: new Float32Array(0),
     minimumRenderedWidths: new Float32Array(0),
@@ -1126,6 +1186,17 @@
   // intentionally omitted from MATERIAL_TILE_VALUES so world saves and editor
   // material tools continue to expose only authored terrain materials.
   const TUNNELED_GROUND_TILE_VALUE = 3;
+  const ACID_TUNNEL_TEXTURE_OPACITY = 0.5;
+  // Old tunnel paint closes only after it is far beyond both the camera and
+  // minimap. One-second buckets stagger restoration without per-tile timers.
+  const TUNNEL_DECAY_RULES = Object.freeze({
+    minimumLifetime: 60,
+    lifetimeVariation: 14,
+    visibleDeferral: 5,
+    maximumTilesPerFrame: 256,
+    horizontalProtectionPadding: TERRAIN_CHUNK_WIDTH,
+    verticalProtectionPadding: TERRAIN_CHUNK_HEIGHT,
+  });
   const TILE_VALUE_MATERIALS = Object.freeze({
     [MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND]]: BLOCK_TYPES.GROUND,
     [MATERIAL_TILE_VALUES[BLOCK_TYPES.STONE]]: BLOCK_TYPES.STONE,
@@ -1134,6 +1205,7 @@
   const BLOCK_TEXTURES = Object.freeze({
     SOIL: "soil",
     TUNNELED_SOIL: "tunneled-soil",
+    ACID_TUNNELED_SOIL: "acid-tunneled-soil",
     STONE: "stone",
   });
   const CARDINAL_BLOCK_OFFSETS = Object.freeze([
@@ -1176,6 +1248,12 @@
     mouthBiteHoldTimer: 0,
     mouthChewTimer: 0,
     tongues: [],
+    acidParticles: [],
+    acidParticlePool: [],
+    acidEmissionAccumulator: 0,
+    acidParticleGeneration: 0,
+    acidLastEmittedParticle: null,
+    spitterAimAngle: null,
     latchAttack: null,
     boostLatchReady: true,
     showGrid: false,
@@ -1236,7 +1314,9 @@
       columns: 0,
       rows: 0,
       tiles: new Uint8Array(0),
-      tunneledTileIndices: [],
+      tunnelExpiryBuckets: new Map(),
+      nextTunnelExpiryTick: Infinity,
+      acidTunnelDecayRecords: new Map(),
       stoneClusterIds: null,
       stoneClusters: [],
       stoneSurfacePaths: [],
@@ -1250,6 +1330,28 @@
     zoom: 1,
   };
 
+  const spitterCraneRenderState = {
+    segments: [],
+    outputSegments: [],
+    headPose: { x: 0, y: 0, angle: 0 },
+  };
+  // Frame-local particle-seconds accumulated by acid carriers that are stuck
+  // to each target. Reusing this Map keeps dense, high-level sprays from
+  // allocating a damage record for every carrier on every frame.
+  const acidLatchedTargetSeconds = new Map();
+  const acidActiveTargets = new Set();
+  const acidTargetContactScratch = {
+    time: 0,
+    normalX: 1,
+    normalY: 0,
+    centerDistanceSquared: 0,
+  };
+  const acidClusterAtlasCache = new Map();
+  let acidTunnelTilesRemaining = 0;
+  let acidTunnelTilesChanged = 0;
+  const tunnelDecayChunkKeys = new Set();
+  const tunnelDecayPlaceholderKeys = new Set();
+
   const MINIMAP_RULES = Object.freeze({
     width: 184,
     height: 132,
@@ -1260,6 +1362,7 @@
     outside: Object.freeze([115, 33, 12]),
     air: Object.freeze([116, 32, 25]),
     ground: Object.freeze([116, 65, 45]),
+    acidTunneled: Object.freeze([85, 50, 37]),
     tunneled: Object.freeze([53, 35, 29]),
     stone: Object.freeze([111, 83, 87]),
   });
@@ -1709,8 +1812,10 @@
   const wormDimension = (name) => WORM_SHAPE[name] * wormScale();
   const wormSegmentSpacing = () => wormDimension("segmentSpacing");
   const wormSegmentCount = () =>
-    activeWormScaling().baseSegmentCount +
-    game.growthLevel * activeWormScaling().segmentsPerLevel;
+    Math.floor(
+      activeWormScaling().baseSegmentCount +
+        game.growthLevel * activeWormScaling().segmentsPerLevel,
+    );
   const wormMaximumSpeed = () =>
     activeWormScaling().baseMaximumSpeed +
     game.growthLevel * activeWormScaling().maximumSpeedPerLevel;
@@ -2900,7 +3005,9 @@
       columns,
       rows,
       tiles,
-      tunneledTileIndices: [],
+      tunnelExpiryBuckets: new Map(),
+      nextTunnelExpiryTick: Infinity,
+      acidTunnelDecayRecords: new Map(),
       stoneClusterIds: stoneGeometry.clusterIds,
       stoneClusters: stoneGeometry.clusters,
       stoneDistanceField: stoneGeometry.distanceField,
@@ -2943,7 +3050,9 @@
       baseTexture,
       texture:
         tileValue === TUNNELED_GROUND_TILE_VALUE
-          ? BLOCK_TEXTURES.TUNNELED_SOIL
+          ? game.map.acidTunnelDecayRecords.has(index)
+            ? BLOCK_TEXTURES.ACID_TUNNELED_SOIL
+            : BLOCK_TEXTURES.TUNNELED_SOIL
           : baseTexture,
       stoneClusterId: game.map.stoneClusterIds?.[index] ?? -1,
     };
@@ -3070,6 +3179,8 @@
       kind,
       x,
       y,
+      acidPreviousX: x,
+      acidPreviousY: y,
       angle,
       radius: definition.radius,
       sizeScale: definition.sizeScale,
@@ -3340,7 +3451,9 @@
               : tileValue === MATERIAL_TILE_VALUES[BLOCK_TYPES.STONE]
                 ? MINIMAP_COLORS.stone
                 : tileValue === TUNNELED_GROUND_TILE_VALUE
-                  ? MINIMAP_COLORS.tunneled
+                  ? game.map.acidTunnelDecayRecords.has(rowOffset + column)
+                    ? MINIMAP_COLORS.acidTunneled
+                    : MINIMAP_COLORS.tunneled
                   : MINIMAP_COLORS.air;
         }
         const pixel = (y * width + x) * 4;
@@ -3485,6 +3598,8 @@
 
   function reset() {
     cancelHeldTonguePointer();
+    cancelSpitterPointer();
+    clearAcidParticles();
     game.head.x = game.spawn.x;
     game.head.y = game.spawn.y;
     game.previous.x = game.head.x;
@@ -3545,6 +3660,7 @@
     keys.down = false;
     keys.boost = false;
     cancelHeldTonguePointer();
+    cancelSpitterPointer();
   }
 
   function updateActiveWormTypeLabels() {
@@ -3634,6 +3750,8 @@
     const previousBoostCapacity = Math.max(0.001, boostCapacity());
     const boostRatio = clamp(game.boostCharge / previousBoostCapacity, 0, 1);
     discardActiveTongues();
+    cancelSpitterPointer();
+    clearAcidParticles();
     game.activeWormTypeId = typeId;
     game.growthCost = growthCostForLevel(game.scoreGrowthLevel);
     if (game.segments.length > 0) {
@@ -3670,9 +3788,13 @@
     description.textContent = type.description;
     const scaling = document.createElement("span");
     scaling.className = "worm-type-scaling";
+    const segmentGrowthLabel =
+      type.scaling.segmentsPerLevel === 0.5
+        ? "+1 segment / 2 levels"
+        : `+${type.scaling.segmentsPerLevel} segment / level`;
     scaling.textContent =
-      `+${Math.round(type.scaling.scalePerLevel * 100)}% size · ` +
-      `+${type.scaling.segmentsPerLevel} segment · ` +
+      `+${Math.round(type.scaling.scalePerLevel * 100)}% size / level · ` +
+      `${segmentGrowthLabel} · ` +
       `+${type.scaling.maximumSpeedPerLevel} speed / level`;
     const button = document.createElement("button");
     button.type = "button";
@@ -3726,6 +3848,7 @@
   function openMainMenu() {
     if (!game.levelLoaded || !game.started || game.homeOpen) return;
     clearControlKeys();
+    cancelSpitterPointer();
     toggleDevMenu(false);
     game.paused = true;
     gameShell.dataset.paused = "true";
@@ -5800,15 +5923,24 @@
     scale = 1,
     mirroredJawSource = null,
     mirroredMouthSource = null,
+    jawAngleMultiplier = 1,
   ) {
     const headWidth = WORM_SPRITE_METRICS.headWidth * scale;
     const headHeight = WORM_SPRITE_METRICS.headHeight * scale;
     const hingeX = WORM_SPRITE_METRICS.jawHingeX * scale;
-    const jawAngle = MOUTH_BEHAVIOR.maxJawAngle * clamp(openness, 0, 1);
+    const jawAngle =
+      MOUTH_BEHAVIOR.maxJawAngle *
+      clamp(openness, 0, 1) *
+      Math.max(0, jawAngleMultiplier);
+    const facingLeft = Math.cos(angle) < 0;
 
     targetContext.save();
     targetContext.translate(x, y);
-    targetContext.rotate(angle);
+    // Keep the side-view artwork upright while preserving the head's true
+    // forward axis. A plain half-turn would place the upper mouth underneath
+    // the lower one whenever the worm faces left.
+    targetContext.rotate(facingLeft ? angle + Math.PI : angle);
+    if (facingLeft) targetContext.scale(-1, 1);
     drawMouthHalves(
       targetContext,
       sprites,
@@ -6862,6 +6994,157 @@
       x: game.head.x + Math.cos(angle) * headOffset,
       y: game.head.y + Math.sin(angle) * headOffset,
       angle,
+    };
+  }
+
+  function spitterSprayIsActive() {
+    return (
+      spitterPointer.pointerId !== null &&
+      wormHasAbility(WORM_ABILITIES.ACID) &&
+      game.levelLoaded &&
+      game.started &&
+      !game.paused &&
+      !game.menuOpen
+    );
+  }
+
+  function spitterHasHeadGuidedAcid() {
+    for (let index = 0; index < game.acidParticles.length; index += 1) {
+      if (game.acidParticles[index].headGuideActive) return true;
+    }
+    return false;
+  }
+
+  function spitterHeadPoseShouldRemainActive() {
+    return spitterSprayIsActive() || spitterHasHeadGuidedAcid();
+  }
+
+  function spitterCranePoseIsActive() {
+    return (
+      spitterHeadPoseShouldRemainActive() &&
+      !game.inGround &&
+      Number.isFinite(game.spitterAimAngle) &&
+      game.segments.length >= 2
+    );
+  }
+
+  function spitterAimWorldPoint() {
+    const zoom = cameraZoom();
+    return {
+      x:
+        game.head.x +
+        (spitterPointer.screenX - game.viewport.width * 0.5) / zoom,
+      y:
+        game.head.y +
+        (spitterPointer.screenY - game.viewport.height * 0.5) / zoom,
+    };
+  }
+
+  function updateSpitterAim(dt) {
+    if (!spitterSprayIsActive()) {
+      game.acidEmissionAccumulator = 0;
+      // A released pointer stops emission, but the rendered head holds its
+      // last pose until every already-emitted carrier finishes the full
+      // head-local launch guide.
+      if (game.inGround || !spitterHasHeadGuidedAcid()) {
+        game.spitterAimAngle = null;
+      }
+      return;
+    }
+    if (game.inGround) {
+      game.spitterAimAngle = null;
+      return;
+    }
+
+    const target = spitterAimWorldPoint();
+    const origin = game.segments[0] || game.head;
+    const targetX = nearestPeriodicWorldX(target.x, origin.x);
+    const desiredAngle = Math.atan2(target.y - origin.y, targetX - origin.x);
+    if (!Number.isFinite(game.spitterAimAngle)) {
+      game.spitterAimAngle = getWormHeadAngle();
+    }
+    const difference = Math.atan2(
+      Math.sin(desiredAngle - game.spitterAimAngle),
+      Math.cos(desiredAngle - game.spitterAimAngle),
+    );
+    game.spitterAimAngle += clamp(
+      difference,
+      -ACID_RULES.aimTurnSpeed * dt,
+      ACID_RULES.aimTurnSpeed * dt,
+    );
+  }
+
+  function buildSpitterCraneRenderState() {
+    const sourceSegments = game.segments;
+    const renderState = spitterCraneRenderState;
+    const aiming = spitterCranePoseIsActive();
+
+    if (!aiming || sourceSegments.length < 2) {
+      renderState.outputSegments = sourceSegments;
+      const pose = getEatHitboxPose();
+      renderState.headPose.x = pose.x;
+      renderState.headPose.y = pose.y;
+      renderState.headPose.angle = pose.angle;
+      return renderState;
+    }
+
+    while (renderState.segments.length < sourceSegments.length) {
+      renderState.segments.push({ x: 0, y: 0 });
+    }
+    renderState.segments.length = sourceSegments.length;
+    for (let index = 0; index < sourceSegments.length; index += 1) {
+      renderState.segments[index].x = sourceSegments[index].x;
+      renderState.segments[index].y = sourceSegments[index].y;
+    }
+
+    const craneSegmentCount = clamp(
+      Math.floor(sourceSegments.length * ACID_RULES.craneBodyFraction),
+      1,
+      sourceSegments.length - 1,
+    );
+    const anchorIndex = craneSegmentCount;
+    const anchor = sourceSegments[anchorIndex];
+    const forwardNeighbor = sourceSegments[Math.max(0, anchorIndex - 1)];
+    const baseAngle = Math.atan2(
+      forwardNeighbor.y - anchor.y,
+      forwardNeighbor.x - anchor.x,
+    );
+    const turn = Math.atan2(
+      Math.sin(game.spitterAimAngle - baseAngle),
+      Math.cos(game.spitterAimAngle - baseAngle),
+    );
+    const spacing = wormSegmentSpacing();
+    let x = anchor.x;
+    let y = anchor.y;
+    for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+      const progress = (anchorIndex - index) / Math.max(1, anchorIndex);
+      const easedProgress = progress * progress * (3 - 2 * progress);
+      const linkAngle = baseAngle + turn * easedProgress;
+      x += Math.cos(linkAngle) * spacing;
+      y += Math.sin(linkAngle) * spacing;
+      renderState.segments[index].x = x;
+      renderState.segments[index].y = y;
+    }
+
+    const headBase = renderState.segments[0];
+    const headOffset = wormDimension("headOffset");
+    renderState.outputSegments = renderState.segments;
+    renderState.headPose.x =
+      headBase.x + Math.cos(game.spitterAimAngle) * headOffset;
+    renderState.headPose.y =
+      headBase.y + Math.sin(game.spitterAimAngle) * headOffset;
+    renderState.headPose.angle = game.spitterAimAngle;
+    return renderState;
+  }
+
+  function spitterAcidNozzlePose() {
+    const renderState = buildSpitterCraneRenderState();
+    const pose = renderState.headPose;
+    const throatOffset = WORM_SPRITE_METRICS.jawHingeX * wormScale();
+    return {
+      x: pose.x + Math.cos(pose.angle) * throatOffset,
+      y: pose.y + Math.sin(pose.angle) * throatOffset,
+      angle: pose.angle,
     };
   }
 
@@ -8386,10 +8669,23 @@
   function updateTargets(dt) {
     game.targets.forEach((target) => {
       keepEnemyInsideWorld(target);
+      // Acid particles update after enemies. Preserve this frame's starting
+      // position so a fast particle and a fast enemy are tested in their
+      // shared moving reference frame instead of only against the endpoint.
+      target.acidPreviousX = target.x;
+      target.acidPreviousY = target.y;
       target.healthBarTimer = Math.max(
         0,
         (Number(target.healthBarTimer) || 0) - dt,
       );
+      // `game.latchAttack` is the sole owner of the latched state. Recover
+      // defensively if an older save/session or a future transition ever
+      // leaves a target flagged without that ownership; otherwise the early
+      // return below would freeze it and every special targeter would skip it.
+      if (target.latched && game.latchAttack?.target !== target) {
+        target.latched = false;
+        target.boostLatchHitboxDisabled = true;
+      }
       if (target.tongueCaptured) return;
       if (target.paralyzed) {
         updateParalyzedEnemy(target, dt);
@@ -8433,6 +8729,1146 @@
         updateSequencedEnemy(target, dt);
       }
     });
+  }
+
+  function acidParticleSizeScale() {
+    return clamp(Math.sqrt(wormScale() / ENTITY_SCALE), 1, 2.15);
+  }
+
+  function acidParticlesPerSecond() {
+    const levelScale =
+      1 +
+      Math.sqrt(Math.max(0, game.growthLevel)) *
+        ACID_RULES.particlesPerSecondSqrtLevelScale;
+    return Math.min(
+      ACID_RULES.maximumParticlesPerSecond,
+      ACID_RULES.particlesPerSecond * levelScale,
+    );
+  }
+
+  function acidLevelRatio() {
+    return clamp(
+      Math.max(0, game.growthLevel) / ACID_RULES.maximumScalingLevel,
+      0,
+      1,
+    );
+  }
+
+  function acidVisualDropletCount() {
+    const expectedCount =
+      ACID_RULES.baseVisualDropletsPerParticle *
+      lerp(
+        ACID_RULES.minimumVisualDensityMultiplier,
+        ACID_RULES.maximumVisualDensityMultiplier,
+        acidLevelRatio(),
+      );
+    const tiers = ACID_RULES.visualDensityTiers;
+    if (expectedCount <= tiers[0]) return tiers[0];
+    for (let index = 1; index < tiers.length; index += 1) {
+      const upper = tiers[index];
+      if (expectedCount > upper) continue;
+      const lower = tiers[index - 1];
+      const upperChance = (expectedCount - lower) / (upper - lower);
+      return Math.random() < upperChance ? upper : lower;
+    }
+    return tiers[tiers.length - 1];
+  }
+
+  function acidNozzleSpeed() {
+    return lerp(
+      ACID_RULES.minimumNozzleSpeed,
+      ACID_RULES.maximumNozzleSpeed,
+      acidLevelRatio(),
+    );
+  }
+
+  function acidParticleLifetimeBonus() {
+    return ACID_RULES.maximumLifeBonus * acidLevelRatio();
+  }
+
+  function acidParticleRenderRadius(particle) {
+    const fade = clamp(particle.life / ACID_RULES.fadeDuration, 0, 1);
+    return particle.radius * Math.pow(fade, 0.72);
+  }
+
+  function clearAcidParticles() {
+    for (let index = 0; index < game.acidParticles.length; index += 1) {
+      const particle = game.acidParticles[index];
+      particle.active = false;
+      particle.latchedTarget = null;
+      game.acidParticlePool.push(particle);
+    }
+    game.acidParticles.length = 0;
+    game.acidLastEmittedParticle = null;
+    game.acidEmissionAccumulator = 0;
+    game.spitterAimAngle = null;
+    acidLatchedTargetSeconds.clear();
+    acidActiveTargets.clear();
+  }
+
+  function releaseAcidParticle(index) {
+    const particle = game.acidParticles[index];
+    particle.active = false;
+    // Do not let the pool retain an otherwise unreachable enemy object after
+    // a kill, capture, reset, or world unload.
+    particle.latchedTarget = null;
+    particle.latchNormalX = 0;
+    particle.latchNormalY = 0;
+    if (game.acidLastEmittedParticle === particle) {
+      game.acidLastEmittedParticle = null;
+    }
+    const lastIndex = game.acidParticles.length - 1;
+    if (index !== lastIndex) {
+      game.acidParticles[index] = game.acidParticles[lastIndex];
+    }
+    game.acidParticles.pop();
+    game.acidParticlePool.push(particle);
+  }
+
+  function spawnAcidParticle(nozzle) {
+    if (game.acidParticles.length >= ACID_RULES.maximumParticles) return false;
+    const particle = game.acidParticlePool.pop() || {};
+    const sizeScale = acidParticleSizeScale();
+    const radiusVariation = lerp(
+      1 - ACID_RULES.particleRadiusVariance,
+      1 + ACID_RULES.particleRadiusVariance,
+      Math.random(),
+    );
+    const flowWobble =
+      Math.sin(game.elapsed * ACID_RULES.flowWobbleFrequency) *
+      ACID_RULES.flowWobbleAngle;
+    const angle =
+      nozzle.angle +
+      flowWobble +
+      (Math.random() * 2 - 1) * ACID_RULES.spreadAngle;
+    const normalX = -Math.sin(nozzle.angle);
+    const normalY = Math.cos(nozzle.angle);
+    const nozzleJitter =
+      (Math.random() * 2 - 1) * sizeScale * ACID_RULES.nozzleJitter;
+    const jetSpeed =
+      acidNozzleSpeed() *
+      lerp(
+        1 - ACID_RULES.nozzleSpeedVariance,
+        1 + ACID_RULES.nozzleSpeedVariance,
+        Math.random(),
+      );
+    const lateralSpeed =
+      (Math.random() * 2 - 1) * ACID_RULES.lateralSpeedJitter * sizeScale;
+    // Keep the worm's launch momentum separate from the nozzle jet. The
+    // half-speed soil multiplier applies only to the jet, while underground
+    // friction can still dissipate both parts of the particle's motion.
+    const inheritedVelocityX = game.velocity.x;
+    const inheritedVelocityY = game.velocity.y;
+    particle.active = true;
+    particle.generation = ++game.acidParticleGeneration;
+    particle.x = nozzle.x + normalX * nozzleJitter;
+    particle.y = nozzle.y + normalY * nozzleJitter;
+    particle.previousX = particle.x;
+    particle.previousY = particle.y;
+    const relativeVelocityX =
+      Math.cos(angle) * jetSpeed + normalX * lateralSpeed;
+    const relativeVelocityY =
+      Math.sin(angle) * jetSpeed + normalY * lateralSpeed;
+    const guideSpeed = Math.max(
+      0.0001,
+      magnitude(relativeVelocityX, relativeVelocityY),
+    );
+    const nozzleCosine = Math.cos(nozzle.angle);
+    const nozzleSine = Math.sin(nozzle.angle);
+    const spawnOffsetX = particle.x - nozzle.x;
+    const spawnOffsetY = particle.y - nozzle.y;
+    particle.headGuideActive = true;
+    particle.headGuideStartX =
+      spawnOffsetX * nozzleCosine + spawnOffsetY * nozzleSine;
+    particle.headGuideStartY =
+      -spawnOffsetX * nozzleSine + spawnOffsetY * nozzleCosine;
+    particle.headGuideDirectionX =
+      (relativeVelocityX * nozzleCosine +
+        relativeVelocityY * nozzleSine) /
+      guideSpeed;
+    particle.headGuideDirectionY =
+      (-relativeVelocityX * nozzleSine +
+        relativeVelocityY * nozzleCosine) /
+      guideSpeed;
+    particle.headGuideSpeed = guideSpeed;
+    particle.headGuideDistance = 0;
+    particle.headGuideLength =
+      WORM_SPRITE_METRICS.headWidth * wormScale();
+    particle.headGuideScale = wormScale();
+    particle.headGuidePoseX = nozzle.x;
+    particle.headGuidePoseY = nozzle.y;
+    particle.headGuidePoseAngle = nozzle.angle;
+    particle.headGuidePoseMode = spitterCranePoseIsActive() ? 1 : 0;
+    particle.inheritedVx = inheritedVelocityX;
+    particle.inheritedVy = inheritedVelocityY;
+    particle.vx = relativeVelocityX + inheritedVelocityX;
+    particle.vy = relativeVelocityY + inheritedVelocityY;
+    particle.radius = ACID_RULES.particleRadius * sizeScale * radiusVariation;
+    const lifetimeBonus = acidParticleLifetimeBonus();
+    particle.life = lerp(
+      ACID_RULES.minimumLife + lifetimeBonus,
+      ACID_RULES.maximumLife + lifetimeBonus,
+      Math.random(),
+    );
+    particle.maximumLife = particle.life;
+    particle.visualDropletCount = acidVisualDropletCount();
+    particle.visualVariant =
+      particle.generation % ACID_RULES.visualClusterVariants;
+    particle.collisionEpoch = 0;
+    particle.latchedTarget = null;
+    particle.latchNormalX = 0;
+    particle.latchNormalY = 0;
+    particle.acidWorldMotionTime = 0;
+    const previous = game.acidLastEmittedParticle;
+    particle.link = previous?.active ? previous : null;
+    particle.linkGeneration = particle.link?.generation ?? -1;
+    game.acidLastEmittedParticle = particle;
+    game.acidParticles.push(particle);
+    return true;
+  }
+
+  function emitSpitterAcid(dt, nozzlePose = null) {
+    if (!spitterSprayIsActive()) return;
+    game.acidEmissionAccumulator = Math.min(
+      ACID_RULES.maximumEmissionsPerFrame,
+      game.acidEmissionAccumulator + acidParticlesPerSecond() * dt,
+    );
+    const emissionCount = Math.min(
+      ACID_RULES.maximumEmissionsPerFrame,
+      Math.floor(game.acidEmissionAccumulator),
+    );
+    if (emissionCount <= 0) return;
+    const nozzle = nozzlePose || spitterAcidNozzlePose();
+    let emitted = 0;
+    while (emitted < emissionCount && spawnAcidParticle(nozzle)) {
+      emitted += 1;
+      game.acidEmissionAccumulator -= 1;
+    }
+    if (game.acidParticles.length >= ACID_RULES.maximumParticles) {
+      game.acidEmissionAccumulator = 0;
+    }
+  }
+
+  function acidPointIsInUndergroundSoil(x, y) {
+    const size = game.map.cellSize;
+    const row = Math.floor(y / size);
+    if (row < 0 || row >= game.map.rows) return false;
+    const column = wrapWorldColumn(Math.floor(x / size));
+    const blockIndex = row * game.map.columns + column;
+    const tileValue = game.map.tiles[blockIndex];
+    return (
+      tileValue === MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND] ||
+      (tileValue === TUNNELED_GROUND_TILE_VALUE &&
+        game.map.acidTunnelDecayRecords.has(blockIndex))
+    );
+  }
+
+  function tunnelGroundTilesTouchedByAcid(
+    startX,
+    startY,
+    endX,
+    endY,
+    radius,
+    remainingLife,
+  ) {
+    if (remainingLife <= 0 || game.map.columns <= 0) return;
+    const size = game.map.cellSize;
+    const minimumColumn = Math.floor(
+      (Math.min(startX, endX) - radius) / size,
+    );
+    const maximumColumn = Math.floor(
+      (Math.max(startX, endX) + radius) / size,
+    );
+    const minimumRow = clamp(
+      Math.floor((Math.min(startY, endY) - radius) / size),
+      0,
+      game.map.rows - 1,
+    );
+    const maximumRow = clamp(
+      Math.floor((Math.max(startY, endY) + radius) / size),
+      0,
+      game.map.rows - 1,
+    );
+    const groundValue = MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND];
+
+    for (let row = minimumRow; row <= maximumRow; row += 1) {
+      const rowOffset = row * game.map.columns;
+      for (
+        let column = minimumColumn;
+        column <= maximumColumn;
+        column += 1
+      ) {
+        const wrappedColumn = wrapWorldColumn(column);
+        const blockIndex = rowOffset + wrappedColumn;
+        const tileValue = game.map.tiles[blockIndex];
+        const acidOwnedTunnel =
+          tileValue === TUNNELED_GROUND_TILE_VALUE &&
+          game.map.acidTunnelDecayRecords.has(blockIndex);
+        if (tileValue !== groundValue && !acidOwnedTunnel) continue;
+        if (tileValue === groundValue && acidTunnelTilesRemaining <= 0) {
+          continue;
+        }
+        if (
+          !sweepPointAgainstAabb(
+            startX,
+            startY,
+            endX,
+            endY,
+            column * size - radius,
+            row * size - radius,
+            (column + 1) * size + radius,
+            (row + 1) * size + radius,
+          )
+        ) {
+          continue;
+        }
+        if (
+          tunnelGroundTileWithAcid(
+            wrappedColumn,
+            row,
+            blockIndex,
+            remainingLife,
+          )
+        ) {
+          acidTunnelTilesRemaining -= 1;
+          acidTunnelTilesChanged += 1;
+        }
+      }
+    }
+  }
+
+  function findAcidBlockCollision(
+    startX,
+    startY,
+    endX,
+    endY,
+    radius,
+  ) {
+    const size = game.map.cellSize;
+    const minimumColumn = Math.floor(
+      (Math.min(startX, endX) - radius) / size,
+    );
+    const maximumColumn = Math.floor(
+      (Math.max(startX, endX) + radius) / size,
+    );
+    const minimumRow = clamp(
+      Math.floor((Math.min(startY, endY) - radius) / size),
+      0,
+      game.map.rows - 1,
+    );
+    const maximumRow = clamp(
+      Math.floor((Math.max(startY, endY) + radius) / size),
+      0,
+      game.map.rows - 1,
+    );
+    let earliestCollision = null;
+
+    for (let row = minimumRow; row <= maximumRow; row += 1) {
+      const rowOffset = row * game.map.columns;
+      for (let column = minimumColumn; column <= maximumColumn; column += 1) {
+        const wrappedColumn = wrapWorldColumn(column);
+        const blockIndex = rowOffset + wrappedColumn;
+        const tileValue = game.map.tiles[blockIndex];
+        if (
+          tileValue === 0 ||
+          tileValue === MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND] ||
+          tileValue === TUNNELED_GROUND_TILE_VALUE
+        ) {
+          continue;
+        }
+        const collision = sweepPointAgainstAabb(
+          startX,
+          startY,
+          endX,
+          endY,
+          column * size - radius,
+          row * size - radius,
+          (column + 1) * size + radius,
+          (row + 1) * size + radius,
+        );
+        if (!collision) continue;
+        const isEarlier =
+          !earliestCollision ||
+          collision.time < earliestCollision.time - 0.000001;
+        const isShallowerStartOverlap =
+          earliestCollision &&
+          Math.abs(collision.time - earliestCollision.time) <= 0.000001 &&
+          collision.startsInside &&
+          collision.penetration <
+            (earliestCollision.penetration ?? Infinity);
+        if (isEarlier || isShallowerStartOverlap) {
+          earliestCollision = {
+            ...collision,
+            tileValue,
+            column: wrappedColumn,
+            row,
+            blockIndex,
+          };
+        }
+      }
+    }
+    return earliestCollision;
+  }
+
+  function moveAcidParticle(particle, dt, recordPrevious = true) {
+    if (recordPrevious) {
+      particle.previousX = particle.x;
+      particle.previousY = particle.y;
+    }
+    particle.inheritedVx = Number.isFinite(particle.inheritedVx)
+      ? particle.inheritedVx
+      : 0;
+    particle.inheritedVy = Number.isFinite(particle.inheritedVy)
+      ? particle.inheritedVy
+      : 0;
+    const drag = Math.pow(ACID_RULES.airDrag, dt);
+    particle.vx =
+      particle.inheritedVx +
+      (particle.vx - particle.inheritedVx) * drag;
+    const maximumFallSpeed = acidNozzleSpeed() * 2.5;
+    const relativeVelocityX = particle.vx - particle.inheritedVx;
+    const relativeVelocityY = particle.vy - particle.inheritedVy;
+    const possibleAirRelativeVelocityY = Math.min(
+      maximumFallSpeed,
+      relativeVelocityY + ACID_RULES.gravity * dt,
+    );
+    const soilScale = ACID_RULES.soilSpeedMultiplier;
+    const unrestrictedDistance =
+      Math.max(
+        magnitude(particle.vx, particle.vy),
+        magnitude(
+          particle.vx,
+          particle.inheritedVy + possibleAirRelativeVelocityY,
+        ),
+        magnitude(
+          particle.inheritedVx + relativeVelocityX * soilScale,
+          particle.inheritedVy + relativeVelocityY * soilScale,
+        ),
+        magnitude(
+          particle.inheritedVx + relativeVelocityX * soilScale,
+          particle.inheritedVy + possibleAirRelativeVelocityY * soilScale,
+        ),
+      ) * dt;
+    const movementSubsteps = clamp(
+      Math.ceil(
+        unrestrictedDistance / Math.max(1, game.map.cellSize * 0.5),
+      ),
+      1,
+      ACID_RULES.maximumMovementSubsteps,
+    );
+    const substepDuration = dt / movementSubsteps;
+    let collisionCount = 0;
+    movement: for (let step = 0; step < movementSubsteps; step += 1) {
+      // Soil slows the stream but does not pull it downward. Apply gravity in
+      // small medium-aware steps so crossing a surface changes behavior
+      // promptly without adding a terrain scan or extra collision pass.
+      const inUndergroundSoil = acidPointIsInUndergroundSoil(
+        particle.x,
+        particle.y,
+      );
+      if (inUndergroundSoil) {
+        const soilRetention = Math.pow(
+          ACID_RULES.soilVelocityRetentionPerSecond,
+          substepDuration,
+        );
+        particle.vx *= soilRetention;
+        particle.vy *= soilRetention;
+        particle.inheritedVx *= soilRetention;
+        particle.inheritedVy *= soilRetention;
+      } else {
+        const nextRelativeVelocityY = Math.min(
+          maximumFallSpeed,
+          particle.vy -
+            particle.inheritedVy +
+            ACID_RULES.gravity * substepDuration,
+        );
+        particle.vy = particle.inheritedVy + nextRelativeVelocityY;
+      }
+      let remainingTime = substepDuration;
+      while (remainingTime > 0.000001) {
+        const startX = particle.x;
+        const startY = particle.y;
+        const movementScale = acidPointIsInUndergroundSoil(startX, startY)
+          ? ACID_RULES.soilSpeedMultiplier
+          : 1;
+        const effectiveVelocityX = lerp(
+          particle.inheritedVx,
+          particle.vx,
+          movementScale,
+        );
+        const effectiveVelocityY = lerp(
+          particle.inheritedVy,
+          particle.vy,
+          movementScale,
+        );
+        const endX = startX + effectiveVelocityX * remainingTime;
+        const endY = startY + effectiveVelocityY * remainingTime;
+        const collision = findAcidBlockCollision(
+          startX,
+          startY,
+          endX,
+          endY,
+          particle.radius,
+        );
+        if (!collision) {
+          tunnelGroundTilesTouchedByAcid(
+            startX,
+            startY,
+            endX,
+            endY,
+            particle.radius,
+            particle.life,
+          );
+          particle.x = endX;
+          particle.y = endY;
+          break;
+        }
+
+        collisionCount += 1;
+        particle.collisionEpoch += 1;
+        const collisionTime = clamp(collision.time, 0, 1);
+        particle.x = lerp(startX, endX, collisionTime);
+        particle.y = lerp(startY, endY, collisionTime);
+        tunnelGroundTilesTouchedByAcid(
+          startX,
+          startY,
+          particle.x,
+          particle.y,
+          particle.radius,
+          particle.life,
+        );
+        const separation =
+          (collision.startsInside ? collision.penetration || 0 : 0) +
+          ACID_RULES.collisionInset;
+        particle.x += collision.normalX * separation;
+        particle.y += collision.normalY * separation;
+        const normalVelocity =
+          effectiveVelocityX * collision.normalX +
+          effectiveVelocityY * collision.normalY;
+        if (normalVelocity < 0) {
+          // The collision response is a linear transform. Apply it to the
+          // stored launch and full-speed vectors independently so their
+          // medium-weighted sum receives the exact same rebound.
+          const fullNormalVelocity =
+            particle.vx * collision.normalX +
+            particle.vy * collision.normalY;
+          const inheritedNormalVelocity =
+            particle.inheritedVx * collision.normalX +
+            particle.inheritedVy * collision.normalY;
+          particle.vx =
+            (particle.vx - collision.normalX * fullNormalVelocity) *
+              ACID_RULES.surfaceFriction -
+            collision.normalX *
+              fullNormalVelocity *
+              ACID_RULES.restitution;
+          particle.vy =
+            (particle.vy - collision.normalY * fullNormalVelocity) *
+              ACID_RULES.surfaceFriction -
+            collision.normalY *
+              fullNormalVelocity *
+              ACID_RULES.restitution;
+          particle.inheritedVx =
+            (particle.inheritedVx -
+              collision.normalX * inheritedNormalVelocity) *
+              ACID_RULES.surfaceFriction -
+            collision.normalX *
+              inheritedNormalVelocity *
+              ACID_RULES.restitution;
+          particle.inheritedVy =
+            (particle.inheritedVy -
+              collision.normalY * inheritedNormalVelocity) *
+              ACID_RULES.surfaceFriction -
+            collision.normalY *
+              inheritedNormalVelocity *
+              ACID_RULES.restitution;
+        }
+        if (collisionCount >= ACID_RULES.maximumCollisionsPerFrame) {
+          break movement;
+        }
+        remainingTime *= collisionTime <= 0.000001 ? 0.2 : 1 - collisionTime;
+      }
+    }
+  }
+
+  function rebaseHeadGuidedAcidParticle(particle, previousPose) {
+    const particleX = nearestPeriodicWorldX(particle.x, previousPose.x);
+    const offsetX = particleX - previousPose.x;
+    const offsetY = particle.y - previousPose.y;
+    const cosine = Math.cos(previousPose.angle);
+    const sine = Math.sin(previousPose.angle);
+    const localX = cosine * offsetX + sine * offsetY;
+    const localY = -sine * offsetX + cosine * offsetY;
+    const guideDistance = clamp(
+      Number(particle.headGuideDistance) || 0,
+      0,
+      Math.max(0, Number(particle.headGuideLength) || 0),
+    );
+
+    // Absorb a discrete visual-pose change into the line's local origin. The
+    // particle keeps its exact world position, original ray direction, speed,
+    // accumulated distance, and stored full-image length.
+    particle.x = particleX;
+    particle.headGuideStartX =
+      localX - particle.headGuideDirectionX * guideDistance;
+    particle.headGuideStartY =
+      localY - particle.headGuideDirectionY * guideDistance;
+    particle.headGuidePoseX = previousPose.x;
+    particle.headGuidePoseY = previousPose.y;
+    particle.headGuidePoseAngle = previousPose.angle;
+  }
+
+  function safePreviousAcidGuidePose(currentPose) {
+    const headX = nearestPeriodicWorldX(game.head.x, game.previous.x);
+    const physicalDeltaX = headX - game.previous.x;
+    const physicalDeltaY = game.head.y - game.previous.y;
+    const previousAngle = Number.isFinite(game.previousEatHitbox?.angle)
+      ? game.previousEatHitbox.angle
+      : getWormHeadAngle();
+    const currentAngle = getWormHeadAngle();
+    const physicalAngleDelta = Math.atan2(
+      Math.sin(currentAngle - previousAngle),
+      Math.cos(currentAngle - previousAngle),
+    );
+    return {
+      x: currentPose.x - physicalDeltaX,
+      y: currentPose.y - physicalDeltaY,
+      angle: currentPose.angle - physicalAngleDelta,
+    };
+  }
+
+  function setHeadGuidedAcidParticleState(
+    particle,
+    poseX,
+    poseY,
+    poseAngle,
+    guideDistance,
+    wormVelocityX,
+    wormVelocityY,
+  ) {
+    const localX =
+      particle.headGuideStartX +
+      particle.headGuideDirectionX * guideDistance;
+    const localY =
+      particle.headGuideStartY +
+      particle.headGuideDirectionY * guideDistance;
+    const cosine = Math.cos(poseAngle);
+    const sine = Math.sin(poseAngle);
+    const offsetX = cosine * localX - sine * localY;
+    const offsetY = sine * localX + cosine * localY;
+    const localVelocityX =
+      particle.headGuideDirectionX * particle.headGuideSpeed;
+    const localVelocityY =
+      particle.headGuideDirectionY * particle.headGuideSpeed;
+    const jetVelocityX =
+      cosine * localVelocityX - sine * localVelocityY;
+    const jetVelocityY =
+      sine * localVelocityX + cosine * localVelocityY;
+    particle.x = poseX + offsetX;
+    particle.y = poseY + offsetY;
+    // The rotating head-local guide already supplies the final aim direction.
+    // Inherit only the worm's real physical momentum at separation; treating
+    // crane translation or angular lever-arm motion as velocity produced an
+    // enormous extra sideways kick as the level-scaled head grew.
+    particle.inheritedVx = wormVelocityX;
+    particle.inheritedVy = wormVelocityY;
+    particle.vx = wormVelocityX + jetVelocityX;
+    particle.vy = wormVelocityY + jetVelocityY;
+  }
+
+  function moveHeadGuidedAcidParticle(particle, dt, currentPose) {
+    particle.acidWorldMotionTime = 0;
+    const previousPoseX = Number.isFinite(particle.headGuidePoseX)
+      ? particle.headGuidePoseX
+      : currentPose.x;
+    const previousPoseY = Number.isFinite(particle.headGuidePoseY)
+      ? particle.headGuidePoseY
+      : currentPose.y;
+    const previousPoseAngle = Number.isFinite(particle.headGuidePoseAngle)
+      ? particle.headGuidePoseAngle
+      : currentPose.angle;
+    const currentPoseX = nearestPeriodicWorldX(currentPose.x, previousPoseX);
+    const poseDeltaX = currentPoseX - previousPoseX;
+    const poseDeltaY = currentPose.y - previousPoseY;
+    const poseAngleDelta = Math.atan2(
+      Math.sin(currentPose.angle - previousPoseAngle),
+      Math.cos(currentPose.angle - previousPoseAngle),
+    );
+    const guideSpeed = Math.max(
+      0.0001,
+      Number(particle.headGuideSpeed) || 0,
+    );
+    const guideLength = Math.max(
+      0,
+      Number(particle.headGuideLength) || 0,
+    );
+    const startingDistance = clamp(
+      Number(particle.headGuideDistance) || 0,
+      0,
+      guideLength,
+    );
+
+    if (dt <= 0) {
+      particle.previousX = particle.x;
+      particle.previousY = particle.y;
+      return;
+    }
+    if (guideLength <= 0) {
+      particle.headGuideActive = false;
+      particle.acidWorldMotionTime = dt;
+      moveAcidParticle(particle, dt);
+      return;
+    }
+
+    const wormVelocityX = Number(game.velocity.x) || 0;
+    const wormVelocityY = Number(game.velocity.y) || 0;
+    const distanceThisFrame = guideSpeed * dt;
+    const reachesEdge =
+      startingDistance + distanceThisFrame >= guideLength - 0.000001;
+    const edgeFraction = reachesEdge
+      ? clamp(
+          (guideLength - startingDistance) /
+            Math.max(0.0001, distanceThisFrame),
+          0,
+          1,
+        )
+      : 1;
+    const candidateDistance = reachesEdge
+      ? guideLength
+      : startingDistance + distanceThisFrame;
+    const candidatePoseX = previousPoseX + poseDeltaX * edgeFraction;
+    const candidatePoseY = previousPoseY + poseDeltaY * edgeFraction;
+    const candidatePoseAngle =
+      previousPoseAngle + poseAngleDelta * edgeFraction;
+
+    setHeadGuidedAcidParticleState(
+      particle,
+      candidatePoseX,
+      candidatePoseY,
+      candidatePoseAngle,
+      candidateDistance,
+      wormVelocityX,
+      wormVelocityY,
+    );
+
+    const releaseFraction = reachesEdge ? edgeFraction : null;
+
+    if (releaseFraction !== null) {
+      const releaseDistance = Math.min(
+        guideLength,
+        startingDistance + distanceThisFrame * releaseFraction,
+      );
+      const releasePoseX = previousPoseX + poseDeltaX * releaseFraction;
+      const releasePoseY = previousPoseY + poseDeltaY * releaseFraction;
+      const releasePoseAngle =
+        previousPoseAngle + poseAngleDelta * releaseFraction;
+      setHeadGuidedAcidParticleState(
+        particle,
+        releasePoseX,
+        releasePoseY,
+        releasePoseAngle,
+        releaseDistance,
+        wormVelocityX,
+        wormVelocityY,
+      );
+      particle.headGuideDistance = releaseDistance;
+      particle.headGuideActive = false;
+      // The guide itself is kinematic and non-interactive. Begin the physical
+      // sweep at its edge so damage, tunneling, gravity, and collisions only
+      // apply after the particle has actually been launched into the world.
+      particle.previousX = particle.x;
+      particle.previousY = particle.y;
+      const remainingTime = dt * (1 - releaseFraction);
+      particle.acidWorldMotionTime = remainingTime;
+      if (remainingTime > 0.000001) {
+        moveAcidParticle(particle, remainingTime, false);
+      }
+      return;
+    }
+
+    particle.headGuideDistance = candidateDistance;
+    particle.headGuidePoseX = currentPoseX;
+    particle.headGuidePoseY = currentPose.y;
+    particle.headGuidePoseAngle =
+      previousPoseAngle + poseAngleDelta;
+    particle.previousX = particle.x;
+    particle.previousY = particle.y;
+  }
+
+  function acidTargetCanHoldParticle(target) {
+    return (
+      acidActiveTargets.has(target) &&
+      target.kind !== ENEMY_TYPES.MEAT &&
+      target.health > 0 &&
+      !target.tongueCaptured
+    );
+  }
+
+  function acidParticleTargetContact(
+    particle,
+    target,
+    targetStartFraction,
+    output,
+  ) {
+    const startX = particle.previousX;
+    const startY = particle.previousY;
+    const endX = particle.x;
+    const endY = particle.y;
+    const particleReferenceX = (startX + endX) * 0.5;
+    const targetEndX = nearestPeriodicWorldX(target.x, particleReferenceX);
+    const targetPreviousX = nearestPeriodicWorldX(
+      Number.isFinite(target.acidPreviousX)
+        ? target.acidPreviousX
+        : target.x,
+      targetEndX,
+    );
+    const targetPreviousY = Number.isFinite(target.acidPreviousY)
+      ? target.acidPreviousY
+      : target.y;
+    const targetStartX = lerp(
+      targetPreviousX,
+      targetEndX,
+      targetStartFraction,
+    );
+    const targetStartY = lerp(
+      targetPreviousY,
+      target.y,
+      targetStartFraction,
+    );
+    const relativeStartX = startX - targetStartX;
+    const relativeStartY = startY - targetStartY;
+    const relativeEndX = endX - targetEndX;
+    const relativeEndY = endY - target.y;
+    const radius = particle.radius + target.radius;
+
+    if (
+      (relativeStartX < -radius && relativeEndX < -radius) ||
+      (relativeStartX > radius && relativeEndX > radius) ||
+      (relativeStartY < -radius && relativeEndY < -radius) ||
+      (relativeStartY > radius && relativeEndY > radius)
+    ) {
+      return false;
+    }
+
+    const relativeMovementX = relativeEndX - relativeStartX;
+    const relativeMovementY = relativeEndY - relativeStartY;
+    const startDistanceSquared =
+      relativeStartX * relativeStartX +
+      relativeStartY * relativeStartY;
+    const radiusSquared = radius * radius;
+    let contactTime = 0;
+    if (startDistanceSquared > radiusSquared) {
+      const movementLengthSquared =
+        relativeMovementX * relativeMovementX +
+        relativeMovementY * relativeMovementY;
+      if (movementLengthSquared <= 0.000001) return false;
+      const projection =
+        relativeStartX * relativeMovementX +
+        relativeStartY * relativeMovementY;
+      const discriminant =
+        projection * projection -
+        movementLengthSquared * (startDistanceSquared - radiusSquared);
+      if (discriminant < 0) return false;
+      contactTime =
+        (-projection - Math.sqrt(Math.max(0, discriminant))) /
+        movementLengthSquared;
+      if (contactTime < -0.000001 || contactTime > 1.000001) return false;
+      contactTime = clamp(contactTime, 0, 1);
+    }
+
+    let normalX =
+      relativeStartX + relativeMovementX * contactTime;
+    let normalY =
+      relativeStartY + relativeMovementY * contactTime;
+    const normalLength = magnitude(normalX, normalY);
+    if (normalLength > 0.0001) {
+      normalX /= normalLength;
+      normalY /= normalLength;
+    } else {
+      const movementLength = magnitude(
+        relativeMovementX,
+        relativeMovementY,
+      );
+      if (movementLength > 0.0001) {
+        normalX = -relativeMovementX / movementLength;
+        normalY = -relativeMovementY / movementLength;
+      } else {
+        normalX = Math.cos(Number(target.angle) || 0);
+        normalY = Math.sin(Number(target.angle) || 0);
+      }
+    }
+
+    output.time = contactTime;
+    output.normalX = normalX;
+    output.normalY = normalY;
+    output.centerDistanceSquared =
+      normalLength > 0.0001
+        ? normalLength * normalLength
+        : startDistanceSquared;
+    return true;
+  }
+
+  function attachAcidParticleToTarget(
+    particle,
+    target,
+    normalX,
+    normalY,
+  ) {
+    particle.latchedTarget = target;
+    particle.latchNormalX = normalX;
+    particle.latchNormalY = normalY;
+    particle.headGuideActive = false;
+    particle.link = null;
+    particle.linkGeneration = -1;
+    particle.collisionEpoch = (Number(particle.collisionEpoch) || 0) + 1;
+    // Contact starts a fresh attached phase. Restore this carrier's original
+    // randomized lifespan once, then let it count down normally on the host.
+    particle.life = particle.maximumLife;
+    if (game.acidLastEmittedParticle === particle) {
+      game.acidLastEmittedParticle = null;
+    }
+
+    const targetX = nearestPeriodicWorldX(target.x, particle.x);
+    particle.x = targetX + normalX * target.radius;
+    particle.y = target.y + normalY * target.radius;
+    particle.previousX = particle.x;
+    particle.previousY = particle.y;
+    particle.inheritedVx = Number(target.vx) || 0;
+    particle.inheritedVy = Number(target.vy) || 0;
+    particle.vx = particle.inheritedVx;
+    particle.vy = particle.inheritedVy;
+  }
+
+  function addAcidLatchedTargetTime(target, duration) {
+    if (duration <= 0) return;
+    acidLatchedTargetSeconds.set(
+      target,
+      (acidLatchedTargetSeconds.get(target) || 0) + duration,
+    );
+  }
+
+  function updateLatchedAcidParticle(particle, dt) {
+    const target = particle.latchedTarget;
+    if (!acidTargetCanHoldParticle(target)) {
+      particle.latchedTarget = null;
+      particle.latchNormalX = 0;
+      particle.latchNormalY = 0;
+      return false;
+    }
+
+    const previousX = particle.x;
+    const previousY = particle.y;
+    const targetX = nearestPeriodicWorldX(target.x, previousX);
+    particle.x = targetX + particle.latchNormalX * target.radius;
+    particle.y = target.y + particle.latchNormalY * target.radius;
+    if (dt > 0) {
+      particle.inheritedVx = (particle.x - previousX) / dt;
+      particle.inheritedVy = (particle.y - previousY) / dt;
+      particle.vx = particle.inheritedVx;
+      particle.vy = particle.inheritedVy;
+    }
+    // A stuck carrier contributes through its persistent attachment rather
+    // than sweeping damage through everything its host passed this frame.
+    particle.previousX = particle.x;
+    particle.previousY = particle.y;
+    addAcidLatchedTargetTime(target, dt);
+    return true;
+  }
+
+  function releaseAcidParticlesAttachedToTargets(targets) {
+    for (let index = game.acidParticles.length - 1; index >= 0; index -= 1) {
+      if (!targets.has(game.acidParticles[index].latchedTarget)) continue;
+      releaseAcidParticle(index);
+    }
+  }
+
+  function applyLatchedAcidDamage() {
+    if (acidLatchedTargetSeconds.size === 0) return;
+    const biteDamage = wormBiteDamage();
+    const perParticleDamagePerSecond =
+      biteDamage /
+      ACID_RULES.damageReferenceDuration /
+      ACID_RULES.latchedDamageDivisor;
+    const defeatedTargets = [];
+    acidLatchedTargetSeconds.forEach((attachedSeconds, target) => {
+      if (!acidTargetCanHoldParticle(target) || attachedSeconds <= 0) return;
+      target.health = Math.max(
+        0,
+        target.health - perParticleDamagePerSecond * attachedSeconds,
+      );
+      target.healthBarTimer = ENEMY_HEALTH_BAR.duration;
+      if (target.health <= 0) defeatedTargets.push(target);
+    });
+    if (defeatedTargets.length === 0) return;
+
+    const defeatedTargetSet = new Set(defeatedTargets);
+    releaseAcidParticlesAttachedToTargets(defeatedTargetSet);
+    const consumedTargets = [];
+    defeatedTargets.forEach((target) => {
+      const targetIndex = game.targets.indexOf(target);
+      if (targetIndex < 0) return;
+      if (game.latchAttack?.target === target) {
+        target.latched = false;
+        game.latchAttack.targetDefeated = true;
+        game.latchAttack.releasePending = true;
+      }
+      game.targets.splice(targetIndex, 1);
+      acidActiveTargets.delete(target);
+      if (enemyIsHardPrey(target, biteDamage)) {
+        explodeTargetIntoMeat(target);
+      } else {
+        consumedTargets.push(target);
+      }
+    });
+    finishConsumedTargets(consumedTargets, false);
+    if (game.latchAttack?.targetDefeated) {
+      releaseBoostLatchAttack(true, false);
+      game.boosting = false;
+    }
+  }
+
+  function updateAcidAbility(dt) {
+    updateSpitterAim(dt);
+    acidLatchedTargetSeconds.clear();
+    acidActiveTargets.clear();
+    for (let index = 0; index < game.targets.length; index += 1) {
+      acidActiveTargets.add(game.targets[index]);
+    }
+    acidTunnelTilesRemaining = ACID_RULES.maximumTunneledTilesPerFrame;
+    acidTunnelTilesChanged = 0;
+    const sprayActive = spitterSprayIsActive();
+    const guidedAcidIsActive = spitterHasHeadGuidedAcid();
+    const guidePose =
+      sprayActive || guidedAcidIsActive ? spitterAcidNozzlePose() : null;
+    const guidePoseMode = spitterCranePoseIsActive() ? 1 : 0;
+    const previousGuidePose = guidePose
+      ? safePreviousAcidGuidePose(guidePose)
+      : null;
+    const currentWormScale = wormScale();
+
+    for (let index = game.acidParticles.length - 1; index >= 0; index -= 1) {
+      const particle = game.acidParticles[index];
+      const liveDuration = Math.min(dt, Math.max(0, particle.life));
+      particle.life -= dt;
+      particle.acidWorldMotionTime = 0;
+      if (particle.latchedTarget) {
+        const remainsLatched = updateLatchedAcidParticle(
+          particle,
+          liveDuration,
+        );
+        if (particle.life <= 0) {
+          releaseAcidParticle(index);
+          continue;
+        }
+        if (remainsLatched) continue;
+      }
+      if (particle.life <= 0) {
+        releaseAcidParticle(index);
+        continue;
+      }
+      if (particle.headGuideActive && guidePose) {
+        if (
+          particle.headGuidePoseMode !== guidePoseMode ||
+          Math.abs(particle.headGuideScale - currentWormScale) >= 0.000001
+        ) {
+          rebaseHeadGuidedAcidParticle(particle, previousGuidePose);
+          particle.headGuidePoseMode = guidePoseMode;
+          particle.headGuideScale = currentWormScale;
+        }
+        moveHeadGuidedAcidParticle(particle, dt, guidePose);
+      } else {
+        // Level teardown/type changes clear particles directly. This fallback
+        // only protects malformed state where a guided carrier lost its pose.
+        particle.headGuideActive = false;
+        particle.acidWorldMotionTime = dt;
+        moveAcidParticle(particle, dt);
+      }
+      if (
+        !particle.headGuideActive &&
+        (particle.y + particle.radius < 0 ||
+          particle.y - particle.radius > game.height)
+      ) {
+        releaseAcidParticle(index);
+        continue;
+      }
+    }
+    // Emit after advancing existing drops. New particles now begin at the
+    // current throat instead of receiving a second, frame-sized copy of the
+    // worm's movement immediately after the nozzle itself has moved.
+    emitSpitterAcid(dt, guidePose);
+    // A physical carrier can attach to exactly one enemy. Choose its earliest
+    // swept impact so overlapping hurtboxes cannot claim the same particle.
+    for (
+      let particleIndex = 0;
+      particleIndex < game.acidParticles.length;
+      particleIndex += 1
+    ) {
+      const particle = game.acidParticles[particleIndex];
+      if (particle.headGuideActive || particle.latchedTarget) continue;
+      const motionTime = clamp(
+        Number(particle.acidWorldMotionTime) || 0,
+        0,
+        dt,
+      );
+      if (motionTime <= 0) continue;
+      const targetStartFraction = dt > 0 ? 1 - motionTime / dt : 0;
+      let bestTarget = null;
+      let bestTime = Infinity;
+      let bestCenterDistanceSquared = Infinity;
+      let bestNormalX = 1;
+      let bestNormalY = 0;
+      for (
+        let targetIndex = 0;
+        targetIndex < game.targets.length;
+        targetIndex += 1
+      ) {
+        const target = game.targets[targetIndex];
+        if (!acidTargetCanHoldParticle(target)) continue;
+        if (
+          !acidParticleTargetContact(
+            particle,
+            target,
+            targetStartFraction,
+            acidTargetContactScratch,
+          )
+        ) {
+          continue;
+        }
+        const timeDifference = acidTargetContactScratch.time - bestTime;
+        const isEarlier = timeDifference < -0.000001;
+        const isCloserTie =
+          Math.abs(timeDifference) <= 0.000001 &&
+          (acidTargetContactScratch.centerDistanceSquared <
+            bestCenterDistanceSquared - 0.000001 ||
+            (Math.abs(
+              acidTargetContactScratch.centerDistanceSquared -
+                bestCenterDistanceSquared,
+            ) <= 0.000001 &&
+              (bestTarget === null || target.id < bestTarget.id)));
+        if (!isEarlier && !isCloserTie) continue;
+        bestTarget = target;
+        bestTime = acidTargetContactScratch.time;
+        bestCenterDistanceSquared =
+          acidTargetContactScratch.centerDistanceSquared;
+        bestNormalX = acidTargetContactScratch.normalX;
+        bestNormalY = acidTargetContactScratch.normalY;
+      }
+      if (bestTarget) {
+        attachAcidParticleToTarget(
+          particle,
+          bestTarget,
+          bestNormalX,
+          bestNormalY,
+        );
+        addAcidLatchedTargetTime(
+          bestTarget,
+          motionTime * (1 - bestTime),
+        );
+      }
+    }
+    applyLatchedAcidDamage();
+    if (acidTunnelTilesChanged > 0) {
+      game.minimapTerrainRevision += 1;
+    }
   }
 
   function meatPieceCountForScore(scoreValue) {
@@ -8503,6 +9939,17 @@
 
     game.targets.push(...pieces);
     game.totalTargets += pieces.length;
+  }
+
+  function explodeTargetIntoMeat(target) {
+    spawnParticles(
+      target.x,
+      target.y,
+      Math.round(8 * Math.min(3, target.sizeScale)),
+      target.kind,
+      target.sizeScale,
+    );
+    spawnMeatDrops(target);
   }
 
   function enemyMaximumHealth(target) {
@@ -8579,6 +10026,9 @@
     lockImmediately = false,
     forcedLockAngle = null,
   ) {
+    // A latch is single-owner state. Replacing it would strand the previous
+    // target with `latched = true` and make that enemy frozen/untargetable.
+    if (!target || game.latchAttack) return false;
     game.heading = Number.isFinite(forcedLockAngle)
       ? forcedLockAngle
       : getWormHeadAngle();
@@ -8599,12 +10049,14 @@
     game.boostLatchReady = false;
     game.boosting = true;
     if (lockImmediately) lockBoostLatchOnTarget(game.latchAttack);
+    return true;
   }
 
   function airborneBoostLatchCollisionTarget(eatHitboxSweep, eatCone) {
     if (
       game.inGround ||
       game.onStoneSurface ||
+      game.tongues.some((tongue) => tongue.heavyHold) ||
       !game.boostLatchReady ||
       !keys.boost ||
       keys.down ||
@@ -8941,14 +10393,7 @@
       if (targetIndex >= 0) game.targets.splice(targetIndex, 1);
       target.latched = false;
       latch.targetDefeated = true;
-      spawnParticles(
-        target.x,
-        target.y,
-        Math.round(8 * Math.min(3, target.sizeScale)),
-        target.kind,
-        target.sizeScale,
-      );
-      spawnMeatDrops(target);
+      explodeTargetIntoMeat(target);
       latch.releasePending = true;
     } else {
       target.healthBarTimer = ENEMY_HEALTH_BAR.duration;
@@ -9262,6 +10707,7 @@
   }
 
   function beginHeavyTongueGrapple(tongue, target, geometry) {
+    if (game.latchAttack) return false;
     if (!beginTongueCapture(tongue, target, geometry, false)) return false;
 
     const distanceToAnchor = magnitude(
@@ -9410,7 +10856,7 @@
   }
 
   function transferHeavyTongueGrappleToBite(tongue) {
-    if (tongue?.phase !== "heavy-grappled") return false;
+    if (tongue?.phase !== "heavy-grappled" || game.latchAttack) return false;
     const target = activeTongueTarget(tongue);
     if (!target || !enemyIsHardPrey(target)) return false;
     const lockAngle = getWormHeadAngle();
@@ -9427,8 +10873,7 @@
     } else {
       tongue.phase = "retracting";
     }
-    beginBoostLatchAttack(target, true, lockAngle);
-    return true;
+    return beginBoostLatchAttack(target, true, lockAngle);
   }
 
   function retractingTongueWormObstacles() {
@@ -10017,7 +11462,10 @@
     const airborneBoostHeld =
       keys.boost && !game.inGround && !game.onStoneSurface;
     const shouldHoldOpen =
-      enemyNearby || airborneBoostHeld || game.tongues.length > 0;
+      enemyNearby ||
+      airborneBoostHeld ||
+      game.tongues.length > 0 ||
+      spitterHeadPoseShouldRemainActive();
     game.mouthOpen = moveToward(
       game.mouthOpen,
       shouldHoldOpen ? 1 : 0,
@@ -10888,7 +12336,9 @@
       contact.velocityY * surface.unitY;
     const accelerating = keys.up && !keys.down;
     const levelTurnScale =
-      1 + game.growthLevel * activeWormScaling().scalePerLevel;
+      1 +
+      game.growthLevel *
+        activeWormScaling().stoneLocomotionScalePerLevel;
     const boostTurnScale = game.boosting ? motion.boostMultiplier : 1;
     const activeTurnScale = levelTurnScale * boostTurnScale;
     const targetSpeed = keys.down
@@ -11534,7 +12984,10 @@
     }
 
     updateTargets(dt);
-    if (heavyTongueGrapple?.phase === "heavy-grappled") {
+    if (
+      heavyTongueGrapple?.phase === "heavy-grappled" &&
+      !game.latchAttack
+    ) {
       // The anchor is allowed to keep moving while grappled. Re-apply the
       // elastic limit after its movement so the rendered tether cannot cross
       // the maximum between physics frames.
@@ -11599,7 +13052,6 @@
         spawnParticles(game.head.x, game.head.y, keys.up ? 2 : 1, "dirt");
       }
     }
-
     if (dt > 0) {
       game.acceleration.x = (game.velocity.x - previousVelocityX) / dt;
       game.acceleration.y = (game.velocity.y - previousVelocityY) / dt;
@@ -11613,6 +13065,9 @@
     } else if (!activeHeavyTongueGrapple()) {
       if (recordHeadPath()) updateSegments();
     }
+    updateAcidAbility(dt);
+    updateAcidTunnelDecay();
+    updateTunnelDecay();
     updateParticles(dt);
     game.shake *= Math.pow(0.0002, dt);
   }
@@ -11690,21 +13145,23 @@
     targetContext.save();
     if (!traceBlockRegion(targetContext, bounds, BLOCK_TYPES.GROUND)) {
       targetContext.restore();
-      return;
+      return null;
     }
     targetContext.clip();
 
     targetContext.fillStyle = palette.soil;
     targetContext.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
 
-    targetContext.fillStyle = terrainTexturePatternForBounds(
+    const groundPattern = terrainTexturePatternForBounds(
       targetContext,
       bounds,
       BLOCK_TYPES.GROUND,
     );
+    targetContext.fillStyle = groundPattern;
     targetContext.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
     targetContext.restore();
     targetContext.globalAlpha = 1;
+    return groundPattern;
   }
 
   function drawStoneTexture(targetContext, bounds) {
@@ -11728,7 +13185,216 @@
     targetContext.globalAlpha = 1;
   }
 
+  function tunnelDecayLifetime(blockIndex) {
+    const hash = Math.imul(blockIndex + 1, 2654435761) >>> 0;
+    return (
+      TUNNEL_DECAY_RULES.minimumLifetime +
+      (hash % (TUNNEL_DECAY_RULES.lifetimeVariation + 1))
+    );
+  }
+
+  function scheduleTunnelExpiryAt(blockIndex, expiryTick) {
+    const buckets = game.map.tunnelExpiryBuckets;
+    let bucket = buckets.get(expiryTick);
+    if (!bucket) {
+      bucket = { indices: [], cursor: 0 };
+      buckets.set(expiryTick, bucket);
+    }
+    bucket.indices.push(blockIndex);
+    game.map.nextTunnelExpiryTick = Math.min(
+      game.map.nextTunnelExpiryTick,
+      expiryTick,
+    );
+  }
+
+  function scheduleTunnelExpiry(blockIndex) {
+    scheduleTunnelExpiryAt(
+      blockIndex,
+      Math.ceil(game.elapsed + tunnelDecayLifetime(blockIndex)),
+    );
+  }
+
+  function earliestTunnelExpiryTick() {
+    let earliest = Infinity;
+    game.map.tunnelExpiryBuckets.forEach((_bucket, tick) => {
+      earliest = Math.min(earliest, tick);
+    });
+    return earliest;
+  }
+
+  function tunnelTileIsProtectedFromDecay(column, row, protectedBounds) {
+    const size = game.map.cellSize;
+    const centerX = nearestPeriodicWorldX(
+      (column + 0.5) * size,
+      game.head.x,
+    );
+    const centerY = (row + 0.5) * size;
+    return (
+      centerX >=
+        protectedBounds.x - TUNNEL_DECAY_RULES.horizontalProtectionPadding &&
+      centerX <=
+        protectedBounds.x +
+          protectedBounds.width +
+          TUNNEL_DECAY_RULES.horizontalProtectionPadding &&
+      centerY >=
+        protectedBounds.y - TUNNEL_DECAY_RULES.verticalProtectionPadding &&
+      centerY <=
+        protectedBounds.y +
+          protectedBounds.height +
+          TUNNEL_DECAY_RULES.verticalProtectionPadding
+    );
+  }
+
+  function updateTunnelDecay() {
+    const buckets = game.map.tunnelExpiryBuckets;
+    const currentTick = Math.floor(game.elapsed);
+    if (
+      buckets.size === 0 ||
+      game.map.nextTunnelExpiryTick > currentTick
+    ) {
+      return;
+    }
+
+    const protectedBounds = getMinimapWorldBounds();
+    const groundValue = MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND];
+    let remainingBudget = TUNNEL_DECAY_RULES.maximumTilesPerFrame;
+    let restoredTiles = 0;
+    tunnelDecayChunkKeys.clear();
+    tunnelDecayPlaceholderKeys.clear();
+
+    while (
+      remainingBudget > 0 &&
+      game.map.nextTunnelExpiryTick <= currentTick
+    ) {
+      const expiryTick = game.map.nextTunnelExpiryTick;
+      const bucket = buckets.get(expiryTick);
+      if (!bucket) {
+        game.map.nextTunnelExpiryTick = earliestTunnelExpiryTick();
+        continue;
+      }
+
+      while (
+        remainingBudget > 0 &&
+        bucket.cursor < bucket.indices.length
+      ) {
+        const blockIndex = bucket.indices[bucket.cursor];
+        bucket.cursor += 1;
+        remainingBudget -= 1;
+        if (game.map.tiles[blockIndex] !== TUNNELED_GROUND_TILE_VALUE) {
+          continue;
+        }
+
+        const row = Math.floor(blockIndex / game.map.columns);
+        const column = blockIndex - row * game.map.columns;
+        if (tunnelTileIsProtectedFromDecay(column, row, protectedBounds)) {
+          scheduleTunnelExpiryAt(
+            blockIndex,
+            Math.ceil(game.elapsed + TUNNEL_DECAY_RULES.visibleDeferral),
+          );
+          continue;
+        }
+
+        game.map.tiles[blockIndex] = groundValue;
+        queueRestoredTunnelCacheInvalidation(column, row);
+        restoredTiles += 1;
+      }
+
+      if (bucket.cursor >= bucket.indices.length) {
+        buckets.delete(expiryTick);
+      }
+      game.map.nextTunnelExpiryTick = earliestTunnelExpiryTick();
+    }
+
+    if (restoredTiles > 0) {
+      flushRestoredTunnelCacheInvalidations();
+      game.minimapTerrainRevision += 1;
+    }
+  }
+
+  function scheduleAcidTunnelDecay(blockIndex, remainingLife) {
+    const expiresAt = game.elapsed + Math.max(0, remainingLife);
+    const records = game.map.acidTunnelDecayRecords;
+    const currentExpiry = records.get(blockIndex);
+    if (currentExpiry !== undefined) {
+      // Updating an existing Map key retains its original insertion order.
+      records.set(blockIndex, Math.max(currentExpiry, expiresAt));
+      return;
+    }
+    records.set(blockIndex, expiresAt);
+  }
+
+  function updateAcidTunnelDecay() {
+    const records = game.map.acidTunnelDecayRecords;
+    if (records.size === 0) return;
+
+    const groundValue = MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND];
+    let remainingInspectionBudget =
+      ACID_RULES.maximumTunnelDecayEntriesPerFrame;
+    let remainingRestorationBudget =
+      ACID_RULES.maximumTunnelRestorationsPerFrame;
+    let restoredTiles = 0;
+    // Map iteration is insertion ordered. Stop at the first live tile whose
+    // lifetime has not elapsed so no later-destroyed tile can restore first.
+    for (const blockIndex of records.keys()) {
+      if (
+        remainingInspectionBudget <= 0 ||
+        remainingRestorationBudget <= 0
+      ) {
+        break;
+      }
+      if (game.map.tiles[blockIndex] !== TUNNELED_GROUND_TILE_VALUE) {
+        remainingInspectionBudget -= 1;
+        records.delete(blockIndex);
+        continue;
+      }
+      if (records.get(blockIndex) > game.elapsed + 0.000001) break;
+      remainingInspectionBudget -= 1;
+      records.delete(blockIndex);
+      const row = Math.floor(blockIndex / game.map.columns);
+      const column = blockIndex - row * game.map.columns;
+      game.map.tiles[blockIndex] = groundValue;
+      patchCachedRestoredGroundTile(column, row);
+      remainingRestorationBudget -= 1;
+      restoredTiles += 1;
+    }
+    if (restoredTiles > 0) game.minimapTerrainRevision += 1;
+  }
+
+  function tunnelGroundTileWithAcid(
+    column,
+    row,
+    blockIndex,
+    remainingLife,
+  ) {
+    const tileValue = game.map.tiles[blockIndex];
+    if (tileValue === TUNNELED_GROUND_TILE_VALUE) {
+      if (!game.map.acidTunnelDecayRecords.has(blockIndex)) return false;
+      scheduleAcidTunnelDecay(blockIndex, remainingLife);
+      return false;
+    }
+    if (tileValue !== MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND]) {
+      return false;
+    }
+
+    game.map.tiles[blockIndex] = TUNNELED_GROUND_TILE_VALUE;
+    scheduleAcidTunnelDecay(blockIndex, remainingLife);
+    patchCachedTunneledGroundTile(column, row);
+    return true;
+  }
+
   function tunnelGroundTile(column, row, blockIndex) {
+    if (
+      game.map.tiles[blockIndex] === TUNNELED_GROUND_TILE_VALUE &&
+      game.map.acidTunnelDecayRecords.has(blockIndex)
+    ) {
+      // A physical worm tunnel owns the longer lifetime. Removing its acid
+      // record also removes it from the insertion-ordered recovery queue.
+      game.map.acidTunnelDecayRecords.delete(blockIndex);
+      scheduleTunnelExpiry(blockIndex);
+      game.minimapTerrainRevision += 1;
+      patchCachedTunneledGroundTile(column, row);
+      return true;
+    }
     if (
       game.map.tiles[blockIndex] !==
       MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND]
@@ -11737,7 +13403,7 @@
     }
 
     game.map.tiles[blockIndex] = TUNNELED_GROUND_TILE_VALUE;
-    game.map.tunneledTileIndices.push(blockIndex);
+    scheduleTunnelExpiry(blockIndex);
     game.minimapTerrainRevision += 1;
     patchCachedTunneledGroundTile(column, row);
     return true;
@@ -11789,11 +13455,15 @@
       for (let column = minColumn; column <= maxColumn; column += 1) {
         const wrappedColumn = wrapWorldColumn(column);
         const blockIndex = rowOffset + wrappedColumn;
-        // Air, stone, and already-tunneled value 3 tiles are inert. Reject
-        // them before allocating a logical block or doing distance math.
+        // Ordinary tunnels are inert. A short-lived acid tunnel remains a
+        // candidate so the worm can promote it to the normal long lifetime.
+        const tileValue = game.map.tiles[blockIndex];
+        const acidOwnedTunnel =
+          tileValue === TUNNELED_GROUND_TILE_VALUE &&
+          game.map.acidTunnelDecayRecords.has(blockIndex);
         if (
-          game.map.tiles[blockIndex] !==
-          MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND]
+          tileValue !== MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND] &&
+          !acidOwnedTunnel
         ) {
           continue;
         }
@@ -11816,14 +13486,37 @@
   }
 
   function resetTunneledGroundBlocks() {
-    if (game.map.tunneledTileIndices.length === 0) return;
-    game.map.tunneledTileIndices.forEach((blockIndex) => {
+    const buckets = game.map.tunnelExpiryBuckets;
+    const acidRecords = game.map.acidTunnelDecayRecords;
+    if (buckets.size === 0 && acidRecords.size === 0) {
+      return;
+    }
+    let restoredTiles = 0;
+    buckets.forEach((bucket) => {
+      for (
+        let index = bucket.cursor;
+        index < bucket.indices.length;
+        index += 1
+      ) {
+        const blockIndex = bucket.indices[index];
+        if (game.map.tiles[blockIndex] === TUNNELED_GROUND_TILE_VALUE) {
+          game.map.tiles[blockIndex] =
+            MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND];
+          restoredTiles += 1;
+        }
+      }
+    });
+    acidRecords.forEach((_expiresAt, blockIndex) => {
       if (game.map.tiles[blockIndex] === TUNNELED_GROUND_TILE_VALUE) {
         game.map.tiles[blockIndex] =
           MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND];
+        restoredTiles += 1;
       }
     });
-    game.map.tunneledTileIndices.length = 0;
+    buckets.clear();
+    game.map.nextTunnelExpiryTick = Infinity;
+    acidRecords.clear();
+    if (restoredTiles === 0) return;
     game.minimapTerrainRevision += 1;
     // Cached chunks contain the one-time dark paint. Reset is infrequent, so
     // rebuilding them lazily is cheaper and simpler than repainting every
@@ -11901,6 +13594,26 @@
       size,
       size,
     );
+    drawGroundEdges(targetContext, column, row, depthPath);
+  }
+
+  function paintAcidTunneledGroundTile(
+    targetContext,
+    column,
+    row,
+    depthPath = null,
+  ) {
+    const size = game.map.cellSize;
+    targetContext.save();
+    targetContext.globalAlpha *= ACID_TUNNEL_TEXTURE_OPACITY;
+    targetContext.fillStyle = palette.tunneledSoil;
+    targetContext.fillRect(
+      column * size,
+      row * size,
+      size,
+      size,
+    );
+    targetContext.restore();
     drawGroundEdges(targetContext, column, row, depthPath);
   }
 
@@ -12027,12 +13740,18 @@
       [BLOCK_TYPES.STONE]: { path: new Path2D(), hasEdges: false },
     };
 
-    drawSoilTexture(terrainContext, renderBounds);
+    const groundPattern = drawSoilTexture(terrainContext, renderBounds);
     drawStoneTexture(terrainContext, renderBounds);
     forEachTileInBounds(renderBounds, 1, (tileValue, tileColumn, tileRow) => {
       if (groundTileValue(tileValue)) {
         if (tileValue === TUNNELED_GROUND_TILE_VALUE) {
-          paintTunneledGroundTile(
+          const acidOwned = game.map.acidTunnelDecayRecords.has(
+            tileRow * game.map.columns + tileColumn,
+          );
+          const paintTunnel = acidOwned
+            ? paintAcidTunneledGroundTile
+            : paintTunneledGroundTile;
+          paintTunnel(
             terrainContext,
             tileColumn,
             tileRow,
@@ -12064,6 +13783,7 @@
       canvas: terrainCanvas,
       context: terrainContext,
       depthPaths,
+      groundPattern,
       renderScale,
     };
   }
@@ -12102,14 +13822,17 @@
       const tileRow = startRow + y;
       const rowOffset = tileRow * game.map.columns;
       for (let x = 0; x < pixelWidth; x += 1) {
-        const tileValue = game.map.tiles[rowOffset + startColumn + x];
+        const blockIndex = rowOffset + startColumn + x;
+        const tileValue = game.map.tiles[blockIndex];
         const color =
           tileValue === MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND]
             ? MINIMAP_COLORS.ground
             : tileValue === MATERIAL_TILE_VALUES[BLOCK_TYPES.STONE]
               ? MINIMAP_COLORS.stone
               : tileValue === TUNNELED_GROUND_TILE_VALUE
-                ? MINIMAP_COLORS.tunneled
+                ? game.map.acidTunnelDecayRecords.has(blockIndex)
+                  ? MINIMAP_COLORS.acidTunneled
+                  : MINIMAP_COLORS.tunneled
                 : null;
         if (!color) continue;
         const pixel = (y * pixelWidth + x) * 4;
@@ -12460,6 +14183,8 @@
 
   function unloadLevel() {
     clearControlKeys();
+    cancelSpitterPointer();
+    clearAcidParticles();
     releaseTerrainChunks();
     game.levelLoaded = false;
     gameShell.dataset.levelLoaded = "false";
@@ -12486,7 +14211,9 @@
       columns: 0,
       rows: 0,
       tiles: new Uint8Array(0),
-      tunneledTileIndices: [],
+      tunnelExpiryBuckets: new Map(),
+      nextTunnelExpiryTick: Infinity,
+      acidTunnelDecayRecords: new Map(),
       stoneClusterIds: null,
       stoneClusters: [],
       stoneDistanceField: null,
@@ -12528,17 +14255,7 @@
     render();
   }
 
-  function patchCachedTunneledGroundTile(column, row) {
-    const placeholderColumn = Math.floor(
-      (column * game.map.cellSize) / TERRAIN_CHUNK_WIDTH,
-    );
-    const placeholderRow = Math.floor(
-      (row * game.map.cellSize) / TERRAIN_CHUNK_HEIGHT,
-    );
-    game.terrainPlaceholderChunks.delete(
-      `${placeholderColumn}:${placeholderRow}`,
-    );
-    if (game.terrainChunks.size === 0) return;
+  function forEachTerrainChunkOverlappingTile(column, row, callback) {
     const size = game.map.cellSize;
     const x = column * size;
     const y = row * size;
@@ -12576,18 +14293,99 @@
         chunkColumn <= endChunkColumn;
         chunkColumn += 1
       ) {
-        for (const renderScale of TERRAIN_CHUNK_RENDER_SCALES) {
-          const chunk = game.terrainChunks.get(
-            terrainChunkKey(chunkColumn, chunkRow, renderScale),
-          );
-          if (!chunk) continue;
-          chunk.context.save();
-          chunk.context.globalAlpha = 1;
-          paintTunneledGroundTile(chunk.context, column, row);
-          chunk.context.restore();
-        }
+        callback(chunkColumn, chunkRow);
       }
     }
+  }
+
+  function terrainPlaceholderKeyForTile(column, row) {
+    const placeholderColumn = Math.floor(
+      (column * game.map.cellSize) / TERRAIN_CHUNK_WIDTH,
+    );
+    const placeholderRow = Math.floor(
+      (row * game.map.cellSize) / TERRAIN_CHUNK_HEIGHT,
+    );
+    return `${placeholderColumn}:${placeholderRow}`;
+  }
+
+  function queueRestoredTunnelCacheInvalidation(column, row) {
+    tunnelDecayPlaceholderKeys.add(
+      terrainPlaceholderKeyForTile(column, row),
+    );
+    if (game.terrainChunks.size === 0) return;
+    forEachTerrainChunkOverlappingTile(column, row, (chunkColumn, chunkRow) => {
+      for (const renderScale of TERRAIN_CHUNK_RENDER_SCALES) {
+        tunnelDecayChunkKeys.add(
+          terrainChunkKey(chunkColumn, chunkRow, renderScale),
+        );
+      }
+    });
+  }
+
+  function flushRestoredTunnelCacheInvalidations() {
+    tunnelDecayPlaceholderKeys.forEach((key) => {
+      game.terrainPlaceholderChunks.delete(key);
+    });
+    tunnelDecayChunkKeys.forEach((key) => {
+      game.terrainChunks.delete(key);
+    });
+    tunnelDecayPlaceholderKeys.clear();
+    tunnelDecayChunkKeys.clear();
+  }
+
+  function patchCachedTunneledGroundTile(column, row) {
+    game.terrainPlaceholderChunks.delete(
+      terrainPlaceholderKeyForTile(column, row),
+    );
+    if (game.terrainChunks.size === 0) return;
+    const blockIndex = row * game.map.columns + column;
+    const paintTunnel = game.map.acidTunnelDecayRecords.has(blockIndex)
+      ? paintAcidTunneledGroundTile
+      : paintTunneledGroundTile;
+    forEachTerrainChunkOverlappingTile(column, row, (chunkColumn, chunkRow) => {
+      for (const renderScale of TERRAIN_CHUNK_RENDER_SCALES) {
+        const chunk = game.terrainChunks.get(
+          terrainChunkKey(chunkColumn, chunkRow, renderScale),
+        );
+        if (!chunk) continue;
+        chunk.context.save();
+        chunk.context.globalAlpha = 1;
+        paintTunnel(chunk.context, column, row);
+        chunk.context.restore();
+      }
+    });
+  }
+
+  function patchCachedRestoredGroundTile(column, row) {
+    game.terrainPlaceholderChunks.delete(
+      terrainPlaceholderKeyForTile(column, row),
+    );
+    if (game.terrainChunks.size === 0) return;
+    const size = game.map.cellSize;
+    const x = column * size;
+    const y = row * size;
+    forEachTerrainChunkOverlappingTile(column, row, (chunkColumn, chunkRow) => {
+      for (const renderScale of TERRAIN_CHUNK_RENDER_SCALES) {
+        const chunk = game.terrainChunks.get(
+          terrainChunkKey(chunkColumn, chunkRow, renderScale),
+        );
+        if (!chunk) continue;
+        chunk.context.save();
+        chunk.context.globalAlpha = 1;
+        chunk.context.fillStyle = palette.soil;
+        chunk.context.fillRect(x, y, size, size);
+        chunk.context.fillStyle =
+          chunk.groundPattern ||
+          terrainTexturePatternForBounds(
+            chunk.context,
+            chunk.renderBounds,
+            BLOCK_TYPES.GROUND,
+          );
+        chunk.context.fillRect(x, y, size, size);
+        drawGroundEdges(chunk.context, column, row);
+        chunk.context.restore();
+      }
+    });
   }
 
   function terrainDepthSourcePadding() {
@@ -13289,7 +15087,8 @@
   }
 
   function drawProceduralWorm() {
-    const segments = game.segments;
+    const renderState = buildSpitterCraneRenderState();
+    const segments = renderState.outputSegments;
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -13319,8 +15118,9 @@
       head.y - segments[1].y,
       head.x - segments[1].x,
     );
-    const headAngle =
-      game.speed > 0.5
+    const headAngle = spitterHeadPoseShouldRemainActive()
+      ? renderState.headPose.angle
+      : game.speed > 0.5
         ? Math.atan2(game.velocity.y, game.velocity.x)
         : pathHeadAngle;
     ctx.save();
@@ -13484,8 +15284,11 @@
 
   function createBodySpriteLayout(segments) {
     const segmentCount = segments.length;
+    const scale = wormScale();
     const layout = gameplayBodyLayoutCache;
-    if (layout.segmentCount !== segmentCount) {
+    const segmentCountChanged = layout.segmentCount !== segmentCount;
+    const scaleChanged = layout.scale !== scale;
+    if (segmentCountChanged) {
       layout.segmentCount = segmentCount;
       layout.renderIndices = [];
       layout.cumulativeDistances = new Float32Array(segmentCount);
@@ -13498,12 +15301,17 @@
         if (index % BODY_RENDER_RULES.visualSegmentStride === 0) {
           layout.renderIndices.push(index);
         }
-        layout.fillRadii[index] = bodyRadius(index, segmentCount);
-        layout.outlineRadii[index] = bodyRadius(index, segmentCount, true);
       }
       const tailIndex = segmentCount - 1;
       if (layout.renderIndices[layout.renderIndices.length - 1] !== tailIndex) {
         layout.renderIndices.push(tailIndex);
+      }
+    }
+    if (segmentCountChanged || scaleChanged) {
+      layout.scale = scale;
+      for (let index = 0; index < segmentCount; index += 1) {
+        layout.fillRadii[index] = bodyRadius(index, segmentCount);
+        layout.outlineRadii[index] = bodyRadius(index, segmentCount, true);
       }
     }
 
@@ -13855,6 +15663,275 @@
     );
   }
 
+  function acidParticleInVisibleBounds(particle, bounds, padding = 0) {
+    const radius = particle.radius + padding;
+    return !(
+      particle.x + radius < bounds.x ||
+      particle.x - radius > bounds.x + bounds.width ||
+      particle.y + radius < bounds.y ||
+      particle.y - radius > bounds.y + bounds.height
+    );
+  }
+
+  function traceAcidRibbonConnections(bounds, radiusScale) {
+    ctx.beginPath();
+    let hasConnections = false;
+    for (let index = 0; index < game.acidParticles.length; index += 1) {
+      const particle = game.acidParticles[index];
+      const link = particle.link;
+      if (
+        !link?.active ||
+        link.generation !== particle.linkGeneration ||
+        particle.collisionEpoch > 0 ||
+        link.collisionEpoch > 0
+      ) {
+        continue;
+      }
+      const linkX = nearestPeriodicWorldX(link.x, particle.x);
+      const offsetX = linkX - particle.x;
+      const offsetY = link.y - particle.y;
+      const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+      const maximumDistance =
+        (particle.radius + link.radius) * ACID_RULES.linkDistanceMultiplier;
+      if (distanceSquared > maximumDistance * maximumDistance) {
+        continue;
+      }
+      const linkVisibilityRadius = link.radius + maximumDistance;
+      const linkIsVisible = !(
+        linkX + linkVisibilityRadius < bounds.x ||
+        linkX - linkVisibilityRadius > bounds.x + bounds.width ||
+        link.y + linkVisibilityRadius < bounds.y ||
+        link.y - linkVisibilityRadius > bounds.y + bounds.height
+      );
+      if (
+        !acidParticleInVisibleBounds(particle, bounds, maximumDistance) &&
+        !linkIsVisible
+      ) {
+        continue;
+      }
+
+      if (distanceSquared < 0.000001) continue;
+      const inverseDistance = 1 / Math.sqrt(distanceSquared);
+      const normalX = -offsetY * inverseDistance;
+      const normalY = offsetX * inverseDistance;
+      const startRadius = acidParticleRenderRadius(particle) * radiusScale;
+      const endRadius = acidParticleRenderRadius(link) * radiusScale;
+      ctx.moveTo(
+        particle.x + normalX * startRadius,
+        particle.y + normalY * startRadius,
+      );
+      ctx.lineTo(linkX + normalX * endRadius, link.y + normalY * endRadius);
+      ctx.lineTo(linkX - normalX * endRadius, link.y - normalY * endRadius);
+      ctx.lineTo(
+        particle.x - normalX * startRadius,
+        particle.y - normalY * startRadius,
+      );
+      ctx.closePath();
+      hasConnections = true;
+    }
+    return hasConnections;
+  }
+
+  function createAcidClusterAtlas(dropletCount) {
+    const tileSize = ACID_RULES.visualClusterTileSize;
+    const columns = ACID_RULES.visualClusterAtlasColumns;
+    const rows = Math.ceil(ACID_RULES.visualClusterVariants / columns);
+    const atlas =
+      typeof OffscreenCanvas === "function"
+        ? new OffscreenCanvas(columns * tileSize, rows * tileSize)
+        : document.createElement("canvas");
+    atlas.width = columns * tileSize;
+    atlas.height = rows * tileSize;
+    const atlasContext = atlas.getContext("2d");
+    atlasContext.imageSmoothingEnabled = true;
+    const pixelsPerRadius =
+      (tileSize * 0.5 - 4) / ACID_RULES.visualClusterExtent;
+    const highlightMinimumScale = 0.28 / ACID_RULES.particleRadius;
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+
+    for (
+      let variant = 0;
+      variant < ACID_RULES.visualClusterVariants;
+      variant += 1
+    ) {
+      const random = seededRandom(
+        hashString(`acid-cluster:${dropletCount}:${variant}`),
+      );
+      const centerX = (variant % columns + 0.5) * tileSize;
+      const centerY = (Math.floor(variant / columns) + 0.5) * tileSize;
+      const geometry = new Float32Array(dropletCount * 3);
+      const rotation = random() * TAU;
+      for (let index = 0; index < dropletCount; index += 1) {
+        const isCenterDroplet = index === 0;
+        const distribution = clamp(
+          (index - 0.35 + random() * 0.7) /
+            Math.max(1, dropletCount - 0.3),
+          0,
+          1,
+        );
+        const distance = isCenterDroplet
+          ? random() * 0.16
+          : ACID_RULES.visualDropletMaximumOffset * Math.sqrt(distribution);
+        const angle =
+          rotation + index * goldenAngle + (random() * 2 - 1) * 0.48;
+        const offset = index * 3;
+        geometry[offset] = centerX + Math.cos(angle) * distance * pixelsPerRadius;
+        geometry[offset + 1] =
+          centerY + Math.sin(angle) * distance * pixelsPerRadius;
+        geometry[offset + 2] = isCenterDroplet
+          ? lerp(1.02, 1.16, random())
+          : lerp(
+              ACID_RULES.visualDropletMinimumRadiusScale,
+              ACID_RULES.visualDropletMaximumRadiusScale,
+              random(),
+            );
+      }
+
+      const fluidGradient = atlasContext.createRadialGradient(
+        centerX - tileSize * 0.07,
+        centerY - tileSize * 0.08,
+        tileSize * 0.015,
+        centerX,
+        centerY,
+        tileSize * 0.32,
+      );
+      fluidGradient.addColorStop(0, "#c9e956");
+      fluidGradient.addColorStop(0.48, palette.acidFluid);
+      fluidGradient.addColorStop(1, "#8eb52b");
+      if (dropletCount > 1) {
+        atlasContext.beginPath();
+        for (let index = 1; index < dropletCount; index += 1) {
+          const offset = index * 3;
+          atlasContext.moveTo(geometry[0], geometry[1]);
+          atlasContext.lineTo(geometry[offset], geometry[offset + 1]);
+        }
+        atlasContext.lineCap = "round";
+        atlasContext.lineJoin = "round";
+        atlasContext.lineWidth =
+          ACID_RULES.visualDropletMinimumRadiusScale *
+          2 *
+          pixelsPerRadius;
+        atlasContext.strokeStyle = fluidGradient;
+        atlasContext.stroke();
+      }
+
+      atlasContext.beginPath();
+      for (let index = 0; index < dropletCount; index += 1) {
+        const offset = index * 3;
+        const radius = geometry[offset + 2] * pixelsPerRadius;
+        atlasContext.moveTo(geometry[offset] + radius, geometry[offset + 1]);
+        atlasContext.arc(
+          geometry[offset],
+          geometry[offset + 1],
+          radius,
+          0,
+          TAU,
+        );
+      }
+      atlasContext.fillStyle = fluidGradient;
+      atlasContext.fill();
+
+      atlasContext.beginPath();
+      const highlightStride = Math.max(
+        2,
+        Math.ceil(dropletCount / ACID_RULES.maximumClusterHighlights),
+      );
+      for (let index = 0; index < dropletCount; index += 1) {
+        if ((variant + index) % highlightStride !== 0) continue;
+        const offset = index * 3;
+        const radiusScale = geometry[offset + 2];
+        const radius =
+          Math.max(highlightMinimumScale, radiusScale * 0.24) *
+          pixelsPerRadius;
+        const x = geometry[offset] - radiusScale * 0.2 * pixelsPerRadius;
+        const y = geometry[offset + 1] - radiusScale * 0.24 * pixelsPerRadius;
+        atlasContext.moveTo(x + radius, y);
+        atlasContext.arc(x, y, radius, 0, TAU);
+      }
+      atlasContext.globalAlpha = 0.72;
+      atlasContext.fillStyle = palette.acidHighlight;
+      atlasContext.fill();
+      atlasContext.globalAlpha = 1;
+    }
+
+    return typeof atlas.transferToImageBitmap === "function"
+      ? atlas.transferToImageBitmap()
+      : atlas;
+  }
+
+  function acidClusterAtlas(dropletCount) {
+    let atlas = acidClusterAtlasCache.get(dropletCount);
+    if (atlas) return atlas;
+    atlas = createAcidClusterAtlas(dropletCount);
+    acidClusterAtlasCache.set(dropletCount, atlas);
+    return atlas;
+  }
+
+  function prewarmAcidClusterAtlases() {
+    for (
+      let index = 0;
+      index < ACID_RULES.visualDensityTiers.length;
+      index += 1
+    ) {
+      acidClusterAtlas(ACID_RULES.visualDensityTiers[index]);
+    }
+  }
+
+  function drawAcidClusters(bounds) {
+    const tileSize = ACID_RULES.visualClusterTileSize;
+    const columns = ACID_RULES.visualClusterAtlasColumns;
+    for (let index = 0; index < game.acidParticles.length; index += 1) {
+      const particle = game.acidParticles[index];
+      const halfSize =
+        acidParticleRenderRadius(particle) * ACID_RULES.visualClusterExtent;
+      if (
+        particle.x + halfSize < bounds.x ||
+        particle.x - halfSize > bounds.x + bounds.width ||
+        particle.y + halfSize < bounds.y ||
+        particle.y - halfSize > bounds.y + bounds.height
+      ) {
+        continue;
+      }
+      const dropletCount = Math.max(
+        1,
+        Math.round(
+          particle.visualDropletCount ||
+            ACID_RULES.baseVisualDropletsPerParticle,
+        ),
+      );
+      const variant =
+        Math.abs(Math.trunc(particle.visualVariant || 0)) %
+        ACID_RULES.visualClusterVariants;
+      ctx.drawImage(
+        acidClusterAtlas(dropletCount),
+        (variant % columns) * tileSize,
+        Math.floor(variant / columns) * tileSize,
+        tileSize,
+        tileSize,
+        particle.x - halfSize,
+        particle.y - halfSize,
+        halfSize * 2,
+        halfSize * 2,
+      );
+    }
+  }
+
+  function drawAcidFluid() {
+    if (game.acidParticles.length === 0) return;
+    const bounds = getVisibleWorldBounds(24);
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalAlpha = 0.96;
+
+    if (traceAcidRibbonConnections(bounds, ACID_RULES.linkCoreRadiusScale)) {
+      ctx.fillStyle = palette.acidFluid;
+      ctx.fill();
+    }
+    drawAcidClusters(bounds);
+    ctx.restore();
+  }
+
   function drawTongues() {
     if (!wormHasAbility(WORM_ABILITIES.TONGUE)) return;
     game.tongues.forEach((tongue) => drawTongue(tongue));
@@ -13866,13 +15943,14 @@
       return;
     }
 
-    const segments = game.segments;
+    const renderState = buildSpitterCraneRenderState();
+    const segments = renderState.outputSegments;
     const bodyLayout = createBodySpriteLayout(segments);
     const visibleBounds = getVisibleWorldBounds(0);
     drawCompositeBodySpriteLayer(segments, bodyLayout, visibleBounds);
     drawSegmentBands(segments, bodyLayout, visibleBounds);
 
-    const headPose = getEatHitboxPose();
+    const headPose = renderState.headPose;
     drawJawSpriteSet(
       ctx,
       wormSprites,
@@ -13883,6 +15961,9 @@
       wormScale(),
       wormAppearance.mirroredJawSource,
       wormAppearance.mirroredMouthSource,
+      spitterHeadPoseShouldRemainActive()
+        ? ACID_RULES.sprayJawAngleMultiplier
+        : 1,
     );
   }
 
@@ -14224,6 +16305,106 @@
     );
   }
 
+  function addSweptCircleToCurrentPath(
+    startX,
+    startY,
+    endX,
+    endY,
+    radius,
+  ) {
+    const offsetX = endX - startX;
+    const offsetY = endY - startY;
+    const distance = magnitude(offsetX, offsetY);
+    if (distance <= 0.0001) {
+      ctx.moveTo(endX + radius, endY);
+      // Match the winding of moving capsules so overlapping newborn and
+      // in-flight hitboxes union instead of cancelling under nonzero fill.
+      ctx.arc(endX, endY, radius, 0, -TAU, true);
+      ctx.closePath();
+      return;
+    }
+
+    const angle = Math.atan2(offsetY, offsetX);
+    const normalX = -Math.sin(angle) * radius;
+    const normalY = Math.cos(angle) * radius;
+    ctx.moveTo(startX + normalX, startY + normalY);
+    ctx.lineTo(endX + normalX, endY + normalY);
+    ctx.arc(
+      endX,
+      endY,
+      radius,
+      angle + Math.PI * 0.5,
+      angle - Math.PI * 0.5,
+      true,
+    );
+    ctx.lineTo(startX - normalX, startY - normalY);
+    ctx.arc(
+      startX,
+      startY,
+      radius,
+      angle - Math.PI * 0.5,
+      angle + Math.PI * 0.5,
+      true,
+    );
+    ctx.closePath();
+  }
+
+  function drawAcidParticleHitboxes() {
+    if (game.acidParticles.length === 0) return;
+    const visible = getVisibleWorldBounds(20);
+    let visibleCount = 0;
+    let labelParticle = null;
+
+    ctx.save();
+    ctx.beginPath();
+    game.acidParticles.forEach((particle) => {
+      if (particle.headGuideActive) return;
+      const minimumX =
+        Math.min(particle.previousX, particle.x) - particle.radius;
+      const maximumX =
+        Math.max(particle.previousX, particle.x) + particle.radius;
+      const minimumY =
+        Math.min(particle.previousY, particle.y) - particle.radius;
+      const maximumY =
+        Math.max(particle.previousY, particle.y) + particle.radius;
+      if (
+        maximumX < visible.x ||
+        minimumX > visible.x + visible.width ||
+        maximumY < visible.y ||
+        minimumY > visible.y + visible.height
+      ) {
+        return;
+      }
+      addSweptCircleToCurrentPath(
+        particle.previousX,
+        particle.previousY,
+        particle.x,
+        particle.y,
+        particle.radius,
+      );
+      visibleCount += 1;
+      if (!labelParticle || particle.generation > labelParticle.generation) {
+        labelParticle = particle;
+      }
+    });
+
+    if (visibleCount > 0) {
+      const inverseZoom = 1 / Math.max(0.001, cameraZoom());
+      ctx.fillStyle = "rgba(240, 100, 145, 0.16)";
+      ctx.fill();
+      ctx.strokeStyle = palette.debugTurn;
+      ctx.lineWidth = 1.5 * inverseZoom;
+      ctx.stroke();
+      drawCollisionLabel(
+        `ACID HITBOX ×${visibleCount}`,
+        labelParticle.x,
+        labelParticle.y - labelParticle.radius - 12 * inverseZoom,
+        palette.debugTurn,
+      );
+    }
+    ctx.restore();
+  }
+
   function drawCollisionOverlays() {
     if (!game.showHitboxes) return;
 
@@ -14242,6 +16423,7 @@
     ctx.save();
     drawStoneSurfaceOverlays();
     drawTongueAvoidanceHitboxes();
+    drawAcidParticleHitboxes();
 
     strokeCollisionCircle(
       visualHeadPose.x,
@@ -14474,6 +16656,7 @@
 
     drawBackground();
     drawTargets();
+    drawAcidFluid();
     drawParticles("back");
     drawTongues();
     drawWorm();
@@ -14614,19 +16797,31 @@
     Space: "boost",
   };
 
-  function canvasWorldPoint(event) {
+  function canvasScreenPointFromClient(clientX, clientY) {
     const bounds = canvas.getBoundingClientRect();
-    const screenX =
-      ((event.clientX - bounds.left) / Math.max(1, bounds.width)) *
-      game.viewport.width;
-    const screenY =
-      ((event.clientY - bounds.top) / Math.max(1, bounds.height)) *
-      game.viewport.height;
+    return {
+      x:
+        ((clientX - bounds.left) / Math.max(1, bounds.width)) *
+        game.viewport.width,
+      y:
+        ((clientY - bounds.top) / Math.max(1, bounds.height)) *
+        game.viewport.height,
+    };
+  }
+
+  function canvasWorldPointFromClient(clientX, clientY) {
+    const screen = canvasScreenPointFromClient(clientX, clientY);
+    const screenX = screen.x;
+    const screenY = screen.y;
     const zoom = cameraZoom();
     return {
       x: screenX / zoom + game.camera.x,
       y: screenY / zoom + game.camera.y,
     };
+  }
+
+  function canvasWorldPoint(event) {
+    return canvasWorldPointFromClient(event.clientX, event.clientY);
   }
 
   function cancelHeldTonguePointer(pointerId = tonguePointer.pointerId) {
@@ -14649,9 +16844,57 @@
     return retracting;
   }
 
+  function updateSpitterPointerPosition(clientX, clientY) {
+    const screen = canvasScreenPointFromClient(clientX, clientY);
+    spitterPointer.clientX = clientX;
+    spitterPointer.clientY = clientY;
+    spitterPointer.screenX = screen.x;
+    spitterPointer.screenY = screen.y;
+  }
+
+  function cancelSpitterPointer(pointerId = spitterPointer.pointerId) {
+    if (
+      spitterPointer.pointerId === null ||
+      pointerId !== spitterPointer.pointerId
+    ) {
+      return false;
+    }
+    const capturedPointerId = spitterPointer.pointerId;
+    spitterPointer.pointerId = null;
+    game.acidEmissionAccumulator = 0;
+    game.acidLastEmittedParticle = null;
+    if (canvas.hasPointerCapture?.(capturedPointerId)) {
+      canvas.releasePointerCapture(capturedPointerId);
+    }
+    return true;
+  }
+
   canvas.addEventListener("pointerdown", (event) => {
     if (!event.isPrimary) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (
+      wormHasAbility(WORM_ABILITIES.ACID) &&
+      game.levelLoaded &&
+      game.started &&
+      !game.paused &&
+      !game.menuOpen
+    ) {
+      spitterPointer.pointerId = event.pointerId;
+      updateSpitterPointerPosition(event.clientX, event.clientY);
+      if (
+        !spitterHasHeadGuidedAcid() ||
+        !Number.isFinite(game.spitterAimAngle)
+      ) {
+        game.spitterAimAngle = getWormHeadAngle();
+      }
+      game.acidEmissionAccumulator = Math.max(
+        1,
+        game.acidEmissionAccumulator,
+      );
+      canvas.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     const point = canvasWorldPoint(event);
     const heavyTarget = prioritizedHardTongueTarget(point.x, point.y);
     let launchedHeldGrapple = false;
@@ -14677,7 +16920,17 @@
     }
   });
 
+  canvas.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== spitterPointer.pointerId) return;
+    updateSpitterPointerPosition(event.clientX, event.clientY);
+    event.preventDefault();
+  });
+
   const finishCanvasTonguePointer = (event) => {
+    if (event.pointerId === spitterPointer.pointerId) {
+      if (cancelSpitterPointer(event.pointerId)) event.preventDefault();
+      return;
+    }
     if (event.pointerId !== tonguePointer.pointerId) return;
     if (cancelHeldTonguePointer(event.pointerId)) event.preventDefault();
   };
@@ -15244,6 +17497,9 @@
     loadSelectedWorld();
     loadSavedWormType();
     await loadSavedWormAppearance();
+    // Build the seven bounded liquid-density sprites before play. Leveling up
+    // can then change spray density without compiling a new atlas mid-frame.
+    prewarmAcidClusterAtlases();
     resize();
     showHomeScreen();
     requestAnimationFrame((time) => {

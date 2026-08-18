@@ -39,16 +39,43 @@ meat is omitted because it is a variable-value pickup rather than an enemy.
 The selected worm can be changed from the intro card or **Menu → Worm Type**, and the
 choice is retained in browser storage. **Licker** is the original worm and owns the
 complete articulated-tongue ability: prey capture, multi-tongue targeting, and airborne
-hard-prey grappling. **Spitter** currently uses the same movement, growth, bite, boost,
-body, and appearance behavior, but it cannot create or grapple with tongues; its unique
-ability is intentionally left open for the next implementation.
+hard-prey grappling. **Spitter** uses the same movement, growth, bite, boost, body, and
+appearance behavior, but replaces tongues with a pointer-aimed acid hose. Each simulated
+acid carrier sticks to the first enemy hurtbox it sweeps into, refreshes its original
+randomized lifespan, and follows that contact point until it dissolves or its host
+disappears. A stuck carrier continuously
+contributes 1/10 of the previous baseline rate of one current bite-force value every
+0.25 seconds, so physical carriers stack and exactly 10 reproduce that baseline. The
+extra droplets baked into each carrier's liquid texture are decorative and do not add
+damage. Acid inherits the worm's full launch velocity, then travels at half speed and
+receives frame-rate-independent friction while underground. At emission, each acid carrier chooses its randomized local
+direction once and travels at that unchanged initial speed along a straight launch guide
+fixed to the translating and rotating rendered head. The guide is one full head-image
+width long; at its edge the carrier enters world physics with the guide's final direction
+and combines that rotated jet with the worm's actual movement velocity. The visual crane's
+translation and angular lever-arm motion do not add a second turning kick. Releasing the input stops new
+emission but does not release carriers already traversing that guide early. Contact temporarily changes
+intact soil into tunneled soil;
+acid-owned cells use a lighter, half-strength tunnel overlay that preserves the ground
+texture, while established worm tunnels remain fully dark and cannot be overwritten.
+Repeated acid contact delays that cell's recovery eligibility until the last touching
+droplet expires, after which temporary cells recover in first-destroyed, first-restored
+order. A worm crossing one promotes it to the ordinary fully dark, longer-lived tunnel.
+Acid lasts
+0.8–1.1 seconds
+at level 0 and 4.3–4.6 seconds at level 100. Its physical carriers are rendered as
+compact, shaded liquid clusters joined by broad batched ribbons; this makes the hose read
+as one cohesive flow without increasing the number of simulated particles or enlarging
+their damage hitboxes.
 
 Each type has its own scaling record for base entity scale, size and segment growth,
-growth costs, bite-force growth, and boost-capacity growth. Licker and Spitter currently
-use identical values, but they can be tuned independently without branching the shared
-movement and level systems. Switching types preserves the current level and boost-charge
-ratio. If Licker has an active tongue when the type changes, its tether is safely removed
-and any currently captured target is released.
+growth costs, bite-force growth, and boost-capacity growth. Licker gains 12% of its base
+size and one segment per level. Spitter gains 18% of its base size per level but only one
+segment every two levels, producing fewer, substantially larger body sections. The two
+types still share the movement and level systems, including the same level-scaled stone
+locomotion rate. Switching types preserves the current level and boost-charge ratio. If
+Licker has an active tongue when the type changes, its tether is safely removed and any
+currently captured target is released.
 
 Prey classes always use maximum HP relative to the worm's current bite force: **easy prey**
 has at most 1× bite force in HP, **normal prey** has more than 1× but no more than 2×, and
@@ -59,7 +86,8 @@ All gameplay entities currently use an experimental 62.5% global size multiplier
 larger than the previous 50% experiment. This scales the worm's rendered and physical
 dimensions—including segment spacing, collision, mouth geometry, and tunnel width—and
 scales enemy and meat sprite/hurtbox sizes by the same amount.
-The worm starts with 16 body segments and gains one additional segment per level.
+Both worms start with 16 body segments; Licker gains one additional segment per level,
+while Spitter gains one after each complete pair of levels.
 Entity scaling does not alter world coordinates, the 12 px terrain grid, material
 textures, stone contours, camera framing, movement speeds, scores, or health values.
 The top-left HUD contains a local minimap in place of the prototype logo. It shows
@@ -88,7 +116,9 @@ mouth-animation sensor using the same geometry as the gameplay calculations. It 
 draws the tongue-avoidance head and tapered body clearance circles, switching them from
 dashed to solid while a captured tongue retracts. It additionally
 shows the visual head collision circle and the smaller dashed-orange stone-latch probe
-on its world-down side. While tongues are active, it displays each level-scaled,
+on its world-down side. For Spitter acid, it draws each visible physical particle's full
+previous-to-current swept hitbox rather than the larger decorative liquid cluster. While
+tongues are active, it displays each level-scaled,
 pointer-centered target-search circle and the number of unique enemy locks it acquired. The eat
 cone begins at the jaws' hinge, opens to the same maximum angle as the animated jaws,
 reaches the front edge of their PNG rectangles, and scales with the rest of the worm.
@@ -345,11 +375,11 @@ Material-region and edge generation read the typed tile array directly. Decorati
 and stone marks come from four reusable pre-rendered pattern variants, so a new chunk
 receives its complete texture with one clipped pattern fill and never schedules a
 background detail-regeneration task. When soil is tunneled, its runtime tile value changes
-once and the dark replacement is painted directly into the one or two cached chunks on
-each axis that can overlap that tile, rather than scanning the enlarged cache. A chunk
-generated later reads the same tile value and starts with the dark
-replacement already applied. Normal frames therefore perform no tunnel-history scan or
-separate trail draw.
+once and its source-specific replacement is painted directly into the one or two cached
+chunks on each axis that can overlap that tile, rather than scanning the enlarged cache. A chunk
+generated later reads the same tile value and acid ownership, then starts with the
+corresponding half-strength or full-dark replacement already applied. Normal frames
+therefore perform no tunnel-history scan or separate trail draw.
 
 All body segments are sampled with one backward traversal of the recorded head path.
 Segment following therefore scales with path length plus segment count instead of making
@@ -357,18 +387,19 @@ every segment rescan the path from the head. Retired head-path points advance th
 start cursor and are compacted only in large batches, avoiding a full array shift on
 every moving frame. Path sample spacing retains at least eight samples per physical
 segment instead of remaining fixed at three world pixels as the worm grows; this reduces
-a level-100 path from roughly 4,400 samples to about 930 without changing segment count or
-body length. Stationary and paused frames do not traverse that path at all. The gameplay
-body-layout typed arrays are also reused rather than reallocated every frame. Simulation
+a level-100 Licker path from roughly 4,400 samples to about 930 without changing that
+worm's segment count or body length. Stationary and paused frames do not traverse that
+path at all. The gameplay body-layout typed arrays are also reused rather than reallocated every frame. Simulation
 still retains every segment and the complete head-to-tail path. The body and outline PNGs are precomposited into immutable cached bitmap stamps for
 the current appearance and taper, replacing two transformed images with one. Gameplay
 places those stamps only at every third simulation point plus both endpoints. The artwork
 is longitudinally extended only enough to cover its unchanged share of the path. Stamps
 and rings whose rotated bounds are outside the camera are not submitted to Canvas at all,
 which is especially important once a gigantic worm extends far beyond the screen. Ring
-PNGs retain their original count and positions, and head and tongue rendering are
-unchanged. A level-50 worm therefore uses 23 combined body/outline stamps while keeping
-all 66 physical segments and all 32 rings.
+PNGs retain every position implied by the active worm's physical segments, and head and
+tongue rendering are unchanged. At level 50, Licker uses 23 combined body/outline stamps
+for 66 physical segments and 32 rings; Spitter uses 15 stamps for 41 segments and 19
+rings.
 
 The developer menu's optional **Swarm** mode makes every eaten enemy produce two more
 of the same type near its death position. Swarm-created enemies retain their type,
@@ -378,11 +409,11 @@ Each beetle is worth 1 point, each dragonfly is worth 4 points, each mole is wor
 10 points, and each vulture is worth 160 points. Worm size starts at
 level 0; reaching level 1 costs 5 points, then the per-level requirement follows a
 1.3× curve rounded up to whole points: 7, 9, 11, 15, and so on. The cumulative
-score thresholds begin at 5, 12, 21, 32, 47…. Each growth level adds one body
-segment, adds 30 world pixels per second to the worm's unboosted maximum speed, and
-increases every physical and visual worm dimension, including its collision radius and
-tunnel width. Boost and ability-specific speed multipliers apply to that level-scaled
-maximum.
+score thresholds begin at 5, 12, 21, 32, 47…. Each growth level adds 30 world pixels per
+second to the worm's unboosted maximum speed and increases every physical and visual worm
+dimension, including its collision radius and tunnel width. Licker also gains one segment
+each level; Spitter gains one every second level. Boost and ability-specific speed
+multipliers apply to that level-scaled maximum.
 
 ## Enemy appearance sprites
 
@@ -397,16 +428,16 @@ or spawning behavior. See `assets/enemies/README.md` for canvas and orientation 
 
 ## Worm appearance sprites
 
-Each worm type resolves its own nine transparent default PNG layers from `assets/worm/`.
-Licker uses the `licker-default-*.png` set extracted from the current saved Licker
-appearance, including its custom tongue and tongue-ring art. The older `default-*.png`
-set remains Spitter's provisional appearance, so changing Licker's bundled model does
-not silently alter Spitter.
+Both worm types resolve the same nine transparent `shared-default-*.png` layers from
+`assets/worm/`. This set was extracted without resampling from the current edited Licker
+appearance, including its custom tongue and tongue-ring art. Licker and Spitter therefore
+begin with the same model while retaining their separate movement scaling and abilities.
+The older `licker-default-*.png` and `default-*.png` sets remain archived alongside it.
 
-Each set provides upper and lower jaw layers, upper and lower mouth layers, body fill,
-rings, outline, tongue, and tongue-ring textures. Licker's default mirrors the upper jaw
-into the lower jaw and the upper mouth into the lower mouth, matching the saved design.
-Those reflection settings are restored by **Load defaults** in the worm editor.
+The shared set provides upper and lower jaw layers, upper and lower mouth layers, body
+fill, rings, outline, tongue, and tongue-ring textures. Its upper jaw is mirrored into
+the lower jaw and its upper mouth is mirrored into the lower mouth, matching the saved
+design. Those reflection settings are restored by **Load defaults** in the worm editor.
 
 `WORM_TYPE_DEFAULT_SPRITE_FILES` and `DEFAULT_WORM_MIRRORING` in `game.js` are the
 appearance entry points. Their paths and reflection settings can be changed to load
@@ -464,8 +495,9 @@ jaw/mouth mirroring choices. **Import worm** loads a compatible package into the
 for inspection or further changes but does not overwrite the saved appearance until
 **Save worm** is selected. Saving applies the appearance to the game and stores its
 nine PNG data URLs and optional jaw- and mouth-mirroring sources under
-`worm.custom-appearance.v6` in browser `localStorage`, so the custom worm is restored on
-the next visit. Earlier appearances are migrated automatically; their previously
+`worm.type-appearance.v1.<worm-type-id>` in browser `localStorage`, so Licker and Spitter
+retain independent custom overrides on the next visit. Earlier Licker appearances are
+migrated automatically; their previously
 reflected mouth is preserved as an independent lower-mouth image. Custom artwork
 changes visuals only; physics, collision, scoring, growth, and body following remain
 unchanged.
@@ -580,11 +612,14 @@ multiplying startup object count or eagerly retaining editing memory and decorat
 unexplored regions.
 
 When the moving head traverses a ground block, that block keeps its `ground` type but
-changes from authored tile value `1` to runtime-only value `3`, selecting the flat,
-darker `tunneled-soil` texture. Value `3` still reports ground locomotion but cannot be
-dug again. The conversion immediately patches overlapping cached terrain canvases once;
-there is no per-frame trail scan. Chunks encountered later render value `3` correctly
-during their ordinary material pass. A compact list of changed indices exists only so
-Reset can restore those tiles to value `1` and lazily rebuild the affected view.
+changes from authored tile value `1` to runtime-only value `3`. Worm-owned cells select
+the full-dark `tunneled-soil` texture, while acid-owned cells select the lighter
+`acid-tunneled-soil` half overlay until they recover or the worm promotes them. Value `3`
+still reports ground locomotion but cannot be dug again. The conversion immediately
+patches overlapping cached terrain canvases once; there is no per-frame trail scan.
+Chunks encountered later render value `3` using the same ownership rule during their
+ordinary material pass. Sparse worm-expiry buckets and the insertion-ordered acid record
+map track only changed tiles so Reset and timed recovery can restore them to value `1`
+without a world scan.
 Soil and stone use separate decorative pattern sets. Stone never receives the tunneled
 texture and is never changed by digging.
