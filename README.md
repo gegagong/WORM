@@ -20,6 +20,7 @@ Then open `http://localhost:4173`.
 - `Space` + `W` — boost to 1.5× speed while underground
 - Hold `Space` while airborne — hold the mouth open without spending boost
 - As Licker, click or tap anywhere — target easy or normal prey near that point and spit the tongue
+- As Spitter, hold click or touch — spray acid at twice the normal movement-boost drain rate
 - As Licker while airborne, hold click or touch near hard prey — tongue grapple
 - While tongue-grappling, hold `W` to reel in rapidly; add `Space` to reel faster using boost
 - `A` / `D` have no effect while tongue-grappled
@@ -41,6 +42,8 @@ choice is retained in browser storage. **Licker** is the original worm and owns 
 complete articulated-tongue ability: prey capture, multi-tongue targeting, and airborne
 hard-prey grappling. **Spitter** uses the same movement, growth, bite, boost, body, and
 appearance behavior, but replaces tongues with a pointer-aimed acid hose. Each simulated
+second of active spraying consumes two seconds of boost charge; using movement boost at
+the same time raises the combined drain to three seconds of charge per second. Each simulated
 acid carrier sticks to the first enemy hurtbox it sweeps into, refreshes its original
 randomized lifespan, and follows that contact point until it dissolves or its host
 disappears. A stuck carrier continuously
@@ -64,9 +67,12 @@ order. A worm crossing one promotes it to the ordinary fully dark, longer-lived 
 Acid lasts
 0.8–1.1 seconds
 at level 0 and 4.3–4.6 seconds at level 100. Its physical carriers are rendered as
-compact, shaded liquid clusters joined by broad batched ribbons; this makes the hose read
-as one cohesive flow without increasing the number of simulated particles or enlarging
-their damage hitboxes.
+compact clusters joined by broad batched ribbons. One cached, borderless dark-purple
+mottled pattern tiles seamlessly through every cluster, while the connecting ribbons use
+its matching base color so different cluster scales never expose a phase seam. The new
+texture removes the per-particle radial shading that exposed their boundaries, making the
+hose read as one cohesive liquid without increasing the number of simulated particles or
+enlarging their damage hitboxes.
 
 Each type has its own scaling record for base entity scale, size and segment growth,
 growth costs, bite-force growth, and boost-capacity growth. Licker gains 12% of its base
@@ -230,18 +236,47 @@ along that silhouette. Every tongue layer is rendered behind the worm. Tongue ru
 collide with terrain; only the selected enemy can trigger the new tip-capture behavior.
 
 Boost starts with 2 seconds at size level 0, increases to 3 seconds at level 1,
-and gains another second of capacity with every later size level. It drains only
-while actively boosting underground and recharges at one second per second after
-the Boost control is released.
+and gains another second of capacity with every later size level. Movement boost drains
+one second of charge per second, while Spitter's acid drains two; using both simultaneously
+drains three. Charge recharges at one second per second after the relevant controls are
+released. Holding the acid input after depletion blocks recharge and prevents intermittent
+single-particle sputtering until the input is released. Completing the ordinary head-contact
+eating animation restores 0.1 seconds of boost for every point carried by the consumed enemy
+or meat chunk, capped at the worm's current boost capacity. Acid and boost-latch defeats do
+not restore boost until their resulting meat is eaten through that normal mouth animation.
+While Licker is movement-boosting, up to four unused tongue slots automatically search their
+full level-scaled reach every 0.1 seconds and launch at the highest-value available enemies.
+Each successful automatic latch costs an additional 0.5 seconds of boost. Automatic tongues
+ignore meat and any enemy whose maximum HP is greater than twice the current bite force;
+manual tongue targeting and heavy grapples keep their existing behavior and have no latch fee.
 
-Beetles, dragonflies, vultures, moles, and rabbits are distributed deterministically through each
-world. Population density is approximately one enemy per 2,250 eligible blocks, clamped
-between 16 and 72 enemies when enough spawn blocks exist. The distribution favors lower-tier
-prey: 60% beetles, 25% dragonflies, 8% moles, 5% rabbits, and 2% vultures, with whole-enemy
-rounding performed deterministically for each world. Six enemies are preferentially placed
-within the nearby spawn band. Worlds containing ground place beetles and moles underground,
-rabbits on the nearest solid top surface, and both flying species above the nearest surface;
-all-air worlds place every enemy in air. An enemy
+The start menu offers three exact round score limits: **Regular** (3,159 points),
+**Bigger** (500,000), and **Biggest** (10,000,000). The selection is saved for later
+runs and is copied into the active round when Play is pressed; Reset restarts the same
+selected-size round. Point value is held in a rolling reserve rather than eagerly creating
+tens of thousands of enemies. Up to 1,000 non-meat enemies remain active, and every open
+enemy slot is refilled in the same simulation update while unspawned round points remain.
+Meat uses an independent 500-chunk limit and never consumes or blocks an enemy slot. Each
+replacement chooses beetle, dragonfly, mole, rabbit, or vulture with the same
+60/25/8/5/2 percent population weights, renormalized near the end of a round when an
+enemy's point value no longer fits. Hard-prey meat transfers its source enemy's value, so
+it cannot create extra points, and developer-spawned test enemies are scoreless and still
+obey the 1,000-enemy ceiling.
+
+The initial population is distributed deterministically through each world. Bigger and
+Biggest begin with the full weighted 1,000-enemy population: 600 beetles,
+250 dragonflies, 80 moles, 50 rabbits, and 20 vultures, worth 6,100 points.
+Regular's 3,159-point budget preserves all 1,000 slots by replacing the minimum number
+of expensive entries: it begins with 619 beetles, 250 dragonflies, 80 moles, 50 rabbits,
+and one vulture, worth 3,079 points with 80 points reserved for replacements. Spawn
+positions are sampled on demand instead of being collected by a full-world scan or retained
+in a location pool.
+Beetles usually seed close colonies, moles choose the most separated of four random choices,
+vultures choose the most horizontally separated of ten, and rabbit and dragonfly positions
+are random. Worlds containing ground place beetles and moles underground, rabbits on the
+nearest solid top surface, and both flying species above the nearest surface;
+all-air worlds place every enemy in air. A world containing neither ground nor air material
+starts an explicit zero-point round instead of retaining an impossible spawn reserve. An enemy
 turns in place by a randomly selected angle of up to 180 degrees, moves a short distance
 at a constant speed, and repeats without an idle phase. Each move lasts half as long as
 its preceding turn, so the turn, start, and stop are visibly distinct. Beetle legs use
@@ -333,7 +368,9 @@ completed latch attacks at level 0 and drops meat after the fifth.
 
 An enemy reduced to zero HP by a latch drops several 1-HP meat pieces instead of
 awarding its score directly. The original score is divided across those pieces without
-changing its total. Meat uses
+changing its total. If all 500 meat slots are occupied, a new hard kill transfers its
+value into the nearest existing chunk so those points remain collectible without exceeding
+the meat limit. Meat uses
 a replaceable placeholder PNG at twice its previous display and collision size, scatters
 at five times its original launch velocity,
 and remains protected from immediate
@@ -415,13 +452,22 @@ dimension, including its collision radius and tunnel width. Licker also gains on
 each level; Spitter gains one every second level. Boost and ability-specific speed
 multipliers apply to that level-scaled maximum.
 
+## Background sky
+
+The surface uses `assets/backgrounds/post-apocalyptic-sky-v2.webp`, a generated
+photorealistic ash-storm sky with a subdued ochre horizon. It is drawn once per frame as a
+cover-cropped, infinitely distant plate: horizontally stable with the viewport and vertically
+anchored so its horizon meets the authored terrain surface. This avoids repeated landmarks,
+mirrored seams, filters, and intermediate canvases. Underground voids retain a dark flat
+backdrop, and the previous procedural sky remains as a loading/error fallback.
+
 ## Enemy appearance sprites
 
 All enemies render exclusively from transparent PNG files in `assets/enemies/`.
 The active `*-handdrawn.png` files match the built-in worm's player-drawn bitmap
 style: rough silhouettes, flat coral and ochre fills, vivid orange-red edge marks,
 hot-pink structural accents, sparse dark-red spots, tooth-white details, and no shadows.
-The mole and vulture keep dark umber bodies for quick species recognition. The game's sky, stone,
+The mole and vulture keep dark umber bodies for quick species recognition. The game's stone,
 terrain accents, interface, particles, and debug colors share this exported worm palette.
 Replacing those files changes enemy artwork without changing movement, score, collision,
 or spawning behavior. See `assets/enemies/README.md` for canvas and orientation details.
@@ -603,9 +649,10 @@ worlds can be played, edited again, or deleted from the world selector.
 
 Runtime terrain uses one compact typed tile array rather than one JavaScript object per
 block or a second world-sized tunneled-state array. Stone distance fields cover only the occupied stone bounds,
-stone-free maps skip that work entirely, enemy spawning retains only its small selected
-candidate set, and decorative terrain details reuse a fixed set of deterministic pattern
-tiles instead of retaining world-sized detail data or creating per-chunk detail objects.
+stone-free maps skip that work entirely, enemy spawning uses bounded on-demand probes
+without a world scan or retained location pool, and decorative terrain details reuse a
+fixed set of deterministic pattern tiles instead of retaining world-sized detail data or
+creating per-chunk detail objects.
 The editor's full-size working tile array is allocated only
 while the editor is open and released when it closes. This keeps the expanded depth from
 multiplying startup object count or eagerly retaining editing memory and decoration for

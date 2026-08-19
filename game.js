@@ -45,6 +45,7 @@
   const homeWorldButton = document.querySelector("#home-world-select");
   const homeWormButton = document.querySelector("#home-worm-select");
   const homeWormEditButton = document.querySelector("#home-worm-edit");
+  const homePointLimitInput = document.querySelector("#home-point-limit");
   const resetButton = document.querySelector("#reset-button");
   const currentWorldName = document.querySelector("#current-world-name");
   const currentWormName = document.querySelector("#current-worm-name");
@@ -111,7 +112,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260811-tongue-click-hit-test";
+    const styleUrl = "./styles.css?v=20260818-round-point-limits";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -421,8 +422,10 @@
     wormDark: "#750000",
     tongue: "#cf020c",
     tongueHighlight: "#ff8b83",
-    acidFluid: "#a9cf35",
-    acidHighlight: "#e5ff7a",
+    acidFluid: "#32103f",
+    acidFluidShadow: "#260b31",
+    acidFluidMid: "#451653",
+    acidFluidHighlight: "#5b246c",
     beetle: "#750000",
     beetleShell: "#ec6f51",
     beetleHighlight: "#fff7ef",
@@ -464,7 +467,9 @@
   const BOOST_RULES = Object.freeze({
     levelOneDuration: 3,
     secondsPerLevel: 1,
+    drainRate: 1,
     rechargeRate: 1,
+    eatenPointRestoreRate: 0.1,
   });
   const STONE_RULES = Object.freeze({
     bounceRetention: 0.34,
@@ -553,7 +558,7 @@
       ability: WORM_ABILITIES.TONGUE,
       abilityLabel: "Tongue",
       description:
-        "Launches articulated tongues to capture edible prey and grapple onto hard prey.",
+        "Launches articulated tongues to capture edible prey, auto-hunts while boosting, and grapples onto hard prey.",
       scaling: Object.freeze({
         baseEntityScale: ENTITY_SCALE,
         scalePerLevel: GROWTH_RULES.scalePerLevel,
@@ -699,10 +704,16 @@
     }),
   });
   const ENEMY_SPAWN_RULES = Object.freeze({
-    candidateDivisor: 2250,
-    minimumCount: 16,
-    maximumCount: 72,
-    nearbyCount: 6,
+    initialCount: 1000,
+    maximumCount: 1000,
+    placementAttempts: 32,
+    failedPlacementRetryDelay: 0.5,
+    beetleColonyChance: 0.8,
+    beetleLocalAttempts: 12,
+    beetleMinimumColonyBlocks: 6,
+    beetleMaximumColonyBlocks: 16,
+    molePlacementChoices: 4,
+    vulturePlacementChoices: 10,
     weights: Object.freeze([
       Object.freeze({ kind: ENEMY_TYPES.BEETLE, weight: 0.6 }),
       Object.freeze({ kind: ENEMY_TYPES.DRAGONFLY, weight: 0.25 }),
@@ -711,6 +722,11 @@
       Object.freeze({ kind: ENEMY_TYPES.VULTURE, weight: 0.02 }),
     ]),
   });
+  const MEAT_SPAWN_RULES = Object.freeze({
+    maximumCount: 500,
+  });
+  const ROUND_POINT_LIMITS = Object.freeze([3159, 500000, 10000000]);
+  const DEFAULT_ROUND_POINT_LIMIT = ROUND_POINT_LIMITS[0];
   const MAXIMUM_ENEMY_HURTBOX_RADIUS = Math.max(
     ...Object.values(ENEMY_DEFINITIONS).map((definition) => definition.radius),
   );
@@ -740,6 +756,8 @@
       "./assets/enemies/rabbit-jump-handdrawn.png?v=20260805-side-profile",
     meat: "./assets/enemies/meat-handdrawn.png?v=20260803-new-default-art",
   });
+  const SKY_PHOTO_FILE =
+    "./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky";
   const ENEMY_MOTION = Object.freeze({
     moveSpeed: 6.25,
     turnSpeed: 0.52,
@@ -857,6 +875,9 @@
     extendRate: 8.5,
     holdDuration: 0.32,
     retractRate: 6.5,
+    automaticSearchInterval: 0.1,
+    automaticLatchBoostCost: 0.5,
+    automaticMaximumConcurrent: 4,
     firstSegmentTurnLimit: Math.PI / 18,
     lastSegmentTurnLimit: Math.PI / 6,
     rearAimThreshold: Math.PI * 0.5,
@@ -915,7 +936,7 @@
     visualClusterAtlasColumns: 4,
     visualClusterTileSize: 96,
     visualClusterExtent: 2.62,
-    maximumClusterHighlights: 5,
+    fluidPatternTileSize: 24,
     minimumNozzleSpeed: 650,
     maximumNozzleSpeed: 920,
     maximumScalingLevel: 100,
@@ -931,6 +952,9 @@
     fadeDuration: 0.16,
     damageReferenceDuration: 0.25,
     latchedDamageDivisor: 33,
+    // Sixteen terrain cells keeps the 1,000-enemy broad phase sparse while
+    // still covering large hurtboxes with only a handful of buckets.
+    targetBroadphaseCellSize: 192,
     soilSpeedMultiplier: 0.5,
     soilVelocityRetentionPerSecond: 0.78,
     maximumTunneledTilesPerFrame: 32,
@@ -946,6 +970,7 @@
     craneBodyFraction: 1 / 3,
     aimTurnSpeed: 11,
     sprayJawAngleMultiplier: 1.18,
+    boostDrainMultiplier: 2,
     linkDistanceMultiplier: 4.5,
     linkCoreRadiusScale: 1.2,
   });
@@ -1073,6 +1098,8 @@
     return image;
   }
 
+  const skyPhoto = loadSpriteImage(SKY_PHOTO_FILE);
+
   const wormSprites = Object.freeze(
     Object.fromEntries(
       Object.entries(defaultWormSpriteFiles(WORM_TYPE_IDS.LICKER)).map(([name, source]) => [
@@ -1139,6 +1166,7 @@
   const DEFAULT_WORLD_ID = "default-flat";
   const WORLD_STORAGE_KEY = "worm.custom-worlds.v1";
   const SELECTED_WORLD_STORAGE_KEY = "worm.selected-world.v1";
+  const ROUND_POINT_LIMIT_STORAGE_KEY = "worm.round-point-limit.v1";
   const WORLD_FORMAT_VERSION = 5;
   const DEFAULT_WORLD = Object.freeze({
     id: DEFAULT_WORLD_ID,
@@ -1224,6 +1252,8 @@
     camera: { x: 0, y: 0 },
     selectedWorldId: DEFAULT_WORLD_ID,
     selectedWorldName: DEFAULT_WORLD.name,
+    selectedRoundPointLimit: DEFAULT_ROUND_POINT_LIMIT,
+    activeRoundPointLimit: DEFAULT_ROUND_POINT_LIMIT,
     activeWorldId: null,
     activeWorldName: "",
     activeWormTypeId: WORM_TYPE_IDS.LICKER,
@@ -1248,6 +1278,7 @@
     mouthBiteHoldTimer: 0,
     mouthChewTimer: 0,
     tongues: [],
+    automaticTongueSearchCooldown: 0,
     acidParticles: [],
     acidParticlePool: [],
     acidEmissionAccumulator: 0,
@@ -1296,9 +1327,19 @@
     clouds: [],
     targets: [],
     capturedTargets: [],
+    meatTargetCount: 0,
     nextTargetId: 0,
     targetsEaten: 0,
     totalTargets: 0,
+    roundUnspawnedPoints: 0,
+    roundPopulationCap: 0,
+    roundSpawnRegionType: null,
+    roundSpawnSerial: 0,
+    roundSpawnAttemptSerial: 0,
+    roundSpawnBlockedLiveCount: -1,
+    roundSpawnBlockedPoints: -1,
+    roundSpawnBlockedNextTargetId: -1,
+    roundSpawnRetryAt: 0,
     score: 0,
     scoreGrowthLevel: 0,
     growthLevel: 0,
@@ -1309,6 +1350,7 @@
     boostCharge:
       BOOST_RULES.levelOneDuration - BOOST_RULES.secondsPerLevel,
     boosting: false,
+    acidSpraying: false,
     map: {
       cellSize: BLOCK_SIZE,
       columns: 0,
@@ -1321,7 +1363,8 @@
       stoneClusters: [],
       stoneSurfacePaths: [],
       stoneSurfaceSegmentsByColumn: [],
-      targetCandidateSummaries: new Map(),
+      hasSpawnableGround: false,
+      hasSpawnableAir: false,
     },
   };
 
@@ -1346,7 +1389,14 @@
     normalY: 0,
     centerDistanceSquared: 0,
   };
+  const acidTargetBroadphaseBuckets = [];
+  const acidTargetBroadphaseUsedBucketKeys = [];
+  const acidTargetCandidateScratch = [];
+  let acidTargetBroadphaseColumnCount = 1;
+  let acidTargetBroadphaseRowCount = 1;
+  let acidTargetBroadphaseQueryId = 0;
   const acidClusterAtlasCache = new Map();
+  let acidFluidPatternTileCache = null;
   let acidTunnelTilesRemaining = 0;
   let acidTunnelTilesChanged = 0;
   const tunnelDecayChunkKeys = new Set();
@@ -3013,7 +3063,10 @@
       stoneDistanceField: stoneGeometry.distanceField,
       stoneSurfacePaths: stoneGeometry.paths,
       stoneSurfaceSegmentsByColumn: stoneGeometry.segmentsByColumn,
-      targetCandidateSummaries: new Map(),
+      hasSpawnableGround: tiles.includes(
+        MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND],
+      ),
+      hasSpawnableAir: tiles.includes(0),
     };
     game.activeWorldId = worldDefinition.id;
     game.activeWorldName = worldDefinition.name;
@@ -3114,50 +3167,6 @@
     return { row, column };
   }
 
-  function collectTargetCandidateSummaries() {
-    if (game.map.targetCandidateSummaries.size > 0) return;
-
-    const summaries = new Map([
-      [BLOCK_TYPES.GROUND, { count: 0, nearby: [] }],
-      [BLOCK_TYPES.AIR, { count: 0, nearby: [] }],
-    ]);
-    for (let row = 4; row < game.map.rows - 4; row += 1) {
-      for (let column = 4; column < game.map.columns - 4; column += 1) {
-        const tileIndex = row * game.map.columns + column;
-        const tileValue = game.map.tiles[tileIndex];
-        const materialType = tileValue === 0
-          ? BLOCK_TYPES.AIR
-          : TILE_VALUE_MATERIALS[tileValue];
-        const type =
-          materialType === BLOCK_TYPES.GROUND ||
-          materialType === BLOCK_TYPES.AIR
-            ? materialType
-            : null;
-        if (!type) continue;
-        const x = (column + 0.5) * BLOCK_SIZE;
-        const y = (row + 0.5) * BLOCK_SIZE;
-        const dx = x - game.spawn.x;
-        const dy = y - game.spawn.y;
-        const distanceSquared = dx * dx + dy * dy;
-        if (distanceSquared < 180 ** 2) continue;
-        const summary = summaries.get(type);
-        summary.count += 1;
-        if (distanceSquared >= 220 ** 2 && distanceSquared <= 1050 ** 2) {
-          summary.nearby.push({ row, column });
-        }
-      }
-    }
-    game.map.targetCandidateSummaries = summaries;
-  }
-
-  function collectTargetCandidateSummary(type) {
-    collectTargetCandidateSummaries();
-    return game.map.targetCandidateSummaries.get(type) || {
-      count: 0,
-      nearby: [],
-    };
-  }
-
   function takeRandomCandidate(pool, random) {
     const index = Math.floor(random() * pool.length);
     const candidate = pool[index];
@@ -3181,10 +3190,12 @@
       y,
       acidPreviousX: x,
       acidPreviousY: y,
+      acidBroadphaseQueryId: 0,
       angle,
       radius: definition.radius,
       sizeScale: definition.sizeScale,
       scoreValue: definition.score,
+      roundBudgeted: false,
       health: definition.health,
       maxHealth: definition.health,
       healthBarTimer: 0,
@@ -3217,13 +3228,24 @@
     return target;
   }
 
-  function createEnemySpawnKinds(targetCount, random) {
+  function createEnemySpawnKinds(targetCount, pointBudget, random) {
+    const minimumScore = Math.min(
+      ...ENEMY_SPAWN_RULES.weights.map(
+        (entry) => ENEMY_DEFINITIONS[entry.kind].score,
+      ),
+    );
+    const availablePoints = Math.max(0, Math.floor(pointBudget));
+    targetCount = Math.min(
+      Math.max(0, Math.floor(targetCount)),
+      Math.floor(availablePoints / minimumScore),
+    );
     const allocations = ENEMY_SPAWN_RULES.weights.map((entry) => {
       const exactCount = entry.weight * targetCount;
       return {
         kind: entry.kind,
         count: Math.floor(exactCount),
         remainder: exactCount - Math.floor(exactCount),
+        score: ENEMY_DEFINITIONS[entry.kind].score,
       };
     });
     let assignedCount = allocations.reduce(
@@ -3242,6 +3264,39 @@
       assignedCount += 1;
     }
 
+    // A Regular round cannot fund the full weighted 1,000-enemy roster.
+    // Preserve the requested population by replacing the fewest expensive
+    // entries with the cheapest weighted species before the list is shuffled.
+    const cheapestAllocation = allocations.reduce((cheapest, allocation) =>
+      allocation.score < cheapest.score ? allocation : cheapest,
+    );
+    let excessPoints = Math.max(
+      0,
+      allocations.reduce(
+        (total, allocation) => total + allocation.count * allocation.score,
+        0,
+      ) - availablePoints,
+    );
+    const downgradeOrder = allocations
+      .filter((allocation) => allocation !== cheapestAllocation)
+      .sort((left, right) => right.score - left.score);
+    for (
+      let index = 0;
+      index < downgradeOrder.length && excessPoints > 0;
+      index += 1
+    ) {
+      const allocation = downgradeOrder[index];
+      const savings = allocation.score - cheapestAllocation.score;
+      if (savings <= 0 || allocation.count <= 0) continue;
+      const replacements = Math.min(
+        allocation.count,
+        Math.ceil(excessPoints / savings),
+      );
+      allocation.count -= replacements;
+      cheapestAllocation.count += replacements;
+      excessPoints = Math.max(0, excessPoints - replacements * savings);
+    }
+
     const kinds = allocations.flatMap((allocation) =>
       Array.from({ length: allocation.count }, () => allocation.kind),
     );
@@ -3252,89 +3307,392 @@
     return kinds;
   }
 
-  function buildTargets() {
-    let candidateSummary = collectTargetCandidateSummary(BLOCK_TYPES.GROUND);
-    let regionType = BLOCK_TYPES.GROUND;
-    if (candidateSummary.count === 0) {
-      candidateSummary = collectTargetCandidateSummary(BLOCK_TYPES.AIR);
-      regionType = BLOCK_TYPES.AIR;
-    }
+  function normalizeRoundPointLimit(value) {
+    const parsedValue = Math.round(Number(value));
+    return ROUND_POINT_LIMITS.includes(parsedValue)
+      ? parsedValue
+      : DEFAULT_ROUND_POINT_LIMIT;
+  }
 
-    const targetCount = Math.min(
-      candidateSummary.count,
-      clamp(
-        Math.round(
-          candidateSummary.count / ENEMY_SPAWN_RULES.candidateDivisor,
-        ),
-        ENEMY_SPAWN_RULES.minimumCount,
-        ENEMY_SPAWN_RULES.maximumCount,
-      ),
+  function resetRoundPointLedger() {
+    game.roundUnspawnedPoints = normalizeRoundPointLimit(
+      game.activeRoundPointLimit,
     );
-    const random = seededRandom(
-      hashString(`${game.activeWorldId}:${candidateSummary.count}:enemies`),
+    game.roundPopulationCap = ENEMY_SPAWN_RULES.maximumCount;
+    game.roundSpawnRegionType = null;
+    game.roundSpawnSerial = 0;
+    game.roundSpawnAttemptSerial = 0;
+    game.roundSpawnBlockedLiveCount = -1;
+    game.roundSpawnBlockedPoints = -1;
+    game.roundSpawnBlockedNextTargetId = -1;
+    game.roundSpawnRetryAt = 0;
+  }
+
+  function reserveRoundPointsForTarget(target) {
+    const targetPoints = Math.max(0, Math.round(target.scoreValue));
+    if (targetPoints > game.roundUnspawnedPoints) return false;
+    target.roundBudgeted = true;
+    game.roundUnspawnedPoints -= targetPoints;
+    game.roundSpawnSerial += 1;
+    return true;
+  }
+
+  function liveEnemyCount() {
+    return Math.max(
+      0,
+      game.targets.length +
+        game.capturedTargets.length -
+        game.meatTargetCount,
     );
-    const selected = [];
-    const selectedKeys = new Set();
-    const nearby = candidateSummary.nearby.slice();
+  }
 
-    while (
-      selected.length < Math.min(ENEMY_SPAWN_RULES.nearbyCount, targetCount) &&
-      nearby.length > 0
-    ) {
-      const candidate = takeRandomCandidate(nearby, random);
-      const key = candidate.row * game.map.columns + candidate.column;
-      if (selectedKeys.has(key)) continue;
-      selectedKeys.add(key);
-      selected.push(candidate);
+  function liveMeatCount() {
+    return Math.max(0, game.meatTargetCount);
+  }
+
+  function randomGridTargetCandidate(type, random) {
+    if (game.map.columns <= 8 || game.map.rows <= 8) return null;
+    const column = 4 + Math.floor(random() * (game.map.columns - 8));
+    const row = 4 + Math.floor(random() * (game.map.rows - 8));
+    const block = targetCandidateAt(column, row, type);
+    if (!block) return null;
+    return {
+      x: (block.column + 0.5) * BLOCK_SIZE,
+      y: (block.row + 0.5) * BLOCK_SIZE,
+      regionType: type,
+    };
+  }
+
+  function chooseRoundSpawnRegionType() {
+    const spawnType = getBlockAtWorld(game.spawn.x, game.spawn.y)?.type;
+    if (game.map.hasSpawnableGround) return BLOCK_TYPES.GROUND;
+    if (game.map.hasSpawnableAir || spawnType === BLOCK_TYPES.AIR) {
+      return BLOCK_TYPES.AIR;
     }
+    return null;
+  }
 
-    const randomAttemptLimit = Math.max(2000, targetCount * 200);
-    for (
-      let attempt = 0;
-      selected.length < targetCount && attempt < randomAttemptLimit;
-      attempt += 1
-    ) {
-      const column = 4 + Math.floor(random() * (game.map.columns - 8));
-      const row = 4 + Math.floor(random() * (game.map.rows - 8));
-      const candidate = targetCandidateAt(column, row, regionType);
-      if (!candidate) continue;
-      const key = row * game.map.columns + column;
-      if (selectedKeys.has(key)) continue;
-      selectedKeys.add(key);
-      selected.push(candidate);
+  function randomActiveTargetOfKind(kind, random) {
+    let selected = null;
+    let matchingCount = 0;
+    for (let index = 0; index < game.targets.length; index += 1) {
+      const target = game.targets[index];
+      if (target.kind !== kind) continue;
+      matchingCount += 1;
+      if (random() < 1 / matchingCount) selected = target;
     }
+    return selected;
+  }
 
-    searchCandidates: for (
-      let row = 4;
-      selected.length < targetCount && row < game.map.rows - 4;
-      row += 1
+  function roundSpawnSourcePoint(kind, random, attempt, beetleAnchor) {
+    if (
+      kind === ENEMY_TYPES.BEETLE &&
+      beetleAnchor &&
+      attempt < ENEMY_SPAWN_RULES.beetleLocalAttempts
     ) {
-      for (let column = 4; column < game.map.columns - 4; column += 1) {
-        const candidate = targetCandidateAt(column, row, regionType);
-        if (!candidate) continue;
-        const key = row * game.map.columns + column;
-        if (selectedKeys.has(key)) continue;
-        selectedKeys.add(key);
-        selected.push(candidate);
-        if (selected.length >= targetCount) break searchCandidates;
+      const angle = random() * TAU;
+      const distance =
+        lerp(
+          ENEMY_SPAWN_RULES.beetleMinimumColonyBlocks,
+          ENEMY_SPAWN_RULES.beetleMaximumColonyBlocks,
+          random(),
+        ) * BLOCK_SIZE;
+      const column = wrapWorldColumn(
+        Math.floor((beetleAnchor.x + Math.cos(angle) * distance) / BLOCK_SIZE),
+      );
+      const row = Math.floor(
+        (beetleAnchor.y + Math.sin(angle) * distance) / BLOCK_SIZE,
+      );
+      if (row >= 4 && row < game.map.rows - 4) {
+        const anchorType =
+          beetleAnchor.regionType === BLOCK_TYPES.AIR
+            ? BLOCK_TYPES.AIR
+            : BLOCK_TYPES.GROUND;
+        const block = targetCandidateAt(column, row, anchorType);
+        if (block) {
+          return {
+            x: (block.column + 0.5) * BLOCK_SIZE,
+            y: (block.row + 0.5) * BLOCK_SIZE,
+            regionType: anchorType,
+          };
+        }
       }
     }
 
-    game.nextTargetId = 0;
-    const spawnKinds = createEnemySpawnKinds(targetCount, random);
-    game.targets = selected.map((block, index) =>
-      createEnemyTarget(
-        spawnKinds[index],
-        (block.column + 0.5) * BLOCK_SIZE,
-        (block.row + 0.5) * BLOCK_SIZE,
-        regionType,
+    const primaryType =
+      game.roundSpawnRegionType || BLOCK_TYPES.GROUND;
+    // Keep primary-material and fallback-material probes in every visibility
+    // phase. A sparse one-material map can then use the late visible fallback
+    // without all of those attempts being redirected to the other material.
+    const useFallback = attempt % 4 === 3;
+    const regionType = useFallback
+      ? primaryType === BLOCK_TYPES.GROUND
+        ? BLOCK_TYPES.AIR
+        : BLOCK_TYPES.GROUND
+      : primaryType;
+    return randomGridTargetCandidate(regionType, random);
+  }
+
+  function sameKindSpawnSeparationSquared(candidate) {
+    let nearestDistanceSquared = Infinity;
+    const horizontalOnly = candidate.kind === ENEMY_TYPES.VULTURE;
+    const targetGroups = [game.targets, game.capturedTargets];
+    targetGroups.forEach((targets) => {
+      targets.forEach((target) => {
+        if (target.kind !== candidate.kind) return;
+        const targetX = nearestPeriodicWorldX(target.x, candidate.x);
+        const dx = targetX - candidate.x;
+        const dy = horizontalOnly ? 0 : target.y - candidate.y;
+        nearestDistanceSquared = Math.min(
+          nearestDistanceSquared,
+          dx * dx + dy * dy,
+        );
+      });
+    });
+    return nearestDistanceSquared;
+  }
+
+  function createRoundSpawnTarget(kind, random, allowVisible = false) {
+    const placementChoices =
+      kind === ENEMY_TYPES.VULTURE
+        ? ENEMY_SPAWN_RULES.vulturePlacementChoices
+        : kind === ENEMY_TYPES.MOLE
+          ? ENEMY_SPAWN_RULES.molePlacementChoices
+          : 1;
+    const beetleAnchor =
+      kind === ENEMY_TYPES.BEETLE &&
+      random() < ENEMY_SPAWN_RULES.beetleColonyChance
+        ? randomActiveTargetOfKind(kind, random)
+        : null;
+    const visible = allowVisible
+      ? null
+      : getVisibleWorldBounds(BLOCK_SIZE * 4);
+    let bestTarget = null;
+    let bestSeparationSquared = -1;
+    let validChoices = 0;
+
+    for (
+      let attempt = 0;
+      attempt < ENEMY_SPAWN_RULES.placementAttempts &&
+      validChoices < placementChoices;
+      attempt += 1
+    ) {
+      const source = roundSpawnSourcePoint(
+        kind,
         random,
-      ),
+        attempt,
+        beetleAnchor,
+      );
+      if (!source) continue;
+      const candidate = createEnemyTarget(
+        kind,
+        source.x,
+        source.y,
+        source.regionType,
+        random,
+      );
+      keepEnemyInsideWorld(candidate);
+      game.nextTargetId -= 1;
+      const visibleFallback =
+        attempt >= Math.floor(ENEMY_SPAWN_RULES.placementAttempts * 0.75);
+      if (
+        !roundSpawnPointIsAvailable(
+          candidate,
+          candidate.radius,
+          visible,
+          allowVisible || visibleFallback,
+        )
+      ) {
+        continue;
+      }
+      if (placementChoices === 1) {
+        candidate.id = game.nextTargetId;
+        game.nextTargetId += 1;
+        return candidate;
+      }
+
+      validChoices += 1;
+      const separationSquared = sameKindSpawnSeparationSquared(candidate);
+      if (separationSquared > bestSeparationSquared) {
+        bestTarget = candidate;
+        bestSeparationSquared = separationSquared;
+      }
+      if (separationSquared === Infinity) break;
+    }
+
+    if (!bestTarget) return null;
+    bestTarget.id = game.nextTargetId;
+    game.nextTargetId += 1;
+    return bestTarget;
+  }
+
+  function randomAffordableRoundSpawnKind(random) {
+    let totalWeight = 0;
+    ENEMY_SPAWN_RULES.weights.forEach((entry) => {
+      if (
+        ENEMY_DEFINITIONS[entry.kind].score <= game.roundUnspawnedPoints
+      ) {
+        totalWeight += entry.weight;
+      }
+    });
+    if (totalWeight <= 0) return null;
+    let choice = random() * totalWeight;
+    for (let index = 0; index < ENEMY_SPAWN_RULES.weights.length; index += 1) {
+      const entry = ENEMY_SPAWN_RULES.weights[index];
+      if (
+        ENEMY_DEFINITIONS[entry.kind].score > game.roundUnspawnedPoints
+      ) {
+        continue;
+      }
+      choice -= entry.weight;
+      if (choice <= 0) return entry.kind;
+    }
+    return ENEMY_TYPES.BEETLE;
+  }
+
+  function buildTargets() {
+    resetRoundPointLedger();
+    const random = seededRandom(
+      hashString(`${game.activeWorldId}:bounded-enemy-spawns`),
     );
-    game.targets.forEach((target) => keepEnemyInsideWorld(target));
+    game.nextTargetId = 0;
+    game.targets = [];
     game.capturedTargets = [];
+    game.meatTargetCount = 0;
+    game.roundSpawnRegionType = chooseRoundSpawnRegionType();
+    if (!game.roundSpawnRegionType) {
+      game.activeRoundPointLimit = 0;
+      game.roundUnspawnedPoints = 0;
+      game.roundPopulationCap = 0;
+    } else {
+      const kinds = createEnemySpawnKinds(
+        ENEMY_SPAWN_RULES.initialCount,
+        game.roundUnspawnedPoints,
+        random,
+      );
+      for (let index = 0; index < kinds.length; index += 1) {
+        const target = createRoundSpawnTarget(kinds[index], random, true);
+        if (!target) continue;
+        if (!reserveRoundPointsForTarget(target)) break;
+        game.targets.push(target);
+      }
+    }
     game.targetsEaten = 0;
     game.totalTargets = game.targets.length;
+  }
+
+  function roundTargetsBlockSpawn(targets, point, targetRadius) {
+    for (let index = 0; index < targets.length; index += 1) {
+      const target = targets[index];
+      if (target.kind === ENEMY_TYPES.MEAT) continue;
+      const targetX = nearestPeriodicWorldX(target.x, point.x);
+      const dx = targetX - point.x;
+      const dy = target.y - point.y;
+      const minimumDistance =
+        target.radius + targetRadius + BLOCK_SIZE * 2;
+      if (dx * dx + dy * dy < minimumDistance * minimumDistance) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function roundSpawnPointIsAvailable(
+    point,
+    targetRadius,
+    visible,
+    allowVisible,
+  ) {
+    if (!allowVisible && visible) {
+      const visibleCenterX = visible.x + visible.width * 0.5;
+      const visibleSpawnX = nearestPeriodicWorldX(point.x, visibleCenterX);
+      const visibilityMargin = targetRadius + BLOCK_SIZE * 4;
+      if (
+        visibleSpawnX >= visible.x - visibilityMargin &&
+        visibleSpawnX <= visible.x + visible.width + visibilityMargin &&
+        point.y >= visible.y - visibilityMargin &&
+        point.y <= visible.y + visible.height + visibilityMargin
+      ) {
+        return false;
+      }
+    }
+
+    const headX = nearestPeriodicWorldX(game.head.x, point.x);
+    const headClearance =
+      wormDimension("headRadius") + targetRadius + BLOCK_SIZE * 6;
+    const headDx = headX - point.x;
+    const headDy = game.head.y - point.y;
+    if (headDx * headDx + headDy * headDy < headClearance * headClearance) {
+      return false;
+    }
+
+    if (
+      roundTargetsBlockSpawn(game.targets, point, targetRadius) ||
+      roundTargetsBlockSpawn(game.capturedTargets, point, targetRadius)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  function refillRoundTargetsImmediately() {
+    if (
+      game.roundUnspawnedPoints <= 0 ||
+      game.roundPopulationCap <= 0
+    ) {
+      return;
+    }
+    const populationLimit = Math.min(
+      game.roundPopulationCap,
+      ENEMY_SPAWN_RULES.maximumCount,
+    );
+    const currentLiveCount = liveEnemyCount();
+    if (currentLiveCount >= populationLimit) {
+      game.roundSpawnBlockedLiveCount = -1;
+      game.roundSpawnBlockedPoints = -1;
+      game.roundSpawnBlockedNextTargetId = -1;
+      game.roundSpawnRetryAt = 0;
+      return;
+    }
+    const unchangedBlockedState =
+      game.roundSpawnBlockedLiveCount === currentLiveCount &&
+      game.roundSpawnBlockedPoints === game.roundUnspawnedPoints &&
+      game.roundSpawnBlockedNextTargetId === game.nextTargetId;
+    if (unchangedBlockedState && game.elapsed < game.roundSpawnRetryAt) {
+      return;
+    }
+    game.roundSpawnBlockedLiveCount = -1;
+    game.roundSpawnBlockedPoints = -1;
+    game.roundSpawnBlockedNextTargetId = -1;
+    game.roundSpawnRetryAt = 0;
+    let availableSlots = populationLimit - currentLiveCount;
+    while (availableSlots > 0 && game.roundUnspawnedPoints > 0) {
+      const attemptSerial = game.roundSpawnAttemptSerial;
+      game.roundSpawnAttemptSerial += 1;
+      const random = seededRandom(
+        hashString(
+          `${game.activeWorldId}:${attemptSerial}:${game.roundSpawnSerial}:instant-spawn`,
+        ),
+      );
+      const kind = randomAffordableRoundSpawnKind(random);
+      if (!kind) break;
+      const target = createRoundSpawnTarget(kind, random);
+      if (!target || !reserveRoundPointsForTarget(target)) {
+        // Do not repeat the same bounded 32-probe failure every frame on a
+        // saturated custom map. Any later population, reserve, or target-set
+        // change makes the state eligible immediately; otherwise a short
+        // backoff allows moving geometry to make the next search viable.
+        game.roundSpawnBlockedLiveCount = liveEnemyCount();
+        game.roundSpawnBlockedPoints = game.roundUnspawnedPoints;
+        game.roundSpawnBlockedNextTargetId = game.nextTargetId;
+        game.roundSpawnRetryAt =
+          game.elapsed + ENEMY_SPAWN_RULES.failedPlacementRetryDelay;
+        break;
+      }
+      game.targets.push(target);
+      game.totalTargets += 1;
+      availableSlots -= 1;
+    }
   }
 
   function buildScenery() {
@@ -3612,6 +3970,7 @@
     game.growthCost = growthCostForLevel(0);
     game.boostCharge = boostCapacity();
     game.boosting = false;
+    game.acidSpraying = false;
     game.speed = 0;
     game.velocity.x = 0;
     game.velocity.y = 0;
@@ -3638,6 +3997,7 @@
     game.mouthBiteHoldTimer = 0;
     game.mouthChewTimer = 0;
     game.tongues = [];
+    game.automaticTongueSearchCooldown = 0;
     game.latchAttack = null;
     game.boostLatchReady = true;
 
@@ -3736,6 +4096,7 @@
       if (target.tongueCaptured) resumeTargetAfterTongueRelease(target);
     });
     game.tongues.length = 0;
+    game.automaticTongueSearchCooldown = 0;
   }
 
   async function setActiveWormType(typeId) {
@@ -3936,6 +4297,38 @@
     currentWorldName.textContent = game.selectedWorldName;
   }
 
+  function updateSelectedRoundPointLimitInput() {
+    homePointLimitInput.value = String(game.selectedRoundPointLimit);
+  }
+
+  function persistSelectedRoundPointLimit() {
+    try {
+      window.localStorage.setItem(
+        ROUND_POINT_LIMIT_STORAGE_KEY,
+        String(game.selectedRoundPointLimit),
+      );
+    } catch (_error) {
+      // The selection still applies for this page when storage is unavailable.
+    }
+  }
+
+  function loadSelectedRoundPointLimit() {
+    try {
+      game.selectedRoundPointLimit = normalizeRoundPointLimit(
+        window.localStorage.getItem(ROUND_POINT_LIMIT_STORAGE_KEY),
+      );
+    } catch (_error) {
+      game.selectedRoundPointLimit = DEFAULT_ROUND_POINT_LIMIT;
+    }
+    updateSelectedRoundPointLimitInput();
+  }
+
+  function selectRoundPointLimit(value) {
+    game.selectedRoundPointLimit = normalizeRoundPointLimit(value);
+    updateSelectedRoundPointLimitInput();
+    persistSelectedRoundPointLimit();
+  }
+
   function persistSelectedWorld() {
     try {
       window.localStorage.setItem(
@@ -4048,6 +4441,7 @@
     const world = getWorldById(game.selectedWorldId) || DEFAULT_WORLD;
     game.selectedWorldId = world.id;
     game.selectedWorldName = world.name;
+    game.activeRoundPointLimit = game.selectedRoundPointLimit;
     updateSelectedWorldLabel();
     homeScreen.classList.remove("visible");
     homeScreen.setAttribute("aria-hidden", "true");
@@ -6943,8 +7337,13 @@
   }
 
   function awardScore(points) {
-    game.score += points;
-    game.growthProgress += points;
+    const awardedPoints = Math.min(
+      Math.max(0, Math.round(Number(points) || 0)),
+      Math.max(0, game.activeRoundPointLimit - game.score),
+    );
+    if (awardedPoints <= 0) return;
+    game.score += awardedPoints;
+    game.growthProgress += awardedPoints;
     let levelsGained = 0;
     while (game.growthProgress >= game.growthCost) {
       game.growthProgress -= game.growthCost;
@@ -6997,7 +7396,7 @@
     };
   }
 
-  function spitterSprayIsActive() {
+  function spitterSprayControlHeld() {
     return (
       spitterPointer.pointerId !== null &&
       wormHasAbility(WORM_ABILITIES.ACID) &&
@@ -7006,6 +7405,10 @@
       !game.paused &&
       !game.menuOpen
     );
+  }
+
+  function spitterSprayIsActive() {
+    return game.acidSpraying && spitterSprayControlHeld();
   }
 
   function spitterHasHeadGuidedAcid() {
@@ -7556,6 +7959,20 @@
 
   function spawnSwarmTargets(consumedTarget, count = 2) {
     const enemyDefinition = ENEMY_DEFINITIONS[consumedTarget.kind];
+    if (!consumedTarget.roundBudgeted || enemyDefinition.score <= 0) return;
+    const availableSlots = Math.max(
+      0,
+      Math.min(
+        game.roundPopulationCap,
+        ENEMY_SPAWN_RULES.maximumCount,
+      ) - liveEnemyCount(),
+    );
+    count = Math.min(
+      count,
+      availableSlots,
+      Math.floor(game.roundUnspawnedPoints / enemyDefinition.score),
+    );
+    if (count <= 0) return;
     const random = seededRandom(
       hashString(
         `${game.activeWorldId}:${consumedTarget.id}:${game.targetsEaten}:${game.score}:swarm`,
@@ -7584,6 +8001,7 @@
         if (
           game.targets.some(
             (target) =>
+              target.kind !== ENEMY_TYPES.MEAT &&
               magnitude(x - target.x, y - target.y) <
               target.radius + enemyDefinition.radius + 4,
           )
@@ -7632,6 +8050,7 @@
       if (
         [...game.targets, ...spawned].some(
           (target) =>
+            target.kind !== ENEMY_TYPES.MEAT &&
             magnitude(x - target.x, y - target.y) <
             target.radius + enemyDefinition.radius + BLOCK_SIZE,
         )
@@ -7661,6 +8080,11 @@
       );
     }
 
+    spawned.forEach((target) => {
+      target.roundBudgeted = true;
+    });
+    game.roundUnspawnedPoints -= spawned.length * enemyDefinition.score;
+    game.roundSpawnSerial += spawned.length;
     game.targets.push(...spawned);
     game.totalTargets += spawned.length;
   }
@@ -8802,8 +9226,10 @@
     game.acidLastEmittedParticle = null;
     game.acidEmissionAccumulator = 0;
     game.spitterAimAngle = null;
+    game.acidSpraying = false;
     acidLatchedTargetSeconds.clear();
     acidActiveTargets.clear();
+    clearAcidTargetBroadphase();
   }
 
   function releaseAcidParticle(index) {
@@ -9503,6 +9929,143 @@
     );
   }
 
+  function clearAcidTargetBroadphase() {
+    for (
+      let index = 0;
+      index < acidTargetBroadphaseUsedBucketKeys.length;
+      index += 1
+    ) {
+      acidTargetBroadphaseBuckets[
+        acidTargetBroadphaseUsedBucketKeys[index]
+      ].length = 0;
+    }
+    acidTargetBroadphaseUsedBucketKeys.length = 0;
+    acidTargetCandidateScratch.length = 0;
+  }
+
+  function acidTargetBroadphaseKey(column, row) {
+    return (
+      positiveModulo(column, acidTargetBroadphaseColumnCount) *
+        acidTargetBroadphaseRowCount +
+      row
+    );
+  }
+
+  function buildAcidTargetBroadphase() {
+    const cellSize = ACID_RULES.targetBroadphaseCellSize;
+    acidTargetBroadphaseColumnCount = Math.max(
+      1,
+      Math.ceil(game.width / cellSize),
+    );
+    acidTargetBroadphaseRowCount = Math.max(
+      1,
+      Math.ceil(game.height / cellSize),
+    );
+    const maximumRow = acidTargetBroadphaseRowCount - 1;
+
+    for (let targetIndex = 0; targetIndex < game.targets.length; targetIndex += 1) {
+      const target = game.targets[targetIndex];
+      if (!acidTargetCanHoldParticle(target)) continue;
+      const endX = target.x;
+      const startX = nearestPeriodicWorldX(
+        Number.isFinite(target.acidPreviousX)
+          ? target.acidPreviousX
+          : endX,
+        endX,
+      );
+      const startY = Number.isFinite(target.acidPreviousY)
+        ? target.acidPreviousY
+        : target.y;
+      const minimumColumn = Math.floor(
+        (Math.min(startX, endX) - target.radius) / cellSize,
+      );
+      const maximumColumn = Math.floor(
+        (Math.max(startX, endX) + target.radius) / cellSize,
+      );
+      const minimumRow = clamp(
+        Math.floor((Math.min(startY, target.y) - target.radius) / cellSize),
+        0,
+        maximumRow,
+      );
+      const maximumTargetRow = clamp(
+        Math.floor((Math.max(startY, target.y) + target.radius) / cellSize),
+        0,
+        maximumRow,
+      );
+
+      for (let column = minimumColumn; column <= maximumColumn; column += 1) {
+        for (let row = minimumRow; row <= maximumTargetRow; row += 1) {
+          const key = acidTargetBroadphaseKey(column, row);
+          let bucket = acidTargetBroadphaseBuckets[key];
+          if (!bucket) {
+            bucket = [];
+            acidTargetBroadphaseBuckets[key] = bucket;
+          }
+          if (bucket.length === 0) {
+            acidTargetBroadphaseUsedBucketKeys.push(key);
+          }
+          bucket.push(target);
+        }
+      }
+    }
+  }
+
+  function acidTargetCandidatesForParticle(particle) {
+    acidTargetCandidateScratch.length = 0;
+    acidTargetBroadphaseQueryId =
+      (acidTargetBroadphaseQueryId + 1) >>> 0;
+    if (acidTargetBroadphaseQueryId === 0) {
+      for (let index = 0; index < game.targets.length; index += 1) {
+        game.targets[index].acidBroadphaseQueryId = 0;
+      }
+      acidTargetBroadphaseQueryId = 1;
+    }
+    const queryId = acidTargetBroadphaseQueryId;
+    const cellSize = ACID_RULES.targetBroadphaseCellSize;
+    const startX = particle.previousX;
+    const endX = particle.x;
+    const minimumColumn = Math.floor(
+      (Math.min(startX, endX) - particle.radius) / cellSize,
+    );
+    const maximumColumn = Math.floor(
+      (Math.max(startX, endX) + particle.radius) / cellSize,
+    );
+    const maximumRow = acidTargetBroadphaseRowCount - 1;
+    const minimumRow = clamp(
+      Math.floor(
+        (Math.min(particle.previousY, particle.y) - particle.radius) /
+          cellSize,
+      ),
+      0,
+      maximumRow,
+    );
+    const maximumParticleRow = clamp(
+      Math.floor(
+        (Math.max(particle.previousY, particle.y) + particle.radius) /
+          cellSize,
+      ),
+      0,
+      maximumRow,
+    );
+
+    for (let column = minimumColumn; column <= maximumColumn; column += 1) {
+      for (let row = minimumRow; row <= maximumParticleRow; row += 1) {
+        const bucket =
+          acidTargetBroadphaseBuckets[
+            acidTargetBroadphaseKey(column, row)
+          ];
+        if (!bucket) continue;
+        for (let index = 0; index < bucket.length; index += 1) {
+          const target = bucket[index];
+          if (target.acidBroadphaseQueryId === queryId) continue;
+          target.acidBroadphaseQueryId = queryId;
+          acidTargetCandidateScratch.push(target);
+        }
+      }
+    }
+    return acidTargetCandidateScratch;
+  }
+
   function acidParticleTargetContact(
     particle,
     target,
@@ -9730,6 +10293,7 @@
     updateSpitterAim(dt);
     acidLatchedTargetSeconds.clear();
     acidActiveTargets.clear();
+    clearAcidTargetBroadphase();
     for (let index = 0; index < game.targets.length; index += 1) {
       acidActiveTargets.add(game.targets[index]);
     }
@@ -9797,6 +10361,7 @@
     emitSpitterAcid(dt, guidePose);
     // A physical carrier can attach to exactly one enemy. Choose its earliest
     // swept impact so overlapping hurtboxes cannot claim the same particle.
+    let targetBroadphaseBuilt = false;
     for (
       let particleIndex = 0;
       particleIndex < game.acidParticles.length;
@@ -9810,18 +10375,23 @@
         dt,
       );
       if (motionTime <= 0) continue;
+      if (!targetBroadphaseBuilt) {
+        buildAcidTargetBroadphase();
+        targetBroadphaseBuilt = true;
+      }
       const targetStartFraction = dt > 0 ? 1 - motionTime / dt : 0;
       let bestTarget = null;
       let bestTime = Infinity;
       let bestCenterDistanceSquared = Infinity;
       let bestNormalX = 1;
       let bestNormalY = 0;
+      const targetCandidates = acidTargetCandidatesForParticle(particle);
       for (
         let targetIndex = 0;
-        targetIndex < game.targets.length;
+        targetIndex < targetCandidates.length;
         targetIndex += 1
       ) {
-        const target = game.targets[targetIndex];
+        const target = targetCandidates[targetIndex];
         if (!acidTargetCanHoldParticle(target)) continue;
         if (
           !acidParticleTargetContact(
@@ -9889,9 +10459,46 @@
     };
   }
 
+  function nearestExistingMeatChunk(x, y) {
+    let nearest = null;
+    let nearestDistanceSquared = Infinity;
+    const consider = (targets) => {
+      for (let index = 0; index < targets.length; index += 1) {
+        const target = targets[index];
+        if (target.kind !== ENEMY_TYPES.MEAT) continue;
+        const targetX = nearestPeriodicWorldX(target.x, x);
+        const dx = targetX - x;
+        const dy = target.y - y;
+        const distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared >= nearestDistanceSquared) continue;
+        nearest = target;
+        nearestDistanceSquared = distanceSquared;
+      }
+    };
+    consider(game.targets);
+    consider(game.capturedTargets);
+    return nearest;
+  }
+
   function spawnMeatDrops(target) {
-    const totalPoints = Math.max(1, Math.round(target.scoreValue));
-    const pieceCount = meatPieceCountForScore(totalPoints);
+    const totalPoints = Math.max(0, Math.round(target.scoreValue));
+    if (totalPoints <= 0) return;
+    const availableSlots = Math.max(
+      0,
+      MEAT_SPAWN_RULES.maximumCount - liveMeatCount(),
+    );
+    if (availableSlots <= 0) {
+      const recipient = nearestExistingMeatChunk(target.x, target.y);
+      if (recipient) {
+        recipient.scoreValue += totalPoints;
+        recipient.roundBudgeted ||= target.roundBudgeted;
+      }
+      return;
+    }
+    const pieceCount = Math.min(
+      meatPieceCountForScore(totalPoints),
+      availableSlots,
+    );
     const pointsPerPiece = Math.floor(totalPoints / pieceCount);
     const extraPointPieces = totalPoints % pieceCount;
     const random = seededRandom(
@@ -9921,6 +10528,7 @@
       const scatterSpeed = 32 + random() * 72;
       piece.scoreValue =
         pointsPerPiece + (index < extraPointPieces ? 1 : 0);
+      piece.roundBudgeted = target.roundBudgeted;
       piece.health = 1;
       piece.maxHealth = 1;
       piece.boostDropReleaseX = game.head.x;
@@ -9938,6 +10546,7 @@
     }
 
     game.targets.push(...pieces);
+    game.meatTargetCount += pieces.length;
     game.totalTargets += pieces.length;
   }
 
@@ -10579,6 +11188,150 @@
       .map((candidate) => candidate.target);
   }
 
+  function prioritizedAutomaticBoostTongueTargets(maximumCount) {
+    if (maximumCount <= 0) return [];
+    const { front } = tongueHeadAnchors();
+    const tongueReach =
+      wormVisualLength() * TONGUE_RULES.lengthMultiplier;
+    const tongueTipRadius =
+      TONGUE_RULES.outerBaseWidth * wormScale() * 0.5;
+    const claimedTargetIds = new Set(
+      game.tongues.map((tongue) => tongue.targetId),
+    );
+    const candidates = [];
+
+    game.targets.forEach((target) => {
+      if (
+        target.kind === ENEMY_TYPES.MEAT ||
+        target.health <= 0 ||
+        tongueTargetIsUnavailable(target, claimedTargetIds) ||
+        enemyIsHardPrey(target)
+      ) {
+        return;
+      }
+      // Match the coordinate image used by the locked-target tongue route.
+      // Enemy updates already periodicize active targets around the worm.
+      const dx = target.x - front.x;
+      const dy = target.y - front.y;
+      const distanceSquared = dx * dx + dy * dy;
+      const maximumDistance =
+        tongueReach + target.radius + tongueTipRadius;
+      if (distanceSquared > maximumDistance * maximumDistance) return;
+      candidates.push({ target, distanceSquared });
+    });
+    candidates.sort(
+      (first, second) =>
+        (Number(second.target.scoreValue) || 0) -
+          (Number(first.target.scoreValue) || 0) ||
+        first.distanceSquared - second.distanceSquared ||
+        first.target.id - second.target.id,
+    );
+    const selectedTargets = [];
+    for (
+      let index = 0;
+      index < candidates.length && selectedTargets.length < maximumCount;
+      index += 1
+    ) {
+      const target = candidates[index].target;
+      const fullReachGeometry = getTongueGeometry(
+        {
+          targetId: target.id,
+          progress: 1,
+        },
+        1,
+      );
+      if (
+        !fullReachGeometry ||
+        !tongueGeometryTouchesTarget(fullReachGeometry, target)
+      ) {
+        continue;
+      }
+      selectedTargets.push(target);
+    }
+    return selectedTargets;
+  }
+
+  function pendingAutomaticTongueLatchCost() {
+    return game.tongues.reduce(
+      (cost, tongue) =>
+        cost +
+        (tongue.automaticBoost &&
+          !tongue.automaticLatchCharged &&
+          Number.isFinite(tongue.targetId)
+          ? TONGUE_RULES.automaticLatchBoostCost
+          : 0),
+      0,
+    );
+  }
+
+  function updateAutomaticBoostTongueTargeting(dt) {
+    const automaticSearchActive =
+      wormHasAbility(WORM_ABILITIES.TONGUE) &&
+      game.boosting &&
+      game.boostCharge > 0 &&
+      !game.latchAttack &&
+      !game.tongues.some((tongue) => tongue.heavyHold);
+    if (!automaticSearchActive) {
+      game.automaticTongueSearchCooldown = 0;
+      return;
+    }
+
+    const availableCapacity = Math.max(
+      0,
+      wormTongueCapacity() - game.tongues.length,
+    );
+    const automaticTongueCount = game.tongues.reduce(
+      (count, tongue) => count + (tongue.automaticBoost ? 1 : 0),
+      0,
+    );
+    const availableAutomaticTongues = Math.max(
+      0,
+      TONGUE_RULES.automaticMaximumConcurrent - automaticTongueCount,
+    );
+    const availableTongues = Math.min(
+      availableCapacity,
+      availableAutomaticTongues,
+    );
+    if (availableTongues <= 0) {
+      game.automaticTongueSearchCooldown = 0;
+      return;
+    }
+    game.automaticTongueSearchCooldown = Math.max(
+      0,
+      game.automaticTongueSearchCooldown - dt,
+    );
+    if (game.automaticTongueSearchCooldown > 0) return;
+    game.automaticTongueSearchCooldown = TONGUE_RULES.automaticSearchInterval;
+
+    const unreservedBoost = Math.max(
+      0,
+      game.boostCharge - pendingAutomaticTongueLatchCost(),
+    );
+    const affordableTongues = Math.floor(
+      (unreservedBoost + 0.000001) /
+        TONGUE_RULES.automaticLatchBoostCost,
+    );
+    const maximumLaunches = Math.min(
+      availableTongues,
+      affordableTongues,
+    );
+    const selectedTargets = prioritizedAutomaticBoostTongueTargets(
+      maximumLaunches,
+    );
+    selectedTargets.forEach((target) => {
+      game.tongues.push({
+        automaticBoost: true,
+        automaticLatchCharged: false,
+        aimOffsetX: target.x - game.head.x,
+        aimOffsetY: target.y - game.head.y,
+        targetId: target.id,
+        progress: 0,
+        phase: "extending",
+        holdRemaining: TONGUE_RULES.holdDuration,
+      });
+    });
+  }
+
   function wormCanStartHeavyTongueGrapple() {
     return (
       wormHasAbility(WORM_ABILITIES.TONGUE) &&
@@ -10650,6 +11403,19 @@
     paralyzeTarget = true,
   ) {
     if (geometry.route.points.length === 0) return false;
+    if (
+      tongue.automaticBoost &&
+      (
+        target.kind === ENEMY_TYPES.MEAT ||
+        enemyIsHardPrey(target) ||
+        (!tongue.automaticLatchCharged &&
+          game.boostCharge + 0.000001 <
+            TONGUE_RULES.automaticLatchBoostCost)
+      )
+    ) {
+      tongue.targetId = null;
+      return false;
+    }
     const targetVelocityX = Number(target.vx) || 0;
     const targetVelocityY = Number(target.vy) || 0;
     const nodeCount = geometry.route.points.length;
@@ -10692,6 +11458,13 @@
       );
       target.vx = 0;
       target.vy = 0;
+    }
+    if (tongue.automaticBoost && !tongue.automaticLatchCharged) {
+      game.boostCharge = Math.max(
+        0,
+        game.boostCharge - TONGUE_RULES.automaticLatchBoostCost,
+      );
+      tongue.automaticLatchCharged = true;
     }
     return true;
   }
@@ -11558,6 +12331,15 @@
 
   function finishConsumedTargets(consumedTargets, emitFinalSplatter = true) {
     if (consumedTargets.length === 0) return;
+    const consumedMeatCount = consumedTargets.reduce(
+      (count, target) =>
+        count + (target.kind === ENEMY_TYPES.MEAT ? 1 : 0),
+      0,
+    );
+    game.meatTargetCount = Math.max(
+      0,
+      game.meatTargetCount - consumedMeatCount,
+    );
     consumedTargets.forEach((target) => {
       game.targetsEaten += 1;
       const effectCountScale = Math.min(3, target.sizeScale);
@@ -11614,7 +12396,19 @@
       game.capturedTargets.splice(index, 1);
       consumedTargets.push(target);
     }
+    const consumedPointValue = consumedTargets.reduce(
+      (points, target) =>
+        points + Math.max(0, Number(target.scoreValue) || 0),
+      0,
+    );
     finishConsumedTargets(consumedTargets, false);
+    if (consumedPointValue > 0) {
+      game.boostCharge = Math.min(
+        boostCapacity(),
+        game.boostCharge +
+          consumedPointValue * BOOST_RULES.eatenPointRestoreRate,
+      );
+    }
   }
 
   function suppressReleasedLatchHitbox(target, eatHitboxSweep, eatCone) {
@@ -12822,6 +13616,10 @@
     game.previous.x = game.head.x;
     game.previous.y = game.head.y;
     game.previousEatHitbox = getEatHitboxPose();
+    const acidSprayHeld = spitterSprayControlHeld();
+    // Snapshot availability before this frame's drain so the final funded
+    // frame still emits normally, just like the final movement-boost frame.
+    game.acidSpraying = acidSprayHeld && game.boostCharge > 0;
     const stoneSurfaceContact = activeStoneSurfaceContact();
     const heavyTongueGrapple = activeHeavyTongueGrapple();
     let stoneSurfaceActive = false;
@@ -12870,9 +13668,17 @@
       movementBoosting ||
       surfaceRollingBoosting ||
       grapplePullBoosting;
-    if (game.boosting) {
-      game.boostCharge = Math.max(0, game.boostCharge - dt);
-    } else if (!keys.boost) {
+    const boostDrainRate =
+      (game.boosting ? BOOST_RULES.drainRate : 0) +
+      (game.acidSpraying
+        ? BOOST_RULES.drainRate * ACID_RULES.boostDrainMultiplier
+        : 0);
+    if (boostDrainRate > 0) {
+      game.boostCharge = Math.max(
+        0,
+        game.boostCharge - boostDrainRate * dt,
+      );
+    } else if (!keys.boost && !acidSprayHeld) {
       game.boostCharge = Math.min(
         boostCapacity(),
         game.boostCharge + BOOST_RULES.rechargeRate * dt,
@@ -13006,6 +13812,7 @@
       endStoneSurfaceContact();
     }
     eatTargetsAlongHeadPath();
+    updateAutomaticBoostTongueTargeting(dt);
     updateTongues(dt);
     updateMouthAnimation(dt);
     if (game.latchAttack?.releasePending) {
@@ -13066,6 +13873,7 @@
       if (recordHeadPath()) updateSegments();
     }
     updateAcidAbility(dt);
+    refillRoundTargetsImmediately();
     updateAcidTunnelDecay();
     updateTunnelDecay();
     updateParticles(dt);
@@ -14196,9 +15004,20 @@
     game.clouds = [];
     game.targets = [];
     game.capturedTargets = [];
+    game.meatTargetCount = 0;
     game.totalTargets = 0;
+    game.roundUnspawnedPoints = 0;
+    game.roundPopulationCap = 0;
+    game.roundSpawnRegionType = null;
+    game.roundSpawnSerial = 0;
+    game.roundSpawnAttemptSerial = 0;
+    game.roundSpawnBlockedLiveCount = -1;
+    game.roundSpawnBlockedPoints = -1;
+    game.roundSpawnBlockedNextTargetId = -1;
+    game.roundSpawnRetryAt = 0;
     game.particles = [];
     game.tongues = [];
+    game.automaticTongueSearchCooldown = 0;
     game.latchAttack = null;
     game.onStoneSurface = false;
     game.stoneSurfaceContact = null;
@@ -14219,7 +15038,8 @@
       stoneDistanceField: null,
       stoneSurfacePaths: [],
       stoneSurfaceSegmentsByColumn: [],
-      targetCandidateSummaries: new Map(),
+      hasSpawnableGround: false,
+      hasSpawnableAir: false,
     };
     minimapState.ready = false;
     minimapState.lastRefreshTime = 0;
@@ -14738,8 +15558,63 @@
     });
   }
 
+  function skyPhotoIsReady() {
+    return skyPhoto.complete && skyPhoto.naturalWidth > 0;
+  }
+
+  function drawPhotoSky(visible) {
+    const skyTop = Math.max(0, visible.y);
+    const skyBottom = Math.min(game.groundY, visible.y + visible.height);
+    if (skyBottom <= skyTop) return;
+
+    // Treat the sky as an infinitely distant plate: it follows the viewport
+    // horizontally, while its low horizon remains pinned to the world surface.
+    // A single cover-cropped draw avoids both repeating landmarks and mirrored
+    // cloud symmetry at panel seams.
+    const destinationAspect = visible.width / game.groundY;
+    let sourceX = 0;
+    let sourceY = 0;
+    let sourceWidth = skyPhoto.naturalWidth;
+    let sourceHeight = skyPhoto.naturalHeight;
+    const sourceAspect = sourceWidth / sourceHeight;
+    if (sourceAspect > destinationAspect) {
+      sourceWidth = sourceHeight * destinationAspect;
+      sourceX = (skyPhoto.naturalWidth - sourceWidth) * 0.5;
+    } else if (sourceAspect < destinationAspect) {
+      sourceHeight = sourceWidth / destinationAspect;
+      sourceY = skyPhoto.naturalHeight - sourceHeight;
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(visible.x, skyTop, visible.width, skyBottom - skyTop);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(
+      skyPhoto,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      visible.x,
+      0,
+      visible.width,
+      game.groundY,
+    );
+    ctx.restore();
+  }
+
   function drawBackground() {
     const visible = getVisibleWorldBounds(2);
+    if (skyPhotoIsReady()) {
+      // Keep underground voids dark, then place the distant photographic sky
+      // only above the authored surface.
+      ctx.fillStyle = palette.skyDark;
+      ctx.fillRect(visible.x, visible.y, visible.width, visible.height);
+      drawPhotoSky(visible);
+      drawMap();
+      return;
+    }
     const skyGradient = ctx.createLinearGradient(0, 0, 0, game.groundY);
     skyGradient.addColorStop(0, palette.skyDark);
     skyGradient.addColorStop(0.38, palette.sky);
@@ -15732,6 +16607,80 @@
     return hasConnections;
   }
 
+  function createAcidFluidPatternTile() {
+    const size = ACID_RULES.fluidPatternTileSize;
+    const tile =
+      typeof OffscreenCanvas === "function"
+        ? new OffscreenCanvas(size, size)
+        : document.createElement("canvas");
+    tile.width = size;
+    tile.height = size;
+    const tileContext = tile.getContext("2d");
+    const image = tileContext.createImageData(size, size);
+    const data = image.data;
+    const patternColors = [
+      palette.acidFluidShadow,
+      palette.acidFluid,
+      palette.acidFluidMid,
+      palette.acidFluidHighlight,
+    ].map((color) => {
+      const value = Number.parseInt(color.slice(1), 16);
+      return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+    });
+    const shadow = patternColors[0];
+    const base = patternColors[1];
+    const middle = patternColors[2];
+    const highlight = patternColors[3];
+
+    // Integer-frequency waves are periodic on both axes. The first pixel
+    // after any edge therefore continues the same field from the opposite
+    // edge, producing a genuinely seamless, low-contrast liquid texture.
+    for (let y = 0; y < size; y += 1) {
+      const v = (y + 0.5) / size;
+      for (let x = 0; x < size; x += 1) {
+        const u = (x + 0.5) / size;
+        const field =
+          Math.sin(TAU * u + 0.72 * Math.sin(TAU * v)) * 0.54 +
+          Math.sin(TAU * 2 * (u + v)) * 0.28 +
+          Math.cos(TAU * (3 * u - 2 * v)) * 0.18;
+        const tone = clamp(0.5 + field * 0.32, 0, 1);
+        let red;
+        let green;
+        let blue;
+        if (tone < 0.42) {
+          const amount = tone / 0.42;
+          red = lerp(shadow[0], base[0], amount);
+          green = lerp(shadow[1], base[1], amount);
+          blue = lerp(shadow[2], base[2], amount);
+        } else if (tone < 0.76) {
+          const amount = (tone - 0.42) / 0.34;
+          red = lerp(base[0], middle[0], amount);
+          green = lerp(base[1], middle[1], amount);
+          blue = lerp(base[2], middle[2], amount);
+        } else {
+          const amount = (tone - 0.76) / 0.24;
+          red = lerp(middle[0], highlight[0], amount);
+          green = lerp(middle[1], highlight[1], amount);
+          blue = lerp(middle[2], highlight[2], amount);
+        }
+        const offset = (y * size + x) * 4;
+        data[offset] = Math.round(red);
+        data[offset + 1] = Math.round(green);
+        data[offset + 2] = Math.round(blue);
+        data[offset + 3] = 255;
+      }
+    }
+    tileContext.putImageData(image, 0, 0);
+    return tile;
+  }
+
+  function acidFluidPatternTile() {
+    if (!acidFluidPatternTileCache) {
+      acidFluidPatternTileCache = createAcidFluidPatternTile();
+    }
+    return acidFluidPatternTileCache;
+  }
+
   function createAcidClusterAtlas(dropletCount) {
     const tileSize = ACID_RULES.visualClusterTileSize;
     const columns = ACID_RULES.visualClusterAtlasColumns;
@@ -15744,9 +16693,11 @@
     atlas.height = rows * tileSize;
     const atlasContext = atlas.getContext("2d");
     atlasContext.imageSmoothingEnabled = true;
+    const fluidPattern =
+      atlasContext.createPattern(acidFluidPatternTile(), "repeat") ||
+      palette.acidFluid;
     const pixelsPerRadius =
       (tileSize * 0.5 - 4) / ACID_RULES.visualClusterExtent;
-    const highlightMinimumScale = 0.28 / ACID_RULES.particleRadius;
     const goldenAngle = Math.PI * (3 - Math.sqrt(5));
 
     for (
@@ -15787,17 +16738,6 @@
             );
       }
 
-      const fluidGradient = atlasContext.createRadialGradient(
-        centerX - tileSize * 0.07,
-        centerY - tileSize * 0.08,
-        tileSize * 0.015,
-        centerX,
-        centerY,
-        tileSize * 0.32,
-      );
-      fluidGradient.addColorStop(0, "#c9e956");
-      fluidGradient.addColorStop(0.48, palette.acidFluid);
-      fluidGradient.addColorStop(1, "#8eb52b");
       if (dropletCount > 1) {
         atlasContext.beginPath();
         for (let index = 1; index < dropletCount; index += 1) {
@@ -15811,7 +16751,7 @@
           ACID_RULES.visualDropletMinimumRadiusScale *
           2 *
           pixelsPerRadius;
-        atlasContext.strokeStyle = fluidGradient;
+        atlasContext.strokeStyle = fluidPattern;
         atlasContext.stroke();
       }
 
@@ -15828,30 +16768,8 @@
           TAU,
         );
       }
-      atlasContext.fillStyle = fluidGradient;
+      atlasContext.fillStyle = fluidPattern;
       atlasContext.fill();
-
-      atlasContext.beginPath();
-      const highlightStride = Math.max(
-        2,
-        Math.ceil(dropletCount / ACID_RULES.maximumClusterHighlights),
-      );
-      for (let index = 0; index < dropletCount; index += 1) {
-        if ((variant + index) % highlightStride !== 0) continue;
-        const offset = index * 3;
-        const radiusScale = geometry[offset + 2];
-        const radius =
-          Math.max(highlightMinimumScale, radiusScale * 0.24) *
-          pixelsPerRadius;
-        const x = geometry[offset] - radiusScale * 0.2 * pixelsPerRadius;
-        const y = geometry[offset + 1] - radiusScale * 0.24 * pixelsPerRadius;
-        atlasContext.moveTo(x + radius, y);
-        atlasContext.arc(x, y, radius, 0, TAU);
-      }
-      atlasContext.globalAlpha = 0.72;
-      atlasContext.fillStyle = palette.acidHighlight;
-      atlasContext.fill();
-      atlasContext.globalAlpha = 1;
     }
 
     return typeof atlas.transferToImageBitmap === "function"
@@ -15925,6 +16843,8 @@
     ctx.globalAlpha = 0.96;
 
     if (traceAcidRibbonConnections(bounds, ACID_RULES.linkCoreRadiusScale)) {
+      // A matching flat underlay avoids a scale/phase seam where differently
+      // sized patterned clusters overlap their connective ribbon.
       ctx.fillStyle = palette.acidFluid;
       ctx.fill();
     }
@@ -16675,14 +17595,36 @@
 
   function updateHud() {
     const displaySpeed = Math.round(game.speed * SPEED_DISPLAY_SCALE);
-    const remainingTargets =
-      game.targets.length + game.capturedTargets.length;
+    const remainingEnemies = liveEnemyCount();
+    const remainingMeat = liveMeatCount();
     const maximumBoost = boostCapacity();
     const boostRatio = clamp(game.boostCharge / maximumBoost, 0, 1);
     speedReadout.textContent = String(displaySpeed).padStart(3, "0");
-    targetReadout.textContent = String(remainingTargets).padStart(2, "0");
-    targetMetric.classList.toggle("cleared", game.totalTargets > 0 && remainingTargets === 0);
-    scoreReadout.textContent = String(game.score).padStart(3, "0");
+    targetReadout.textContent = String(remainingEnemies).padStart(2, "0");
+    const targetCountLabel =
+      `${remainingEnemies.toLocaleString()} enemies; ` +
+      `${remainingMeat.toLocaleString()} meat chunks`;
+    targetReadout.title = targetCountLabel;
+    targetReadout.setAttribute("aria-label", targetCountLabel);
+    const roundComplete =
+      game.roundUnspawnedPoints === 0 &&
+      remainingEnemies === 0 &&
+      remainingMeat === 0 &&
+      (game.score >= game.activeRoundPointLimit ||
+        game.roundPopulationCap === 0);
+    targetMetric.classList.toggle("cleared", roundComplete);
+    const compactScore =
+      game.score >= 1000000
+        ? `${Math.floor(game.score / 10000) / 100}M`
+        : game.score >= 10000
+          ? `${Math.floor(game.score / 100) / 10}K`
+          : String(game.score).padStart(3, "0");
+    scoreReadout.textContent = compactScore;
+    const exactScoreLabel =
+      `${game.score.toLocaleString()} of ` +
+      `${game.activeRoundPointLimit.toLocaleString()} round points`;
+    scoreReadout.title = exactScoreLabel;
+    scoreReadout.setAttribute("aria-label", exactScoreLabel);
     sizeLevelReadout.textContent = String(game.growthLevel);
     growthProgressReadout.textContent = String(game.growthProgress);
     growthCostReadout.textContent = String(game.growthCost);
@@ -16691,7 +17633,10 @@
     boostCapacityReadout.textContent = String(maximumBoost);
     boostMeter.setAttribute("aria-valuemax", String(maximumBoost));
     boostMeter.setAttribute("aria-valuenow", game.boostCharge.toFixed(2));
-    boostMetric.classList.toggle("boosting", game.boosting);
+    boostMetric.classList.toggle(
+      "boosting",
+      game.boosting || game.acidSpraying,
+    );
     boostMetric.classList.toggle("depleted", game.boostCharge <= 0.001);
     stateReadout.textContent = activeHeavyTongueGrapple()
       ? "Tongue grapple"
@@ -16861,6 +17806,7 @@
     }
     const capturedPointerId = spitterPointer.pointerId;
     spitterPointer.pointerId = null;
+    game.acidSpraying = false;
     game.acidEmissionAccumulator = 0;
     game.acidLastEmittedParticle = null;
     if (canvas.hasPointerCapture?.(capturedPointerId)) {
@@ -17217,6 +18163,7 @@
   function placeDevEnemyInView(kind) {
     const definition = ENEMY_DEFINITIONS[kind];
     if (!definition || definition.devSpawnable === false) return;
+    if (liveEnemyCount() >= ENEMY_SPAWN_RULES.maximumCount) return;
 
     updateCamera();
     const visible = getVisibleWorldBounds(0);
@@ -17260,9 +18207,12 @@
       ),
     );
 
-    game.targets.push(
-      createEnemyTarget(kind, x, y, regionType, random),
-    );
+    const target = createEnemyTarget(kind, x, y, regionType, random);
+    // Developer targets exercise behavior without increasing the selected
+    // round's obtainable score.
+    target.scoreValue = 0;
+    target.roundBudgeted = false;
+    game.targets.push(target);
     game.totalTargets += 1;
     updateHud();
   }
@@ -17349,6 +18299,9 @@
   homeWorldButton.addEventListener("click", openWorldSelect);
   homeWormButton.addEventListener("click", openWormTypeSelect);
   homeWormEditButton.addEventListener("click", openWormAppearanceEditor);
+  homePointLimitInput.addEventListener("change", () =>
+    selectRoundPointLimit(homePointLimitInput.value),
+  );
   mainMenuButton.addEventListener("click", openMainMenu);
   mainMenuCloseButton.addEventListener("click", closeMainMenu);
   menuContinueButton.addEventListener("click", closeMainMenu);
@@ -17495,6 +18448,7 @@
     populateDevEnemyButtons();
     loadCustomWorlds();
     loadSelectedWorld();
+    loadSelectedRoundPointLimit();
     loadSavedWormType();
     await loadSavedWormAppearance();
     // Build the seven bounded liquid-density sprites before play. Leveling up

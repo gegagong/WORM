@@ -8,7 +8,8 @@
       content="WORM — a tiny, high-speed underground flight experiment."
     />
     <title>WORM — Dig. Launch. Dive.</title>
-    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260811-tongue-click-hit-test" />
+    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260818-round-point-limits" />
+    <link rel="preload" as="image" href="./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-upper.png?v=20260815-shared-current-default" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-lower.png?v=20260815-shared-current-default" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-mouth-upper.png?v=20260815-shared-current-default" />
@@ -77,7 +78,7 @@
           <header class="home-heading">
             <p class="eyebrow">Burrow select</p>
             <h1 id="home-title">Worm</h1>
-            <p>Choose your worm and world, then start the run.</p>
+            <p>Choose your worm, world, and round size, then start the run.</p>
           </header>
           <div class="home-selections">
             <button class="home-choice" id="home-worm-select" type="button">
@@ -94,6 +95,17 @@
               <strong id="current-world-name">Flat World</strong>
               <small>Choose</small>
             </button>
+            <label class="home-point-setting" for="home-point-limit">
+              <span>
+                <strong>Round points</strong>
+                <small>Maximum score available this run</small>
+              </span>
+              <select id="home-point-limit" name="round-point-limit">
+                <option value="3159">Regular — 3,159 points</option>
+                <option value="500000">Bigger — 500,000 points</option>
+                <option value="10000000">Biggest — 10,000,000 points</option>
+              </select>
+            </label>
           </div>
           <button class="start-button" id="home-play-button" type="button">
             <span>Play selected world</span>
@@ -539,6 +551,6 @@
 
     </main>
 
-    <script src="./game.js?v=20260817-acid-release-momentum"></script>
+    <script src="./game.js?v=20260819-auto-boost-tongues"></script>
   </body>
 </html>

@@ -241,7 +241,8 @@ button {
   display: grid;
   visibility: hidden;
   padding: 32px;
-  place-items: center;
+  place-items: safe center;
+  overflow-y: auto;
   background:
     radial-gradient(circle at 75% 22%, rgba(255, 77, 0, 0.22), transparent 32%),
     linear-gradient(145deg, #f6c6ab 0 45%, #e59a79 45% 47%, #74412d 47% 100%);
@@ -351,6 +352,57 @@ button {
   background: transparent;
 }
 
+.home-point-setting {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(24, 34, 29, 0.42);
+  border-radius: 2px;
+  background: rgba(231, 214, 170, 0.42);
+}
+
+.home-point-setting > span {
+  display: grid;
+  gap: 2px;
+}
+
+.home-point-setting strong {
+  font-size: 12px;
+}
+
+.home-point-setting small {
+  color: rgba(24, 34, 29, 0.58);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.home-point-setting select {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(24, 34, 29, 0.52);
+  border-radius: 2px;
+  background: var(--cream);
+  color: var(--ink);
+  cursor: pointer;
+  font: 900 10px "Courier New", ui-monospace, monospace;
+  letter-spacing: 0.04em;
+}
+
+.home-point-setting:focus-within {
+  border-color: var(--ink);
+  background: rgba(231, 214, 170, 0.72);
+}
+
+.home-point-setting select:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+
 .home-edit-button strong {
   font: 900 10px "Courier New", monospace;
   letter-spacing: 0.05em;
@@ -411,6 +463,10 @@ kbd {
 .game-shell.home-active .touch-controls,
 .game-shell.home-active .dev-menu {
   display: none;
+}
+
+.game-shell.home-active {
+  min-height: 0;
 }
 
 .utility {
