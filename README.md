@@ -190,6 +190,13 @@ steering toward that point.
 When the tongue touches its selected enemy, that enemy is paralyzed and attached to the
 last rung. The articulated tongue then becomes a gravity-driven dangling chain, holds
 briefly in free fall, and retracts by shortening every rung toward the moving mouth anchor.
+While a targeted tongue is still extending, its flexible section can also collect any other
+non-meat enemy whose maximum HP is no more than one twentieth of the worm's current bite
+force. Each qualifying enemy sticks to the exact tongue segment it touched without replacing
+the intended tip target; several can ride the same tongue through extension, free fall, and
+retraction. These incidental riders cost no additional boost. They remain live enemies until
+the tongue delivers them to the mouth, where the existing eating animation, scoring, and
+point-proportional boost restoration take over normally.
 Captured and empty tongues retreat at their fixed animation rates regardless of the worm's
 level or tongue length. A target selected by a tongue is reserved from the normal eating
 collision throughout extension, capture, and retreat. Its eating animation can begin only

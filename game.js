@@ -727,6 +727,11 @@
   });
   const ROUND_POINT_LIMITS = Object.freeze([3159, 500000, 10000000]);
   const DEFAULT_ROUND_POINT_LIMIT = ROUND_POINT_LIMITS[0];
+  const MINIMUM_ENEMY_MAX_HEALTH = Math.min(
+    ...Object.entries(ENEMY_DEFINITIONS)
+      .filter(([kind]) => kind !== ENEMY_TYPES.MEAT)
+      .map(([, definition]) => definition.health),
+  );
   const MAXIMUM_ENEMY_HURTBOX_RADIUS = Math.max(
     ...Object.values(ENEMY_DEFINITIONS).map((definition) => definition.radius),
   );
@@ -875,6 +880,7 @@
     extendRate: 8.5,
     holdDuration: 0.32,
     retractRate: 6.5,
+    passengerBiteForceDivisor: 20,
     automaticSearchInterval: 0.1,
     automaticLatchBoostCost: 0.5,
     automaticMaximumConcurrent: 4,
@@ -1389,6 +1395,8 @@
     normalY: 0,
     centerDistanceSquared: 0,
   };
+  // Acid and tongue passengers reuse one frame-local target grid. The worm
+  // types are mutually exclusive, and each ability clears it after use.
   const acidTargetBroadphaseBuckets = [];
   const acidTargetBroadphaseUsedBucketKeys = [];
   const acidTargetCandidateScratch = [];
@@ -9951,7 +9959,7 @@
     );
   }
 
-  function buildAcidTargetBroadphase() {
+  function configureTargetBroadphase() {
     const cellSize = ACID_RULES.targetBroadphaseCellSize;
     acidTargetBroadphaseColumnCount = Math.max(
       1,
@@ -9961,7 +9969,46 @@
       1,
       Math.ceil(game.height / cellSize),
     );
+  }
+
+  function addTargetToBroadphase(target, startX, startY, endX, endY) {
+    const cellSize = ACID_RULES.targetBroadphaseCellSize;
     const maximumRow = acidTargetBroadphaseRowCount - 1;
+    const minimumColumn = Math.floor(
+      (Math.min(startX, endX) - target.radius) / cellSize,
+    );
+    const maximumColumn = Math.floor(
+      (Math.max(startX, endX) + target.radius) / cellSize,
+    );
+    const minimumRow = clamp(
+      Math.floor((Math.min(startY, endY) - target.radius) / cellSize),
+      0,
+      maximumRow,
+    );
+    const maximumTargetRow = clamp(
+      Math.floor((Math.max(startY, endY) + target.radius) / cellSize),
+      0,
+      maximumRow,
+    );
+
+    for (let column = minimumColumn; column <= maximumColumn; column += 1) {
+      for (let row = minimumRow; row <= maximumTargetRow; row += 1) {
+        const key = acidTargetBroadphaseKey(column, row);
+        let bucket = acidTargetBroadphaseBuckets[key];
+        if (!bucket) {
+          bucket = [];
+          acidTargetBroadphaseBuckets[key] = bucket;
+        }
+        if (bucket.length === 0) {
+          acidTargetBroadphaseUsedBucketKeys.push(key);
+        }
+        bucket.push(target);
+      }
+    }
+  }
+
+  function buildAcidTargetBroadphase() {
+    configureTargetBroadphase();
 
     for (let targetIndex = 0; targetIndex < game.targets.length; targetIndex += 1) {
       const target = game.targets[targetIndex];
@@ -9976,41 +10023,41 @@
       const startY = Number.isFinite(target.acidPreviousY)
         ? target.acidPreviousY
         : target.y;
-      const minimumColumn = Math.floor(
-        (Math.min(startX, endX) - target.radius) / cellSize,
-      );
-      const maximumColumn = Math.floor(
-        (Math.max(startX, endX) + target.radius) / cellSize,
-      );
-      const minimumRow = clamp(
-        Math.floor((Math.min(startY, target.y) - target.radius) / cellSize),
-        0,
-        maximumRow,
-      );
-      const maximumTargetRow = clamp(
-        Math.floor((Math.max(startY, target.y) + target.radius) / cellSize),
-        0,
-        maximumRow,
-      );
-
-      for (let column = minimumColumn; column <= maximumColumn; column += 1) {
-        for (let row = minimumRow; row <= maximumTargetRow; row += 1) {
-          const key = acidTargetBroadphaseKey(column, row);
-          let bucket = acidTargetBroadphaseBuckets[key];
-          if (!bucket) {
-            bucket = [];
-            acidTargetBroadphaseBuckets[key] = bucket;
-          }
-          if (bucket.length === 0) {
-            acidTargetBroadphaseUsedBucketKeys.push(key);
-          }
-          bucket.push(target);
-        }
-      }
+      addTargetToBroadphase(target, startX, startY, endX, target.y);
     }
   }
 
-  function acidTargetCandidatesForParticle(particle) {
+  function buildTonguePassengerTargetBroadphase(
+    maximumPassengerHealth,
+    claimedTargetIds,
+  ) {
+    configureTargetBroadphase();
+
+    for (let targetIndex = 0; targetIndex < game.targets.length; targetIndex += 1) {
+      const target = game.targets[targetIndex];
+      if (
+        target.kind === ENEMY_TYPES.MEAT ||
+        target.health <= 0 ||
+        target.latched ||
+        target.tongueCaptured ||
+        target.paralyzed ||
+        target.boostLatchHitboxDisabled ||
+        claimedTargetIds.has(target.id) ||
+        enemyMaximumHealth(target) > maximumPassengerHealth
+      ) {
+        continue;
+      }
+      addTargetToBroadphase(
+        target,
+        target.x,
+        target.y,
+        target.x,
+        target.y,
+      );
+    }
+  }
+
+  function beginTargetBroadphaseQuery() {
     acidTargetCandidateScratch.length = 0;
     acidTargetBroadphaseQueryId =
       (acidTargetBroadphaseQueryId + 1) >>> 0;
@@ -10020,36 +10067,33 @@
       }
       acidTargetBroadphaseQueryId = 1;
     }
-    const queryId = acidTargetBroadphaseQueryId;
+    return acidTargetBroadphaseQueryId;
+  }
+
+  function collectTargetBroadphaseCandidates(
+    minimumX,
+    minimumY,
+    maximumX,
+    maximumY,
+    queryId,
+  ) {
     const cellSize = ACID_RULES.targetBroadphaseCellSize;
-    const startX = particle.previousX;
-    const endX = particle.x;
-    const minimumColumn = Math.floor(
-      (Math.min(startX, endX) - particle.radius) / cellSize,
-    );
-    const maximumColumn = Math.floor(
-      (Math.max(startX, endX) + particle.radius) / cellSize,
-    );
+    const minimumColumn = Math.floor(minimumX / cellSize);
+    const maximumColumn = Math.floor(maximumX / cellSize);
     const maximumRow = acidTargetBroadphaseRowCount - 1;
     const minimumRow = clamp(
-      Math.floor(
-        (Math.min(particle.previousY, particle.y) - particle.radius) /
-          cellSize,
-      ),
+      Math.floor(minimumY / cellSize),
       0,
       maximumRow,
     );
-    const maximumParticleRow = clamp(
-      Math.floor(
-        (Math.max(particle.previousY, particle.y) + particle.radius) /
-          cellSize,
-      ),
+    const maximumQueryRow = clamp(
+      Math.floor(maximumY / cellSize),
       0,
       maximumRow,
     );
 
     for (let column = minimumColumn; column <= maximumColumn; column += 1) {
-      for (let row = minimumRow; row <= maximumParticleRow; row += 1) {
+      for (let row = minimumRow; row <= maximumQueryRow; row += 1) {
         const bucket =
           acidTargetBroadphaseBuckets[
             acidTargetBroadphaseKey(column, row)
@@ -10063,6 +10107,17 @@
         }
       }
     }
+  }
+
+  function acidTargetCandidatesForParticle(particle) {
+    const queryId = beginTargetBroadphaseQuery();
+    collectTargetBroadphaseCandidates(
+      Math.min(particle.previousX, particle.x) - particle.radius,
+      Math.min(particle.previousY, particle.y) - particle.radius,
+      Math.max(particle.previousX, particle.x) + particle.radius,
+      Math.max(particle.previousY, particle.y) + particle.radius,
+      queryId,
+    );
     return acidTargetCandidateScratch;
   }
 
@@ -11123,7 +11178,29 @@
     return game.tongues.some((tongue) => tongue.targetId === target.id);
   }
 
+  function deliverTonguePassengersToMouth(tongue) {
+    if (!tongue?.passengers?.length) return;
+    const { pose, front } = tongueHeadAnchors();
+    tongue.passengers.forEach((passenger) => {
+      const target = passenger.target;
+      if (!target?.tongueCaptured) return;
+      target.x = front.x;
+      target.y = front.y;
+      target.angle = pose.angle;
+      target.vx = 0;
+      target.vy = 0;
+      target.biteBounceCooldown = 0;
+      target.tongueCaptured = false;
+      target.paralyzed = true;
+      target.movementMode = "paralyzed";
+      target.regionType =
+        getBlockAtWorld(target.x, target.y)?.type || BLOCK_TYPES.AIR;
+    });
+    tongue.passengers.length = 0;
+  }
+
   function removeTongue(tongue) {
+    deliverTonguePassengersToMouth(tongue);
     const index = game.tongues.indexOf(tongue);
     if (index >= 0) game.tongues.splice(index, 1);
   }
@@ -11325,6 +11402,7 @@
         aimOffsetX: target.x - game.head.x,
         aimOffsetY: target.y - game.head.y,
         targetId: target.id,
+        passengers: null,
         progress: 0,
         phase: "extending",
         holdRemaining: TONGUE_RULES.holdDuration,
@@ -11394,6 +11472,184 @@
       }
     }
     return false;
+  }
+
+  function tongueFlexibleCenterlinePoints(geometry) {
+    return [geometry.front, ...geometry.route.points];
+  }
+
+  function tonguePassengerTargetCanStick(target, captureState) {
+    return Boolean(
+      target &&
+      target.kind !== ENEMY_TYPES.MEAT &&
+      target.health > 0 &&
+      !target.latched &&
+      !target.tongueCaptured &&
+      !target.paralyzed &&
+      !target.boostLatchHitboxDisabled &&
+      !captureState.claimedTargetIds.has(target.id) &&
+      enemyMaximumHealth(target) <= captureState.maximumHealth
+    );
+  }
+
+  function tonguePassengerContact(points, target) {
+    const tongueRadius = TONGUE_RULES.outerBaseWidth * wormScale() * 0.5;
+    const collisionRadius = target.radius + tongueRadius;
+    const collisionRadiusSquared = collisionRadius * collisionRadius;
+    let bestContact = null;
+    let bestDistanceSquared = Infinity;
+
+    for (let index = 1; index < points.length; index += 1) {
+      const start = points[index - 1];
+      const end = points[index];
+      const segmentX = end.x - start.x;
+      const segmentY = end.y - start.y;
+      const segmentLengthSquared =
+        segmentX * segmentX + segmentY * segmentY;
+      if (segmentLengthSquared <= 0.000001) continue;
+      const targetX = nearestPeriodicWorldX(
+        target.x,
+        (start.x + end.x) * 0.5,
+      );
+      const amount = clamp(
+        ((targetX - start.x) * segmentX +
+          (target.y - start.y) * segmentY) /
+          segmentLengthSquared,
+        0,
+        1,
+      );
+      const contactX = start.x + segmentX * amount;
+      const contactY = start.y + segmentY * amount;
+      const offsetX = targetX - contactX;
+      const offsetY = target.y - contactY;
+      const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+      if (
+        distanceSquared > collisionRadiusSquared ||
+        distanceSquared >= bestDistanceSquared
+      ) {
+        continue;
+      }
+      const segmentLength = Math.sqrt(segmentLengthSquared);
+      const tangentX = segmentX / segmentLength;
+      const tangentY = segmentY / segmentLength;
+      const normalX = -segmentY / segmentLength;
+      const normalY = segmentX / segmentLength;
+      bestDistanceSquared = distanceSquared;
+      bestContact = {
+        segmentIndex: index,
+        segmentAmount: amount,
+        tangentOffset: offsetX * tangentX + offsetY * tangentY,
+        normalOffset: offsetX * normalX + offsetY * normalY,
+      };
+    }
+    return bestContact;
+  }
+
+  function positionTonguePassengers(tongue, geometry, dt) {
+    if (!tongue.passengers?.length || !geometry) return;
+    const points = tongueFlexibleCenterlinePoints(geometry);
+    if (points.length === 0) return;
+
+    for (let index = tongue.passengers.length - 1; index >= 0; index -= 1) {
+      const passenger = tongue.passengers[index];
+      const target = passenger.target;
+      if (!target?.tongueCaptured) {
+        tongue.passengers.splice(index, 1);
+        continue;
+      }
+      const previousX = target.x;
+      const previousY = target.y;
+      if (points.length === 1) {
+        target.x = points[0].x;
+        target.y = points[0].y;
+        target.angle = geometry.pose.angle;
+      } else {
+        const segmentIndex = Math.min(
+          passenger.segmentIndex,
+          points.length - 1,
+        );
+        const start = points[Math.max(0, segmentIndex - 1)];
+        const end = points[segmentIndex];
+        const amount =
+          passenger.segmentIndex <= points.length - 1
+            ? passenger.segmentAmount
+            : 1;
+        const segmentX = end.x - start.x;
+        const segmentY = end.y - start.y;
+        const segmentLength = magnitude(segmentX, segmentY);
+        const normalX = segmentLength > 0.0001
+          ? -segmentY / segmentLength
+          : -Math.sin(geometry.pose.angle);
+        const normalY = segmentLength > 0.0001
+          ? segmentX / segmentLength
+          : Math.cos(geometry.pose.angle);
+        const tangentX = segmentLength > 0.0001
+          ? segmentX / segmentLength
+          : Math.cos(geometry.pose.angle);
+        const tangentY = segmentLength > 0.0001
+          ? segmentY / segmentLength
+          : Math.sin(geometry.pose.angle);
+        target.x =
+          lerp(start.x, end.x, amount) +
+          tangentX * passenger.tangentOffset +
+          normalX * passenger.normalOffset;
+        target.y =
+          lerp(start.y, end.y, amount) +
+          tangentY * passenger.tangentOffset +
+          normalY * passenger.normalOffset;
+        target.angle = segmentLength > 0.0001
+          ? Math.atan2(segmentY, segmentX)
+          : geometry.pose.angle;
+      }
+      target.vx = dt > 0 ? (target.x - previousX) / dt : 0;
+      target.vy = dt > 0 ? (target.y - previousY) / dt : 0;
+      target.regionType =
+        getBlockAtWorld(target.x, target.y)?.type || BLOCK_TYPES.AIR;
+    }
+  }
+
+  function stickTonguePassengers(
+    tongue,
+    primaryTarget,
+    geometry,
+    captureState,
+  ) {
+    if (
+      !captureState ||
+      primaryTarget?.kind === ENEMY_TYPES.MEAT ||
+      geometry.route.points.length === 0
+    ) {
+      return;
+    }
+    const points = tongueFlexibleCenterlinePoints(geometry);
+    const tongueRadius = TONGUE_RULES.outerBaseWidth * wormScale() * 0.5;
+    const queryId = beginTargetBroadphaseQuery();
+    for (let index = 1; index < points.length; index += 1) {
+      const start = points[index - 1];
+      const end = points[index];
+      collectTargetBroadphaseCandidates(
+        Math.min(start.x, end.x) - tongueRadius,
+        Math.min(start.y, end.y) - tongueRadius,
+        Math.max(start.x, end.x) + tongueRadius,
+        Math.max(start.y, end.y) + tongueRadius,
+        queryId,
+      );
+    }
+
+    for (let index = 0; index < acidTargetCandidateScratch.length; index += 1) {
+      const target = acidTargetCandidateScratch[index];
+      if (!tonguePassengerTargetCanStick(target, captureState)) continue;
+      const contact = tonguePassengerContact(points, target);
+      if (!contact) continue;
+      target.tongueCaptured = true;
+      target.paralyzed = true;
+      target.movementMode = "tongue-paralyzed";
+      target.vx = 0;
+      target.vy = 0;
+      target.biteBounceCooldown = 0;
+      tongue.passengers ||= [];
+      tongue.passengers.push({ target, ...contact });
+    }
   }
 
   function beginTongueCapture(
@@ -12060,6 +12316,7 @@
         selectionY: targetY,
         selectionRadius,
         targetId: null,
+        passengers: null,
         progress: 0,
         phase: "extending",
         holdRemaining: TONGUE_RULES.holdDuration,
@@ -12074,6 +12331,7 @@
         selectionY: targetY,
         selectionRadius,
         targetId: selectedTarget.id,
+        passengers: null,
         progress: 0,
         phase: "extending",
         holdRemaining: TONGUE_RULES.holdDuration,
@@ -12108,6 +12366,7 @@
       selectionY,
       selectionRadius: tongueTargetingRadius(),
       targetId: target.id,
+      passengers: null,
       holdPointerId: pointerId,
       heavyHold: true,
       progress: 0,
@@ -12118,7 +12377,7 @@
     return true;
   }
 
-  function updateTongue(tongue, dt) {
+  function updateTongue(tongue, dt, passengerCaptureState) {
     if (
       tongue.heavyHold &&
       (
@@ -12132,6 +12391,13 @@
 
     if (tongue.phase === "heavy-grappled") {
       updateTongueFreefall(tongue, dt);
+      if (tongue.passengers?.length) {
+        positionTonguePassengers(
+          tongue,
+          getTongueGeometry(tongue, tongue.progress),
+          dt,
+        );
+      }
       return;
     }
 
@@ -12161,6 +12427,13 @@
         );
       }
       updateTongueFreefall(tongue, dt);
+      if (tongue.passengers?.length) {
+        positionTonguePassengers(
+          tongue,
+          getTongueGeometry(tongue, tongue.progress),
+          dt,
+        );
+      }
       if (tongue.progress <= 0) finishTongueCapture(tongue);
       return;
     }
@@ -12172,6 +12445,15 @@
       );
       const target = activeTongueTarget(tongue);
       const geometry = target ? getTongueGeometry(tongue) : null;
+      if (target && geometry) {
+        stickTonguePassengers(
+          tongue,
+          target,
+          geometry,
+          passengerCaptureState,
+        );
+      }
+      positionTonguePassengers(tongue, geometry, dt);
       const beginContact = tongue.heavyHold
         ? beginHeavyTongueGrapple
         : beginTongueCapture;
@@ -12190,6 +12472,7 @@
     if (tongue.phase === "holding") {
       const target = activeTongueTarget(tongue);
       const geometry = target ? getTongueGeometry(tongue) : null;
+      positionTonguePassengers(tongue, geometry, dt);
       const beginContact = tongue.heavyHold
         ? beginHeavyTongueGrapple
         : beginTongueCapture;
@@ -12211,13 +12494,55 @@
       0,
       tongue.progress - TONGUE_RULES.retractRate * dt,
     );
+    if (tongue.passengers?.length) {
+      positionTonguePassengers(
+        tongue,
+        getTongueGeometry(tongue, tongue.progress),
+        dt,
+      );
+    }
     if (tongue.progress <= 0) removeTongue(tongue);
   }
 
-  function updateTongues(dt) {
-    for (let index = game.tongues.length - 1; index >= 0; index -= 1) {
-      updateTongue(game.tongues[index], dt);
+  function prepareTonguePassengerCapture() {
+    if (!wormHasAbility(WORM_ABILITIES.TONGUE)) return null;
+    const maximumHealth =
+      wormBiteDamage() / TONGUE_RULES.passengerBiteForceDivisor;
+    if (maximumHealth < MINIMUM_ENEMY_MAX_HEALTH) return null;
+
+    const claimedTargetIds = new Set();
+    let hasEligibleTongue = false;
+    for (let index = 0; index < game.tongues.length; index += 1) {
+      const tongue = game.tongues[index];
+      if (Number.isFinite(tongue.targetId)) {
+        claimedTargetIds.add(tongue.targetId);
+      }
+      if (tongue.phase !== "extending") continue;
+      const target = activeTongueTarget(tongue);
+      if (target && target.kind !== ENEMY_TYPES.MEAT) {
+        hasEligibleTongue = true;
+      }
     }
+    if (!hasEligibleTongue) return null;
+
+    clearAcidTargetBroadphase();
+    buildTonguePassengerTargetBroadphase(
+      maximumHealth,
+      claimedTargetIds,
+    );
+    return { maximumHealth, claimedTargetIds };
+  }
+
+  function updateTongues(dt) {
+    const passengerCaptureState = prepareTonguePassengerCapture();
+    for (let index = game.tongues.length - 1; index >= 0; index -= 1) {
+      updateTongue(
+        game.tongues[index],
+        dt,
+        passengerCaptureState,
+      );
+    }
+    if (passengerCaptureState) clearAcidTargetBroadphase();
   }
 
   function updateMouthAnimation(dt) {
