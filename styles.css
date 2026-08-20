@@ -352,7 +352,7 @@ button {
   background: transparent;
 }
 
-.home-point-setting {
+.home-enemy-setting {
   display: grid;
   grid-column: 1 / -1;
   gap: 8px;
@@ -362,16 +362,16 @@ button {
   background: rgba(231, 214, 170, 0.42);
 }
 
-.home-point-setting > span {
+.home-enemy-setting > span {
   display: grid;
   gap: 2px;
 }
 
-.home-point-setting strong {
+.home-enemy-setting strong {
   font-size: 12px;
 }
 
-.home-point-setting small {
+.home-enemy-setting small {
   color: rgba(24, 34, 29, 0.58);
   font-family: "Courier New", ui-monospace, monospace;
   font-size: 8px;
@@ -380,7 +380,7 @@ button {
   text-transform: uppercase;
 }
 
-.home-point-setting select {
+.home-enemy-setting select {
   width: 100%;
   min-width: 0;
   padding: 9px 10px;
@@ -393,12 +393,12 @@ button {
   letter-spacing: 0.04em;
 }
 
-.home-point-setting:focus-within {
+.home-enemy-setting:focus-within {
   border-color: var(--ink);
   background: rgba(231, 214, 170, 0.72);
 }
 
-.home-point-setting select:focus-visible {
+.home-enemy-setting select:focus-visible {
   outline: 3px solid var(--sun);
   outline-offset: 2px;
 }

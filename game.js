@@ -45,7 +45,7 @@
   const homeWorldButton = document.querySelector("#home-world-select");
   const homeWormButton = document.querySelector("#home-worm-select");
   const homeWormEditButton = document.querySelector("#home-worm-edit");
-  const homePointLimitInput = document.querySelector("#home-point-limit");
+  const homeEnemyLimitInput = document.querySelector("#home-enemy-limit");
   const resetButton = document.querySelector("#reset-button");
   const currentWorldName = document.querySelector("#current-world-name");
   const currentWormName = document.querySelector("#current-worm-name");
@@ -112,7 +112,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260818-round-point-limits";
+    const styleUrl = "./styles.css?v=20260819-max-enemies";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -703,9 +703,11 @@
       devSpawnable: false,
     }),
   });
+  const ROUND_POINT_LIMIT = 10000000;
+  const ENEMY_COUNT_LIMITS = Object.freeze([250, 500, 1000]);
+  const DEFAULT_ENEMY_COUNT_LIMIT = 1000;
   const ENEMY_SPAWN_RULES = Object.freeze({
-    initialCount: 1000,
-    maximumCount: 1000,
+    maximumCount: DEFAULT_ENEMY_COUNT_LIMIT,
     placementAttempts: 32,
     failedPlacementRetryDelay: 0.5,
     beetleColonyChance: 0.8,
@@ -725,8 +727,6 @@
   const MEAT_SPAWN_RULES = Object.freeze({
     maximumCount: 500,
   });
-  const ROUND_POINT_LIMITS = Object.freeze([3159, 500000, 10000000]);
-  const DEFAULT_ROUND_POINT_LIMIT = ROUND_POINT_LIMITS[0];
   const MINIMUM_ENEMY_MAX_HEALTH = Math.min(
     ...Object.entries(ENEMY_DEFINITIONS)
       .filter(([kind]) => kind !== ENEMY_TYPES.MEAT)
@@ -1172,7 +1172,7 @@
   const DEFAULT_WORLD_ID = "default-flat";
   const WORLD_STORAGE_KEY = "worm.custom-worlds.v1";
   const SELECTED_WORLD_STORAGE_KEY = "worm.selected-world.v1";
-  const ROUND_POINT_LIMIT_STORAGE_KEY = "worm.round-point-limit.v1";
+  const ENEMY_COUNT_LIMIT_STORAGE_KEY = "worm.max-enemies.v1";
   const WORLD_FORMAT_VERSION = 5;
   const DEFAULT_WORLD = Object.freeze({
     id: DEFAULT_WORLD_ID,
@@ -1258,8 +1258,9 @@
     camera: { x: 0, y: 0 },
     selectedWorldId: DEFAULT_WORLD_ID,
     selectedWorldName: DEFAULT_WORLD.name,
-    selectedRoundPointLimit: DEFAULT_ROUND_POINT_LIMIT,
-    activeRoundPointLimit: DEFAULT_ROUND_POINT_LIMIT,
+    selectedEnemyCountLimit: DEFAULT_ENEMY_COUNT_LIMIT,
+    activeEnemyCountLimit: DEFAULT_ENEMY_COUNT_LIMIT,
+    activeRoundPointLimit: ROUND_POINT_LIMIT,
     activeWorldId: null,
     activeWorldName: "",
     activeWormTypeId: WORM_TYPE_IDS.LICKER,
@@ -3236,24 +3237,14 @@
     return target;
   }
 
-  function createEnemySpawnKinds(targetCount, pointBudget, random) {
-    const minimumScore = Math.min(
-      ...ENEMY_SPAWN_RULES.weights.map(
-        (entry) => ENEMY_DEFINITIONS[entry.kind].score,
-      ),
-    );
-    const availablePoints = Math.max(0, Math.floor(pointBudget));
-    targetCount = Math.min(
-      Math.max(0, Math.floor(targetCount)),
-      Math.floor(availablePoints / minimumScore),
-    );
+  function createEnemySpawnKinds(targetCount, random) {
+    targetCount = Math.max(0, Math.floor(targetCount));
     const allocations = ENEMY_SPAWN_RULES.weights.map((entry) => {
       const exactCount = entry.weight * targetCount;
       return {
         kind: entry.kind,
         count: Math.floor(exactCount),
         remainder: exactCount - Math.floor(exactCount),
-        score: ENEMY_DEFINITIONS[entry.kind].score,
       };
     });
     let assignedCount = allocations.reduce(
@@ -3272,39 +3263,6 @@
       assignedCount += 1;
     }
 
-    // A Regular round cannot fund the full weighted 1,000-enemy roster.
-    // Preserve the requested population by replacing the fewest expensive
-    // entries with the cheapest weighted species before the list is shuffled.
-    const cheapestAllocation = allocations.reduce((cheapest, allocation) =>
-      allocation.score < cheapest.score ? allocation : cheapest,
-    );
-    let excessPoints = Math.max(
-      0,
-      allocations.reduce(
-        (total, allocation) => total + allocation.count * allocation.score,
-        0,
-      ) - availablePoints,
-    );
-    const downgradeOrder = allocations
-      .filter((allocation) => allocation !== cheapestAllocation)
-      .sort((left, right) => right.score - left.score);
-    for (
-      let index = 0;
-      index < downgradeOrder.length && excessPoints > 0;
-      index += 1
-    ) {
-      const allocation = downgradeOrder[index];
-      const savings = allocation.score - cheapestAllocation.score;
-      if (savings <= 0 || allocation.count <= 0) continue;
-      const replacements = Math.min(
-        allocation.count,
-        Math.ceil(excessPoints / savings),
-      );
-      allocation.count -= replacements;
-      cheapestAllocation.count += replacements;
-      excessPoints = Math.max(0, excessPoints - replacements * savings);
-    }
-
     const kinds = allocations.flatMap((allocation) =>
       Array.from({ length: allocation.count }, () => allocation.kind),
     );
@@ -3315,18 +3273,21 @@
     return kinds;
   }
 
-  function normalizeRoundPointLimit(value) {
+  function normalizeEnemyCountLimit(value) {
     const parsedValue = Math.round(Number(value));
-    return ROUND_POINT_LIMITS.includes(parsedValue)
+    return ENEMY_COUNT_LIMITS.includes(parsedValue)
       ? parsedValue
-      : DEFAULT_ROUND_POINT_LIMIT;
+      : DEFAULT_ENEMY_COUNT_LIMIT;
   }
 
   function resetRoundPointLedger() {
-    game.roundUnspawnedPoints = normalizeRoundPointLimit(
-      game.activeRoundPointLimit,
+    game.roundUnspawnedPoints = Math.max(
+      0,
+      Math.round(game.activeRoundPointLimit),
     );
-    game.roundPopulationCap = ENEMY_SPAWN_RULES.maximumCount;
+    game.roundPopulationCap = normalizeEnemyCountLimit(
+      game.activeEnemyCountLimit,
+    );
     game.roundSpawnRegionType = null;
     game.roundSpawnSerial = 0;
     game.roundSpawnAttemptSerial = 0;
@@ -3351,6 +3312,16 @@
       game.targets.length +
         game.capturedTargets.length -
         game.meatTargetCount,
+    );
+  }
+
+  function enemyPopulationLimit() {
+    return Math.max(
+      0,
+      Math.min(
+        game.roundPopulationCap,
+        ENEMY_SPAWN_RULES.maximumCount,
+      ),
     );
   }
 
@@ -3569,13 +3540,14 @@
     game.meatTargetCount = 0;
     game.roundSpawnRegionType = chooseRoundSpawnRegionType();
     if (!game.roundSpawnRegionType) {
-      game.activeRoundPointLimit = 0;
       game.roundUnspawnedPoints = 0;
       game.roundPopulationCap = 0;
     } else {
       const kinds = createEnemySpawnKinds(
-        ENEMY_SPAWN_RULES.initialCount,
-        game.roundUnspawnedPoints,
+        Math.min(
+          game.roundPopulationCap,
+          ENEMY_SPAWN_RULES.maximumCount,
+        ),
         random,
       );
       for (let index = 0; index < kinds.length; index += 1) {
@@ -3650,10 +3622,7 @@
     ) {
       return;
     }
-    const populationLimit = Math.min(
-      game.roundPopulationCap,
-      ENEMY_SPAWN_RULES.maximumCount,
-    );
+    const populationLimit = enemyPopulationLimit();
     const currentLiveCount = liveEnemyCount();
     if (currentLiveCount >= populationLimit) {
       game.roundSpawnBlockedLiveCount = -1;
@@ -4305,36 +4274,36 @@
     currentWorldName.textContent = game.selectedWorldName;
   }
 
-  function updateSelectedRoundPointLimitInput() {
-    homePointLimitInput.value = String(game.selectedRoundPointLimit);
+  function updateSelectedEnemyCountLimitInput() {
+    homeEnemyLimitInput.value = String(game.selectedEnemyCountLimit);
   }
 
-  function persistSelectedRoundPointLimit() {
+  function persistSelectedEnemyCountLimit() {
     try {
       window.localStorage.setItem(
-        ROUND_POINT_LIMIT_STORAGE_KEY,
-        String(game.selectedRoundPointLimit),
+        ENEMY_COUNT_LIMIT_STORAGE_KEY,
+        String(game.selectedEnemyCountLimit),
       );
     } catch (_error) {
       // The selection still applies for this page when storage is unavailable.
     }
   }
 
-  function loadSelectedRoundPointLimit() {
+  function loadSelectedEnemyCountLimit() {
     try {
-      game.selectedRoundPointLimit = normalizeRoundPointLimit(
-        window.localStorage.getItem(ROUND_POINT_LIMIT_STORAGE_KEY),
+      game.selectedEnemyCountLimit = normalizeEnemyCountLimit(
+        window.localStorage.getItem(ENEMY_COUNT_LIMIT_STORAGE_KEY),
       );
     } catch (_error) {
-      game.selectedRoundPointLimit = DEFAULT_ROUND_POINT_LIMIT;
+      game.selectedEnemyCountLimit = DEFAULT_ENEMY_COUNT_LIMIT;
     }
-    updateSelectedRoundPointLimitInput();
+    updateSelectedEnemyCountLimitInput();
   }
 
-  function selectRoundPointLimit(value) {
-    game.selectedRoundPointLimit = normalizeRoundPointLimit(value);
-    updateSelectedRoundPointLimitInput();
-    persistSelectedRoundPointLimit();
+  function selectEnemyCountLimit(value) {
+    game.selectedEnemyCountLimit = normalizeEnemyCountLimit(value);
+    updateSelectedEnemyCountLimitInput();
+    persistSelectedEnemyCountLimit();
   }
 
   function persistSelectedWorld() {
@@ -4449,7 +4418,8 @@
     const world = getWorldById(game.selectedWorldId) || DEFAULT_WORLD;
     game.selectedWorldId = world.id;
     game.selectedWorldName = world.name;
-    game.activeRoundPointLimit = game.selectedRoundPointLimit;
+    game.activeEnemyCountLimit = game.selectedEnemyCountLimit;
+    game.activeRoundPointLimit = ROUND_POINT_LIMIT;
     updateSelectedWorldLabel();
     homeScreen.classList.remove("visible");
     homeScreen.setAttribute("aria-hidden", "true");
@@ -7970,10 +7940,7 @@
     if (!consumedTarget.roundBudgeted || enemyDefinition.score <= 0) return;
     const availableSlots = Math.max(
       0,
-      Math.min(
-        game.roundPopulationCap,
-        ENEMY_SPAWN_RULES.maximumCount,
-      ) - liveEnemyCount(),
+      enemyPopulationLimit() - liveEnemyCount(),
     );
     count = Math.min(
       count,
@@ -18488,7 +18455,7 @@
   function placeDevEnemyInView(kind) {
     const definition = ENEMY_DEFINITIONS[kind];
     if (!definition || definition.devSpawnable === false) return;
-    if (liveEnemyCount() >= ENEMY_SPAWN_RULES.maximumCount) return;
+    if (liveEnemyCount() >= enemyPopulationLimit()) return;
 
     updateCamera();
     const visible = getVisibleWorldBounds(0);
@@ -18624,8 +18591,8 @@
   homeWorldButton.addEventListener("click", openWorldSelect);
   homeWormButton.addEventListener("click", openWormTypeSelect);
   homeWormEditButton.addEventListener("click", openWormAppearanceEditor);
-  homePointLimitInput.addEventListener("change", () =>
-    selectRoundPointLimit(homePointLimitInput.value),
+  homeEnemyLimitInput.addEventListener("change", () =>
+    selectEnemyCountLimit(homeEnemyLimitInput.value),
   );
   mainMenuButton.addEventListener("click", openMainMenu);
   mainMenuCloseButton.addEventListener("click", closeMainMenu);
@@ -18773,7 +18740,7 @@
     populateDevEnemyButtons();
     loadCustomWorlds();
     loadSelectedWorld();
-    loadSelectedRoundPointLimit();
+    loadSelectedEnemyCountLimit();
     loadSavedWormType();
     await loadSavedWormAppearance();
     // Build the seven bounded liquid-density sprites before play. Leveling up

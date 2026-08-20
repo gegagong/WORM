@@ -257,33 +257,32 @@ Each successful automatic latch costs an additional 0.5 seconds of boost. Automa
 ignore meat and any enemy whose maximum HP is greater than twice the current bite force;
 manual tongue targeting and heavy grapples keep their existing behavior and have no latch fee.
 
-The start menu offers three exact round score limits: **Regular** (3,159 points),
-**Bigger** (500,000), and **Biggest** (10,000,000). The selection is saved for later
-runs and is copied into the active round when Play is pressed; Reset restarts the same
-selected-size round. Point value is held in a rolling reserve rather than eagerly creating
-tens of thousands of enemies. Up to 1,000 non-meat enemies remain active, and every open
-enemy slot is refilled in the same simulation update while unspawned round points remain.
-Meat uses an independent 500-chunk limit and never consumes or blocks an enemy slot. Each
-replacement chooses beetle, dragonfly, mole, rabbit, or vulture with the same
-60/25/8/5/2 percent population weights, renormalized near the end of a round when an
-enemy's point value no longer fits. Hard-prey meat transfers its source enemy's value, so
-it cannot create extra points, and developer-spawned test enemies are scoreless and still
-obey the 1,000-enemy ceiling.
+Every playable round contains exactly **10,000,000 points**. Point value is held in a
+rolling reserve rather than eagerly creating millions of enemies. The start menu's
+**Max Enemies** selector instead controls how many non-meat enemies may exist on the map
+at once: **250**, **500**, or **1,000**, with 1,000 as the default. The selection is saved
+for later runs and is copied into the active round when Play is pressed; Reset restarts
+the same enemy-limit run. Every open enemy slot is refilled in the same simulation update
+while unspawned round points remain. Meat uses an independent 500-chunk limit and never
+consumes or blocks an enemy slot.
 
-The initial population is distributed deterministically through each world. Bigger and
-Biggest begin with the full weighted 1,000-enemy population: 600 beetles,
-250 dragonflies, 80 moles, 50 rabbits, and 20 vultures, worth 6,100 points.
-Regular's 3,159-point budget preserves all 1,000 slots by replacing the minimum number
-of expensive entries: it begins with 619 beetles, 250 dragonflies, 80 moles, 50 rabbits,
-and one vulture, worth 3,079 points with 80 points reserved for replacements. Spawn
-positions are sampled on demand instead of being collected by a full-world scan or retained
-in a location pool.
+Initial populations use the same deterministic 60/25/8/5/2 percent weighting. The
+250-enemy setting starts with 150 beetles, 63 dragonflies, 20 moles, 12 rabbits, and
+5 vultures, worth 1,522 points. The 500-enemy setting starts with 300 beetles,
+125 dragonflies, 40 moles, 25 rabbits, and 10 vultures, worth 3,050 points. The
+1,000-enemy setting starts with 600 beetles, 250 dragonflies, 80 moles, 50 rabbits,
+and 20 vultures, worth 6,100 points. Replacements use the same weighted chances,
+renormalized near the end of a round when an enemy's point value no longer fits.
+Hard-prey meat transfers its source enemy's value, so it cannot create extra points,
+and developer-spawned test enemies are scoreless and still obey the selected enemy cap.
+Spawn positions are sampled on demand instead of being collected by a full-world scan
+or retained in a location pool.
 Beetles usually seed close colonies, moles choose the most separated of four random choices,
 vultures choose the most horizontally separated of ten, and rabbit and dragonfly positions
 are random. Worlds containing ground place beetles and moles underground, rabbits on the
 nearest solid top surface, and both flying species above the nearest surface;
 all-air worlds place every enemy in air. A world containing neither ground nor air material
-starts an explicit zero-point round instead of retaining an impossible spawn reserve. An enemy
+starts an explicit empty round instead of retaining an impossible spawn reserve. An enemy
 turns in place by a randomly selected angle of up to 180 degrees, moves a short distance
 at a constant speed, and repeats without an idle phase. Each move lasts half as long as
 its preceding turn, so the turn, start, and stop are visibly distinct. Beetle legs use
