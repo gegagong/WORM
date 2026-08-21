@@ -45,7 +45,6 @@
   const homeWorldButton = document.querySelector("#home-world-select");
   const homeWormButton = document.querySelector("#home-worm-select");
   const homeWormEditButton = document.querySelector("#home-worm-edit");
-  const homeEnemyLimitInput = document.querySelector("#home-enemy-limit");
   const resetButton = document.querySelector("#reset-button");
   const currentWorldName = document.querySelector("#current-world-name");
   const currentWormName = document.querySelector("#current-worm-name");
@@ -112,7 +111,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260819-max-enemies";
+    const styleUrl = "./styles.css?v=20260820-tristar-predator";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -435,6 +434,9 @@
     rabbitHighlight: "#ec6f51",
     vulture: "#4a2018",
     vultureHighlight: "#fff7ef",
+    tristar: "#a63f4f",
+    tristarDark: "#4f1523",
+    tristarHighlight: "#f19a79",
     splatter: "#760018",
     splatterBright: "#dc143c",
     soil: "#74412d",
@@ -637,6 +639,7 @@
     VULTURE: "vulture",
     MOLE: "mole",
     RABBIT: "rabbit",
+    TRISTAR: "tristar",
     MEAT: "meat",
   });
   const ENEMY_DEFINITIONS = Object.freeze({
@@ -692,6 +695,16 @@
       spriteFrames: Object.freeze(["rabbit", "rabbitJump"]),
       sideProfile: true,
     }),
+    [ENEMY_TYPES.TRISTAR]: Object.freeze({
+      label: "Tri-Star",
+      score: 200,
+      health: 120,
+      sizeScale: 6,
+      radius: 54 * ENTITY_SCALE,
+      spriteSize: 900 * ENTITY_SCALE,
+      spriteFrames: Object.freeze([]),
+      procedural: "tristar",
+    }),
     [ENEMY_TYPES.MEAT]: Object.freeze({
       label: "Meat",
       score: 1,
@@ -704,10 +717,8 @@
     }),
   });
   const ROUND_POINT_LIMIT = 10000000;
-  const ENEMY_COUNT_LIMITS = Object.freeze([250, 500, 1000]);
-  const DEFAULT_ENEMY_COUNT_LIMIT = 1000;
   const ENEMY_SPAWN_RULES = Object.freeze({
-    maximumCount: DEFAULT_ENEMY_COUNT_LIMIT,
+    maximumCount: 1000,
     placementAttempts: 32,
     failedPlacementRetryDelay: 0.5,
     beetleColonyChance: 0.8,
@@ -716,12 +727,14 @@
     beetleMaximumColonyBlocks: 16,
     molePlacementChoices: 4,
     vulturePlacementChoices: 10,
+    tristarPlacementChoices: 6,
     weights: Object.freeze([
-      Object.freeze({ kind: ENEMY_TYPES.BEETLE, weight: 0.6 }),
+      Object.freeze({ kind: ENEMY_TYPES.BEETLE, weight: 0.59 }),
       Object.freeze({ kind: ENEMY_TYPES.DRAGONFLY, weight: 0.25 }),
       Object.freeze({ kind: ENEMY_TYPES.MOLE, weight: 0.08 }),
       Object.freeze({ kind: ENEMY_TYPES.RABBIT, weight: 0.05 }),
       Object.freeze({ kind: ENEMY_TYPES.VULTURE, weight: 0.02 }),
+      Object.freeze({ kind: ENEMY_TYPES.TRISTAR, weight: 0.01 }),
     ]),
   });
   const MEAT_SPAWN_RULES = Object.freeze({
@@ -832,6 +845,93 @@
     verticalFollowSpeed: 150,
     wingFps: 4,
   });
+  const TRISTAR_RULES = Object.freeze({
+    armCount: 3,
+    bodyFirstVertexOffset: Math.PI / 3,
+    armSegments: 24,
+    armLength: 400 * ENTITY_SCALE,
+    firstSegmentTurnLimit: Math.PI / 18,
+    lastSegmentTurnLimit: Math.PI / 6,
+    taperExponent: 0.9,
+    senseRadiusBlocks: 32,
+    releaseRadiusBlocks: 40,
+    beetleClusterRadiusBlocks: 16,
+    beetleClusterHashCellBlocks: 4,
+    beetleClusterMinimumCount: 2,
+    beetleClusterSwitchCountAdvantage: 2,
+    clusterBlockedScanLimit: 3,
+    clusterRepositionDuration: 0.45,
+    maximumSpeed: 600,
+    pulseContractDuration: 0.3,
+    pulseBurstDuration: 0.14,
+    pulseMinimumCoastDuration: 1.2,
+    pulseMaximumCoastDuration: 1.5,
+    pulseTotalImpulse: 480,
+    pulseArmImpulseScales: Object.freeze([0, 0.7, 0.85, 1]),
+    pulsePostBurstSteeringDuration: 0.22,
+    pulseBodyTurnSpeed: 5,
+    pulseMaximumSubstep: 1 / 120,
+    pulseRearFanAngularAcceleration: 12,
+    pulseRearFanSpread: Math.PI / 7,
+    coastDeceleration: 100,
+    minimumWanderSpeed: 240,
+    maximumWanderTurn: Math.PI * 0.75,
+    terrainLookaheadSeconds: 0.24,
+    movementSubstepBlocks: 0.45,
+    freeArmSoilDrag: 0.34,
+    freeArmGravity: 38,
+    freeArmAccelerationInfluence: 0.045,
+    freeArmAngularAcceleration: 15,
+    freeArmAngularDamping: 4,
+    freeArmMaximumAngularSpeed: 7,
+    freeArmMaximumSubstep: 1 / 120,
+    heldArmTrackingAcceleration: 96,
+    heldArmTrackingDamping: 14,
+    heldArmFlowInfluence: 0.35,
+    heldArmMaximumHeadingLag: 0.06,
+    heldArmMaximumPlanDeviation: 12,
+    heldArmEndpointPasses: 4,
+    heldArmInertiaBackoffPasses: 2,
+    preyApproachArmLengthScale: 0.7,
+    preyReachMaximumStretch: 1.05,
+    preyReachDuration: 0.32,
+    preyReachDistalTurnDelayProgress: 0.11,
+    preyStretchRecoveryPullFraction: 0.35,
+    freeArmStretchRecoveryDuration: 0.15,
+    armAvoidanceStartSegment: 2,
+    armAvoidancePadding: 2 * ENTITY_SCALE,
+    armAvoidanceMinimumRadius: 1 * ENTITY_SCALE,
+    armAvoidanceCoreRadiusScale: 1.12,
+    freeArmAvoidanceAngularAcceleration: 68,
+    freeArmAvoidanceSeparationAcceleration: 110,
+    freeArmAvoidanceAngularDamping: 3,
+    armAvoidanceProjectionIterations: 2,
+    armAvoidanceProjectionGain: 0.8,
+    armAvoidanceProjectionLinearLimit: 8,
+    armAvoidanceProjectionAngularLimit: 0.07,
+    armAvoidanceProjectionSlop: 0.25,
+    maximumCapturesPerScan: 1,
+    maximumCapturePlanAttempts: 3,
+    maximumReachAlternatives: 3,
+    maximumCurlPlanEvaluations: 8,
+    pullSpeed: 120,
+    tipIkPasses: 32,
+    tipIkTolerance: 0.75,
+    scanInterval: 0.15,
+    minimumWanderDuration: 0.8,
+    maximumWanderDuration: 2.4,
+  });
+  const TRISTAR_STEERING_OFFSETS = Object.freeze([
+    0,
+    Math.PI / 12,
+    -Math.PI / 12,
+    Math.PI / 6,
+    -Math.PI / 6,
+    Math.PI / 4,
+    -Math.PI / 4,
+    Math.PI / 3,
+    -Math.PI / 3,
+  ]);
   const DEV_WORM_LEVEL_MAX = 100;
   const DEV_ENEMY_SPAWN_POSITIONS = Object.freeze([
     Object.freeze([0.76, 0.38]),
@@ -1172,7 +1272,6 @@
   const DEFAULT_WORLD_ID = "default-flat";
   const WORLD_STORAGE_KEY = "worm.custom-worlds.v1";
   const SELECTED_WORLD_STORAGE_KEY = "worm.selected-world.v1";
-  const ENEMY_COUNT_LIMIT_STORAGE_KEY = "worm.max-enemies.v1";
   const WORLD_FORMAT_VERSION = 5;
   const DEFAULT_WORLD = Object.freeze({
     id: DEFAULT_WORLD_ID,
@@ -1258,8 +1357,6 @@
     camera: { x: 0, y: 0 },
     selectedWorldId: DEFAULT_WORLD_ID,
     selectedWorldName: DEFAULT_WORLD.name,
-    selectedEnemyCountLimit: DEFAULT_ENEMY_COUNT_LIMIT,
-    activeEnemyCountLimit: DEFAULT_ENEMY_COUNT_LIMIT,
     activeRoundPointLimit: ROUND_POINT_LIMIT,
     activeWorldId: null,
     activeWorldName: "",
@@ -3210,6 +3307,9 @@
       healthBarTimer: 0,
       biteBounceCooldown: 0,
       boostLatchHitboxDisabled: false,
+      tristarCaptorId: null,
+      tristarCaptorArm: -1,
+      tristarDevourQueued: false,
       regionType,
       movementMode:
         regionType === BLOCK_TYPES.GROUND ? "turning" : "falling",
@@ -3233,6 +3333,8 @@
       initializeDragonflyTarget(target, random);
     } else if (definition.flightBehavior === "vulture") {
       initializeVultureTarget(target, random);
+    } else if (kind === ENEMY_TYPES.TRISTAR) {
+      initializeTristarTarget(target, random);
     }
     return target;
   }
@@ -3273,21 +3375,12 @@
     return kinds;
   }
 
-  function normalizeEnemyCountLimit(value) {
-    const parsedValue = Math.round(Number(value));
-    return ENEMY_COUNT_LIMITS.includes(parsedValue)
-      ? parsedValue
-      : DEFAULT_ENEMY_COUNT_LIMIT;
-  }
-
   function resetRoundPointLedger() {
     game.roundUnspawnedPoints = Math.max(
       0,
       Math.round(game.activeRoundPointLimit),
     );
-    game.roundPopulationCap = normalizeEnemyCountLimit(
-      game.activeEnemyCountLimit,
-    );
+    game.roundPopulationCap = ENEMY_SPAWN_RULES.maximumCount;
     game.roundSpawnRegionType = null;
     game.roundSpawnSerial = 0;
     game.roundSpawnAttemptSerial = 0;
@@ -3398,6 +3491,10 @@
       }
     }
 
+    if (kind === ENEMY_TYPES.TRISTAR && game.map.hasSpawnableGround) {
+      return randomGridTargetCandidate(BLOCK_TYPES.GROUND, random);
+    }
+
     const primaryType =
       game.roundSpawnRegionType || BLOCK_TYPES.GROUND;
     // Keep primary-material and fallback-material probes in every visibility
@@ -3435,6 +3532,8 @@
     const placementChoices =
       kind === ENEMY_TYPES.VULTURE
         ? ENEMY_SPAWN_RULES.vulturePlacementChoices
+        : kind === ENEMY_TYPES.TRISTAR
+          ? ENEMY_SPAWN_RULES.tristarPlacementChoices
         : kind === ENEMY_TYPES.MOLE
           ? ENEMY_SPAWN_RULES.molePlacementChoices
           : 1;
@@ -3743,13 +3842,18 @@
     const radius =
       target.kind === ENEMY_TYPES.VULTURE
         ? 2.7
+        : target.kind === ENEMY_TYPES.TRISTAR
+          ? 2.5
         : target.kind === ENEMY_TYPES.MEAT
           ? 1.3
           : 1.8;
     minimapSceneContext.beginPath();
     minimapSceneContext.arc(x, y, radius, 0, TAU);
-    minimapSceneContext.fillStyle =
-      target.kind === ENEMY_TYPES.MEAT ? palette.cream : palette.sun;
+    minimapSceneContext.fillStyle = target.kind === ENEMY_TYPES.MEAT
+      ? palette.cream
+      : target.kind === ENEMY_TYPES.TRISTAR
+        ? palette.tristarHighlight
+        : palette.sun;
     minimapSceneContext.fill();
     minimapSceneContext.strokeStyle = palette.ink;
     minimapSceneContext.lineWidth = 0.8;
@@ -4214,10 +4318,20 @@
 
     const artwork = document.createElement("div");
     artwork.className = "enemy-info-artwork";
-    const sprite = document.createElement("img");
-    sprite.src = ENEMY_SPRITE_FILES[definition.spriteFrames[0]];
-    sprite.alt = `${definition.label} sprite`;
-    artwork.appendChild(sprite);
+    if (definition.procedural === "tristar") {
+      const preview = document.createElement("canvas");
+      preview.width = 304;
+      preview.height = 304;
+      preview.setAttribute("role", "img");
+      preview.setAttribute("aria-label", `${definition.label} preview`);
+      artwork.appendChild(preview);
+      drawTristarPreview(preview);
+    } else {
+      const sprite = document.createElement("img");
+      sprite.src = ENEMY_SPRITE_FILES[definition.spriteFrames[0]];
+      sprite.alt = `${definition.label} sprite`;
+      artwork.appendChild(sprite);
+    }
 
     const heading = document.createElement("div");
     heading.className = "enemy-info-entry-heading";
@@ -4272,38 +4386,6 @@
 
   function updateSelectedWorldLabel() {
     currentWorldName.textContent = game.selectedWorldName;
-  }
-
-  function updateSelectedEnemyCountLimitInput() {
-    homeEnemyLimitInput.value = String(game.selectedEnemyCountLimit);
-  }
-
-  function persistSelectedEnemyCountLimit() {
-    try {
-      window.localStorage.setItem(
-        ENEMY_COUNT_LIMIT_STORAGE_KEY,
-        String(game.selectedEnemyCountLimit),
-      );
-    } catch (_error) {
-      // The selection still applies for this page when storage is unavailable.
-    }
-  }
-
-  function loadSelectedEnemyCountLimit() {
-    try {
-      game.selectedEnemyCountLimit = normalizeEnemyCountLimit(
-        window.localStorage.getItem(ENEMY_COUNT_LIMIT_STORAGE_KEY),
-      );
-    } catch (_error) {
-      game.selectedEnemyCountLimit = DEFAULT_ENEMY_COUNT_LIMIT;
-    }
-    updateSelectedEnemyCountLimitInput();
-  }
-
-  function selectEnemyCountLimit(value) {
-    game.selectedEnemyCountLimit = normalizeEnemyCountLimit(value);
-    updateSelectedEnemyCountLimitInput();
-    persistSelectedEnemyCountLimit();
   }
 
   function persistSelectedWorld() {
@@ -4418,7 +4500,6 @@
     const world = getWorldById(game.selectedWorldId) || DEFAULT_WORLD;
     game.selectedWorldId = world.id;
     game.selectedWorldName = world.name;
-    game.activeEnemyCountLimit = game.selectedEnemyCountLimit;
     game.activeRoundPointLimit = ROUND_POINT_LIMIT;
     updateSelectedWorldLabel();
     homeScreen.classList.remove("visible");
@@ -6981,7 +7062,7 @@
         vx: Math.cos(angle) * force,
         vy:
           Math.sin(angle) * force -
-          (kind === "burst" || kind === "beetle" || kind === "dragonfly" || kind === "vulture" || kind === "mole" || kind === "rabbit" || kind === "meat" || kind === "stone" || kind === "growth" || kind === "splatter"
+          (kind === "burst" || kind === "beetle" || kind === "dragonfly" || kind === "vulture" || kind === "mole" || kind === "rabbit" || kind === "tristar" || kind === "meat" || kind === "stone" || kind === "growth" || kind === "splatter"
             ? 70
             : 0),
         life,
@@ -7066,7 +7147,7 @@
       particle.vy +=
         (particle.kind === "burst"
           ? 440
-          : particle.kind === "beetle" || particle.kind === "dragonfly" || particle.kind === "vulture" || particle.kind === "mole" || particle.kind === "rabbit" || particle.kind === "meat" || particle.kind === "stone"
+          : particle.kind === "beetle" || particle.kind === "dragonfly" || particle.kind === "vulture" || particle.kind === "mole" || particle.kind === "rabbit" || particle.kind === "tristar" || particle.kind === "meat" || particle.kind === "stone"
             ? 300
           : particle.kind === "growth"
               ? 220
@@ -8598,6 +8679,1880 @@
     advanceEnemyAnimation(target, dt, VULTURE_MOTION.wingFps);
   }
 
+  function initializeTristarTarget(target, random = Math.random) {
+    target.tristarArms = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => ({
+        prey: null,
+        pullProgress: 0,
+        latchProgress: 1,
+        lengthScale: 1,
+        latchStartLengthScale: 1,
+        latchTargetLengthScale: 1,
+        latchStartTurns: null,
+        latchTargetTurns: null,
+        curlTargetTurns: null,
+        freeHeadings: null,
+        freeAngularVelocities: null,
+        freeLastRootAngle: 0,
+        freeLastVx: 0,
+        freeLastVy: 0,
+        heldStartingHeadings: new Float64Array(TRISTAR_RULES.armSegments),
+        heldWorkingHeadings: new Float64Array(TRISTAR_RULES.armSegments),
+        heldWorkingAngularVelocities: new Float64Array(
+          TRISTAR_RULES.armSegments,
+        ),
+        heldPlanTurns: new Float64Array(TRISTAR_RULES.armSegments),
+        heldRawTurns: new Float64Array(TRISTAR_RULES.armSegments),
+        heldCandidateTurns: new Float64Array(TRISTAR_RULES.armSegments),
+        heldPlanPoints: Array.from(
+          { length: TRISTAR_RULES.armSegments + 1 },
+          () => ({ x: 0, y: 0 }),
+        ),
+        heldCandidatePoints: Array.from(
+          { length: TRISTAR_RULES.armSegments + 1 },
+          () => ({ x: 0, y: 0 }),
+        ),
+        heldCandidatePoseValid: false,
+        preyOffsetAngle: 0,
+        preyOffsetDistance: 0,
+        preyCaptureLocalX: 0,
+        preyCaptureLocalY: 0,
+        preyCaptureAngle: 0,
+        curlDirection: random() < 0.5 ? -1 : 1,
+      }),
+    );
+    target.tristarHeldArmMask = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => false,
+    );
+    target.tristarHuntTarget = null;
+    target.tristarHuntMode = "none";
+    target.tristarClusterCenterX = target.x;
+    target.tristarClusterCenterY = target.y;
+    target.tristarClusterCount = 0;
+    target.tristarClusterAnchorId = null;
+    target.tristarClusterHarvesting = false;
+    target.tristarClusterHolding = false;
+    target.tristarClusterBlockedScans = 0;
+    target.tristarClusterRepositionCooldown = 0;
+    target.tristarPulsePhase = "contract";
+    target.tristarPulseElapsed =
+      random() * TRISTAR_RULES.pulseContractDuration;
+    target.tristarPulseDuration = TRISTAR_RULES.pulseContractDuration;
+    target.tristarPulseLaunchVertexIndex = 0;
+    target.tristarPulseLaunchAngle =
+      target.angle + TRISTAR_RULES.bodyFirstVertexOffset;
+    target.tristarPulseLaunchReady = false;
+    target.tristarPulseLaunchBlocked = false;
+    target.tristarPulsePushed = false;
+    target.tristarPulseSteeringRemaining = 0;
+    target.tristarPulseSuppressed = false;
+    target.tristarCaptureArmCursor = 0;
+    target.tristarAvoidanceForceX = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => new Float64Array(TRISTAR_RULES.armSegments),
+    );
+    target.tristarAvoidanceForceY = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => new Float64Array(TRISTAR_RULES.armSegments),
+    );
+    target.tristarAvoidanceContactStrength = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => new Float64Array(TRISTAR_RULES.armSegments),
+    );
+    target.tristarAvoidanceProjectionTurns = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => new Float64Array(TRISTAR_RULES.armSegments),
+    );
+    target.tristarAvoidanceTurnCorrections = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => new Float64Array(TRISTAR_RULES.armSegments),
+    );
+    target.tristarAvoidanceProjectionStartHeadings = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      () => new Float64Array(TRISTAR_RULES.armSegments),
+    );
+    target.tristarAvoidanceGradientA = new Float64Array(
+      TRISTAR_RULES.armSegments,
+    );
+    target.tristarAvoidanceGradientB = new Float64Array(
+      TRISTAR_RULES.armSegments,
+    );
+    target.tristarSearchCooldown = random() * TRISTAR_RULES.scanInterval;
+    target.tristarWanderAngle =
+      target.angle +
+      (random() * 2 - 1) * TRISTAR_RULES.maximumWanderTurn;
+    target.tristarDesiredSpeed = lerp(
+      TRISTAR_RULES.minimumWanderSpeed,
+      TRISTAR_RULES.maximumSpeed,
+      random(),
+    );
+    target.tristarSpeed = 0;
+    target.tristarWanderTimer = lerp(
+      TRISTAR_RULES.minimumWanderDuration,
+      TRISTAR_RULES.maximumWanderDuration,
+      random(),
+    );
+    if (target.regionType === BLOCK_TYPES.GROUND) {
+      target.movementMode = "tristar-roaming";
+      target.vx = 0;
+      target.vy = 0;
+    }
+    target.tristarArms.forEach((arm, armIndex) => {
+      initializeTristarFreeArmState(target, armIndex);
+    });
+  }
+
+  function tristarArmReach() {
+    return (
+      ENEMY_DEFINITIONS[ENEMY_TYPES.TRISTAR].radius * 0.5 +
+      TRISTAR_RULES.armLength * TRISTAR_RULES.preyReachMaximumStretch
+    );
+  }
+
+  function tristarApproachReach() {
+    return (
+      ENEMY_DEFINITIONS[ENEMY_TYPES.TRISTAR].radius * 0.5 +
+      TRISTAR_RULES.armLength * TRISTAR_RULES.preyApproachArmLengthScale
+    );
+  }
+
+  function resolvedTristarArmLengthScale(arm) {
+    return clamp(
+      Number(arm?.lengthScale) || 1,
+      1,
+      TRISTAR_RULES.preyReachMaximumStretch,
+    );
+  }
+
+  function tristarHeldArmLengthScaleAtProgress(
+    arm,
+    latchProgress = arm?.latchProgress,
+    pullProgress = arm?.pullProgress,
+  ) {
+    const startScale = clamp(
+      Number(arm?.latchStartLengthScale) || 1,
+      1,
+      TRISTAR_RULES.preyReachMaximumStretch,
+    );
+    const targetScale = clamp(
+      Number(arm?.latchTargetLengthScale) || 1,
+      1,
+      TRISTAR_RULES.preyReachMaximumStretch,
+    );
+    const latchAmount = clamp(Number(latchProgress) || 0, 0, 1);
+    if (latchAmount < 1) {
+      return lerp(
+        startScale,
+        targetScale,
+        easedTristarArmProgress(latchAmount),
+      );
+    }
+    const recoveryAmount = easedTristarArmProgress(
+      clamp(
+        (Number(pullProgress) || 0) /
+          TRISTAR_RULES.preyStretchRecoveryPullFraction,
+        0,
+        1,
+      ),
+    );
+    return lerp(targetScale, 1, recoveryAmount);
+  }
+
+  function tristarArmIsConstrained(arm) {
+    return Boolean(arm?.prey);
+  }
+
+  function tristarArmIsDangling(arm) {
+    return Boolean(arm && !arm.prey);
+  }
+
+  function tristarArmIsAvailableForPrey(arm) {
+    return tristarArmIsDangling(arm);
+  }
+
+  function targetIsActive(target) {
+    return Boolean(target && game.targets.includes(target));
+  }
+
+  function tristarPreyIsAvailable(target) {
+    return Boolean(
+      target &&
+      (target.kind === ENEMY_TYPES.BEETLE ||
+        target.kind === ENEMY_TYPES.MOLE) &&
+      target.health > 0 &&
+      !target.tristarDevourQueued &&
+      target.tristarCaptorId === null &&
+      !target.latched &&
+      !target.tongueCaptured &&
+      !target.paralyzed &&
+      !target.boostLatchHitboxDisabled &&
+      !targetHasBoostLatchReservation(target) &&
+      !targetHasActiveTongue(target) &&
+      getBlockAtWorld(target.x, target.y)?.type === BLOCK_TYPES.GROUND
+    );
+  }
+
+  function resumeTargetAfterTristarRelease(target) {
+    if (
+      !targetIsActive(target) ||
+      target.health <= 0 ||
+      target.latched ||
+      target.tongueCaptured ||
+      target.paralyzed
+    ) {
+      return;
+    }
+    const regionType =
+      getBlockAtWorld(target.x, target.y)?.type || BLOCK_TYPES.AIR;
+    target.regionType = regionType;
+    if (regionType === BLOCK_TYPES.GROUND) {
+      chooseEnemyTurn(target);
+    } else {
+      beginEnemyFall(target);
+    }
+  }
+
+  function releaseTristarArm(predator, armIndex, resumePrey = true) {
+    const arm = predator?.tristarArms?.[armIndex];
+    if (!arm) return;
+    const prey = arm.prey;
+    if (prey) {
+      arm.lengthScale = tristarHeldArmLengthScaleAtProgress(arm);
+    }
+    const releasedPoints = prey && !tristarFreeArmStateIsValid(arm)
+      ? getHeldTristarArmPoints(predator, armIndex)
+      : null;
+    arm.prey = null;
+    arm.pullProgress = 0;
+    arm.latchProgress = 1;
+    arm.latchStartLengthScale = 1;
+    arm.latchTargetLengthScale = 1;
+    arm.latchStartTurns = null;
+    arm.latchTargetTurns = null;
+    arm.curlTargetTurns = null;
+    arm.preyOffsetAngle = 0;
+    arm.preyOffsetDistance = 0;
+    arm.preyCaptureLocalX = 0;
+    arm.preyCaptureLocalY = 0;
+    arm.preyCaptureAngle = 0;
+    arm.heldCandidatePoseValid = false;
+    preserveTristarArmDynamics(predator, armIndex, releasedPoints);
+    if (!prey) return;
+    if (
+      prey.tristarCaptorId === predator.id &&
+      prey.tristarCaptorArm === armIndex
+    ) {
+      prey.tristarCaptorId = null;
+      prey.tristarCaptorArm = -1;
+      prey.tristarDevourQueued = false;
+      if (resumePrey) resumeTargetAfterTristarRelease(prey);
+    }
+  }
+
+  function resetTristarPulseState(predator, stopMotion = true) {
+    if (!predator) return;
+    predator.tristarPulsePhase = "contract";
+    predator.tristarPulseElapsed = 0;
+    predator.tristarPulseDuration = TRISTAR_RULES.pulseContractDuration;
+    predator.tristarPulseLaunchVertexIndex = 0;
+    predator.tristarPulseLaunchAngle =
+      (Number.isFinite(predator.angle) ? predator.angle : 0) +
+      TRISTAR_RULES.bodyFirstVertexOffset;
+    predator.tristarPulseLaunchReady = false;
+    predator.tristarPulseLaunchBlocked = false;
+    predator.tristarPulsePushed = false;
+    predator.tristarPulseSteeringRemaining = 0;
+    predator.tristarPulseSuppressed = false;
+    if (stopMotion) {
+      predator.tristarSpeed = 0;
+      predator.vx = 0;
+      predator.vy = 0;
+    }
+  }
+
+  function releaseAllTristarPrey(predator) {
+    if (!predator) return;
+    resetTristarPulseState(predator);
+    if (!predator.tristarArms) return;
+    for (
+      let armIndex = 0;
+      armIndex < predator.tristarArms.length;
+      armIndex += 1
+    ) {
+      releaseTristarArm(predator, armIndex);
+    }
+    predator.tristarHuntTarget = null;
+    predator.tristarHuntMode = "none";
+    predator.tristarClusterCenterX = predator.x;
+    predator.tristarClusterCenterY = predator.y;
+    predator.tristarClusterCount = 0;
+    predator.tristarClusterAnchorId = null;
+    predator.tristarClusterHarvesting = false;
+    predator.tristarClusterHolding = false;
+    predator.tristarClusterBlockedScans = 0;
+    predator.tristarClusterRepositionCooldown = 0;
+    predator.tristarCaptureArmCursor = 0;
+  }
+
+  function detachTargetFromTristar(target) {
+    if (!target || target.tristarCaptorId === null) return;
+    const captorId = target.tristarCaptorId;
+    const armIndex = target.tristarCaptorArm;
+    const captor = [...game.targets, ...game.capturedTargets].find(
+      (candidate) => candidate.id === captorId,
+    );
+    if (captor?.tristarArms?.[armIndex]?.prey === target) {
+      releaseTristarArm(captor, armIndex, false);
+    }
+    target.tristarCaptorId = null;
+    target.tristarCaptorArm = -1;
+    target.tristarDevourQueued = false;
+  }
+
+  function clearTristarRelationships(target) {
+    if (!target) return;
+    if (target.kind === ENEMY_TYPES.TRISTAR) {
+      releaseAllTristarPrey(target);
+    }
+    detachTargetFromTristar(target);
+  }
+
+  function tristarHeldPreyIsValid(predator, armIndex, prey) {
+    return Boolean(
+      targetIsActive(prey) &&
+      prey.health > 0 &&
+      !prey.tristarDevourQueued &&
+      prey.tristarCaptorId === predator.id &&
+      prey.tristarCaptorArm === armIndex &&
+      !prey.latched &&
+      !prey.tongueCaptured &&
+      !prey.paralyzed
+    );
+  }
+
+  function attachTristarPrey(predator, armIndex, prey, providedReach = null) {
+    const arm = predator.tristarArms?.[armIndex];
+    if (
+      !arm ||
+      !tristarArmIsAvailableForPrey(arm) ||
+      !tristarPreyIsAvailable(prey)
+    ) {
+      return false;
+    }
+    const reach =
+      providedReach || tristarArmReachSolution(predator, armIndex, prey);
+    if (!reach?.reached) return false;
+    const latchStartTurns = tristarArmTurnsFromPoints(
+      predator,
+      armIndex,
+      getTristarArmPoints(predator, armIndex),
+    );
+    const reachAlternatives = (
+      reach.alternatives?.length ? reach.alternatives : [reach]
+    ).filter((candidate) => candidate.reached);
+    const rankedReachAlternatives = reachAlternatives
+      .map((candidate) => ({
+        candidate,
+        turnCost: tristarArmTurnDistance(
+          latchStartTurns,
+          candidate.turns,
+        ),
+      }))
+      .sort(
+        (first, second) =>
+          first.turnCost - second.turnCost ||
+          first.candidate.error - second.candidate.error,
+      )
+      .slice(0, TRISTAR_RULES.maximumReachAlternatives);
+    let selectedPlan = null;
+    let curlPlanEvaluations = 0;
+    rankedReachAlternatives.forEach(
+      ({ candidate: reachCandidate, turnCost: reachTurnCost }, reachRank) => {
+      const tip = reachCandidate.points[reachCandidate.points.length - 1];
+      const previousTip =
+        reachCandidate.points[reachCandidate.points.length - 2];
+      const tipAngle = Math.atan2(
+        tip.y - previousTip.y,
+        tip.x - previousTip.x,
+      );
+      const preyXAtTip = nearestPeriodicWorldX(prey.x, tip.x);
+      const preyOffsetAngle = Math.atan2(
+        prey.y - tip.y,
+        preyXAtTip - tip.x,
+      );
+      const preyTipAngleOffset = Math.atan2(
+        Math.sin(preyOffsetAngle - tipAngle),
+        Math.cos(preyOffsetAngle - tipAngle),
+      );
+      const preyTipDistance = magnitude(
+        preyXAtTip - tip.x,
+        prey.y - tip.y,
+      );
+      const curlDirections = [
+        arm.curlDirection || 1,
+        -(arm.curlDirection || 1),
+      ];
+      curlDirections.forEach((curlDirection) => {
+        if (
+          curlPlanEvaluations >= TRISTAR_RULES.maximumCurlPlanEvaluations
+        ) {
+          return;
+        }
+        const curlSeeds = [
+          Array.from(
+            { length: TRISTAR_RULES.armSegments },
+            (_, segmentIndex) => {
+              const progress =
+                segmentIndex / (TRISTAR_RULES.armSegments - 1);
+              const backLoadedWeight = easedTristarArmProgress(
+                clamp((progress - 0.25) / 0.5, 0, 1),
+              );
+              return (
+                curlDirection *
+                tristarArmTurnLimit(segmentIndex) *
+                backLoadedWeight
+              );
+            },
+          ),
+        ];
+        if (reachRank === 0) {
+          curlSeeds.push(
+            Array.from(
+              { length: TRISTAR_RULES.armSegments },
+              (_, segmentIndex) => {
+                const progress =
+                  segmentIndex / (TRISTAR_RULES.armSegments - 1);
+                const distalWeight = easedTristarArmProgress(
+                  clamp((progress - 0.15) / 0.65, 0, 1),
+                );
+                return (
+                  curlDirection *
+                  tristarArmTurnLimit(segmentIndex) *
+                  distalWeight
+                );
+              },
+            ),
+          );
+        }
+        const curlCandidates = [];
+        curlSeeds.forEach((curlSeedTurns) => {
+          if (
+            curlPlanEvaluations >=
+            TRISTAR_RULES.maximumCurlPlanEvaluations
+          ) {
+            return;
+          }
+          curlPlanEvaluations += 1;
+          const curl = tristarArmTipIkSolution(
+            predator,
+            armIndex,
+            { x: predator.x, y: predator.y },
+            curlSeedTurns,
+            {
+              turnDirection: curlDirection,
+              endOffsetAngle: preyTipAngleOffset,
+              endOffsetDistance: preyTipDistance,
+            },
+          );
+          if (
+            !curl.reached ||
+            curlCandidates.some(
+              (candidate) =>
+                tristarArmTurnDistance(candidate.turns, curl.turns) < 0.01,
+            )
+          ) {
+            return;
+          }
+          curlCandidates.push(curl);
+        });
+        curlCandidates.forEach((curl) => {
+          const score =
+            reachTurnCost * 3 +
+            tristarArmTurnDistance(
+              reachCandidate.turns,
+              curl.turns,
+            ) * 1.5 +
+            (reachCandidate.error + curl.error) * 0.01 +
+            (curlDirection === arm.curlDirection ? 0 : 0.01);
+          if (selectedPlan && score >= selectedPlan.score) return;
+          selectedPlan = {
+            curl,
+            curlDirection,
+            preyTipAngleOffset,
+            preyTipDistance,
+            reach: reachCandidate,
+            score,
+          };
+        });
+      });
+      },
+    );
+    if (!selectedPlan) return false;
+
+    if (!tristarFreeArmStateIsValid(arm)) {
+      initializeTristarFreeArmState(
+        predator,
+        armIndex,
+        getTristarArmPoints(predator, armIndex),
+      );
+    }
+    const cosine = Math.cos(predator.angle);
+    const sine = Math.sin(predator.angle);
+    arm.prey = prey;
+    arm.pullProgress = 0;
+    arm.latchProgress = 0;
+    arm.latchStartLengthScale = resolvedTristarArmLengthScale(arm);
+    arm.latchTargetLengthScale = clamp(
+      Number(selectedPlan.reach.lengthScale) || 1,
+      1,
+      TRISTAR_RULES.preyReachMaximumStretch,
+    );
+    arm.lengthScale = arm.latchStartLengthScale;
+    arm.latchStartTurns = latchStartTurns;
+    arm.latchTargetTurns = selectedPlan.reach.turns;
+    arm.curlTargetTurns = selectedPlan.curl.turns;
+    arm.curlDirection = selectedPlan.curlDirection;
+    arm.heldCandidatePoseValid = false;
+    const preyXFromPredator = nearestPeriodicWorldX(prey.x, predator.x);
+    const preyOffsetX = preyXFromPredator - predator.x;
+    const preyOffsetY = prey.y - predator.y;
+    arm.preyCaptureLocalX = preyOffsetX * cosine + preyOffsetY * sine;
+    arm.preyCaptureLocalY = -preyOffsetX * sine + preyOffsetY * cosine;
+    arm.preyCaptureAngle = Math.atan2(
+      Math.sin(prey.angle - predator.angle),
+      Math.cos(prey.angle - predator.angle),
+    );
+    arm.preyOffsetAngle = selectedPlan.preyTipAngleOffset;
+    arm.preyOffsetDistance = selectedPlan.preyTipDistance;
+    prey.tristarCaptorId = predator.id;
+    prey.tristarCaptorArm = armIndex;
+    prey.movementMode = "tristar-captured";
+    prey.vx = 0;
+    prey.vy = 0;
+    return true;
+  }
+
+  function orderedFreeTristarArmIndices(predator, prey) {
+    const preyX = nearestPeriodicWorldX(prey.x, predator.x);
+    const preyAngle = Math.atan2(prey.y - predator.y, preyX - predator.x);
+    const options = [];
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      const arm = predator.tristarArms[armIndex];
+      if (!tristarArmIsAvailableForPrey(arm)) {
+        continue;
+      }
+      const armAngle = predator.angle + armIndex * TAU / TRISTAR_RULES.armCount;
+      const difference = Math.abs(
+        Math.atan2(
+          Math.sin(preyAngle - armAngle),
+          Math.cos(preyAngle - armAngle),
+        ),
+      );
+      options.push({ armIndex, difference });
+    }
+    options.sort(
+      (first, second) =>
+        first.difference - second.difference ||
+        first.armIndex - second.armIndex,
+    );
+    if (options.length < 2) return options;
+    const offset = positiveModulo(
+      Math.floor(Number(predator.tristarCaptureArmCursor) || 0),
+      options.length,
+    );
+    return options.slice(offset).concat(options.slice(0, offset));
+  }
+
+  function tristarClusterCandidateComesFirst(first, second) {
+    return Boolean(
+      !second ||
+      first.count > second.count ||
+      (first.count === second.count &&
+        (first.distanceSquared < second.distanceSquared ||
+          (first.distanceSquared === second.distanceSquared &&
+            (first.column < second.column ||
+              (first.column === second.column && first.row < second.row)))))
+    );
+  }
+
+  function findTristarBeetleCluster(predator, beetles) {
+    if (beetles.length < TRISTAR_RULES.beetleClusterMinimumCount) {
+      return null;
+    }
+    const clusterRadius =
+      TRISTAR_RULES.beetleClusterRadiusBlocks * game.map.cellSize;
+    const hashCellSize = Math.max(
+      game.map.cellSize,
+      TRISTAR_RULES.beetleClusterHashCellBlocks * game.map.cellSize,
+    );
+    const maximumCellCenterDistance =
+      clusterRadius + hashCellSize * Math.SQRT2;
+    const maximumCellCenterDistanceSquared =
+      maximumCellCenterDistance * maximumCellCenterDistance;
+    const neighborRange = Math.ceil(maximumCellCenterDistance / hashCellSize);
+    // Aggregate density by fixed local cells so a crowded dev-spawn cannot
+    // turn every Tri-Star scan into an all-pairs beetle comparison.
+    const columns = new Map();
+    const occupiedCells = [];
+
+    beetles.forEach((entry) => {
+      const column = Math.floor(entry.x / hashCellSize);
+      const row = Math.floor(entry.prey.y / hashCellSize);
+      let rows = columns.get(column);
+      if (!rows) {
+        rows = new Map();
+        columns.set(column, rows);
+      }
+      let cell = rows.get(row);
+      if (!cell) {
+        cell = { column, row, count: 0, sumX: 0, sumY: 0 };
+        rows.set(row, cell);
+        occupiedCells.push(cell);
+      }
+      cell.count += 1;
+      cell.sumX += entry.x;
+      cell.sumY += entry.prey.y;
+    });
+
+    const previousCenterIsValid =
+      predator.tristarClusterAnchorId !== null &&
+      Number.isFinite(predator.tristarClusterCenterX) &&
+      Number.isFinite(predator.tristarClusterCenterY);
+    const previousCenterX = previousCenterIsValid
+      ? nearestPeriodicWorldX(predator.tristarClusterCenterX, predator.x)
+      : predator.x;
+    const previousCenterY = previousCenterIsValid
+      ? predator.tristarClusterCenterY
+      : predator.y;
+    const clusterRadiusSquared = clusterRadius * clusterRadius;
+    let best = null;
+    let incumbent = null;
+
+    occupiedCells.forEach((cell) => {
+      let count = 0;
+      let sumX = 0;
+      let sumY = 0;
+      for (
+        let columnOffset = -neighborRange;
+        columnOffset <= neighborRange;
+        columnOffset += 1
+      ) {
+        const neighborColumn = cell.column + columnOffset;
+        const rows = columns.get(neighborColumn);
+        if (!rows) continue;
+        for (
+          let rowOffset = -neighborRange;
+          rowOffset <= neighborRange;
+          rowOffset += 1
+        ) {
+          if (
+            (columnOffset * hashCellSize) ** 2 +
+                (rowOffset * hashCellSize) ** 2 >
+              maximumCellCenterDistanceSquared
+          ) {
+            continue;
+          }
+          const neighbor = rows.get(cell.row + rowOffset);
+          if (!neighbor) continue;
+          count += neighbor.count;
+          sumX += neighbor.sumX;
+          sumY += neighbor.sumY;
+        }
+      }
+      if (count < TRISTAR_RULES.beetleClusterMinimumCount) return;
+      const centerX = sumX / count;
+      const centerY = sumY / count;
+      const dx = centerX - predator.x;
+      const dy = centerY - predator.y;
+      const cluster = {
+        centerX,
+        centerY,
+        column: cell.column,
+        count,
+        distanceSquared: dx * dx + dy * dy,
+        row: cell.row,
+      };
+      if (tristarClusterCandidateComesFirst(cluster, best)) best = cluster;
+      if (previousCenterIsValid) {
+        const previousDx = centerX - previousCenterX;
+        const previousDy = centerY - previousCenterY;
+        if (
+          previousDx * previousDx + previousDy * previousDy <=
+            clusterRadiusSquared &&
+          tristarClusterCandidateComesFirst(cluster, incumbent)
+        ) {
+          incumbent = cluster;
+        }
+      }
+    });
+
+    if (!best) return null;
+    const selected =
+      incumbent &&
+      best.count <
+        incumbent.count + TRISTAR_RULES.beetleClusterSwitchCountAdvantage
+        ? incumbent
+        : best;
+    let anchor = null;
+    let anchorDistanceSquared = Infinity;
+    beetles.forEach((entry) => {
+      const dx = entry.x - selected.centerX;
+      const dy = entry.prey.y - selected.centerY;
+      const distanceSquared = dx * dx + dy * dy;
+      if (
+        distanceSquared < anchorDistanceSquared ||
+        (distanceSquared === anchorDistanceSquared &&
+          entry.prey.id < (anchor?.id ?? Infinity))
+      ) {
+        anchor = entry.prey;
+        anchorDistanceSquared = distanceSquared;
+      }
+    });
+    return anchor ? { ...selected, anchor } : null;
+  }
+
+  function tristarCandidateIsWithinArmReach(predator, candidate) {
+    // Move well inside the tentacles' mechanical limit before beginning the
+    // first grab. Once one arm is carrying prey, the stationary siblings can
+    // use their full stretched reach to finish harvesting the local group.
+    const hasHeldPrey = predator.tristarArms?.some((arm) => arm.prey);
+    const latchDistance =
+      (hasHeldPrey ? tristarArmReach() : tristarApproachReach()) +
+      candidate.prey.radius;
+    return candidate.distanceSquared <= latchDistance * latchDistance;
+  }
+
+  function tristarShouldSuppressLocomotionForPrey(predator) {
+    if (predator.tristarArms?.some((arm) => arm.prey)) return true;
+    for (let index = 0; index < game.targets.length; index += 1) {
+      const prey = game.targets[index];
+      if (
+        (prey.kind !== ENEMY_TYPES.BEETLE &&
+          prey.kind !== ENEMY_TYPES.MOLE) ||
+        prey.health <= 0 ||
+        prey.tristarDevourQueued ||
+        prey.tristarCaptorId !== null ||
+        prey.latched ||
+        prey.tongueCaptured ||
+        prey.paralyzed ||
+        prey.boostLatchHitboxDisabled
+      ) {
+        continue;
+      }
+      const preyX = nearestPeriodicWorldX(prey.x, predator.x);
+      const dx = preyX - predator.x;
+      const dy = prey.y - predator.y;
+      const reach = tristarApproachReach() + prey.radius;
+      if (dx * dx + dy * dy > reach * reach) continue;
+      if (tristarPreyIsAvailable(prey)) return true;
+    }
+    return false;
+  }
+
+  function refreshTristarHunt(predator) {
+    const senseRadius =
+      TRISTAR_RULES.senseRadiusBlocks * game.map.cellSize;
+    const candidates = [];
+    for (let index = 0; index < game.targets.length; index += 1) {
+      const prey = game.targets[index];
+      if (!tristarPreyIsAvailable(prey)) continue;
+      const preyX = nearestPeriodicWorldX(prey.x, predator.x);
+      const dx = preyX - predator.x;
+      const dy = prey.y - predator.y;
+      const distanceSquared = dx * dx + dy * dy;
+      if (distanceSquared > senseRadius * senseRadius) continue;
+      candidates.push({ prey, distanceSquared, x: preyX });
+    }
+    candidates.sort(
+      (first, second) =>
+        first.distanceSquared - second.distanceSquared ||
+        first.prey.id - second.prey.id,
+    );
+
+    const beetles = candidates.filter(
+      (candidate) => candidate.prey.kind === ENEMY_TYPES.BEETLE,
+    );
+    const cluster = findTristarBeetleCluster(predator, beetles);
+    predator.tristarHuntTarget = candidates[0]?.prey || null;
+    predator.tristarHuntMode = predator.tristarHuntTarget ? "prey" : "none";
+    if (cluster) {
+      predator.tristarClusterCenterX = wrapWorldX(cluster.centerX);
+      predator.tristarClusterCenterY = cluster.centerY;
+      predator.tristarClusterCount = cluster.count;
+      predator.tristarClusterAnchorId = cluster.anchor.id;
+    } else {
+      predator.tristarClusterCount = 0;
+      predator.tristarClusterAnchorId = null;
+    }
+
+    const reachableBeetlesBeforeCapture = beetles.reduce(
+      (count, candidate) =>
+        count +
+          (tristarCandidateIsWithinArmReach(predator, candidate) ? 1 : 0),
+      0,
+    );
+    const heldBeetlesBeforeCapture = predator.tristarArms.reduce(
+      (count, arm) =>
+        count + (arm.prey?.kind === ENEMY_TYPES.BEETLE ? 1 : 0),
+      0,
+    );
+    if (
+      !(predator.tristarClusterRepositionCooldown > 0) &&
+      reachableBeetlesBeforeCapture > 0 &&
+      reachableBeetlesBeforeCapture + heldBeetlesBeforeCapture >=
+        TRISTAR_RULES.beetleClusterMinimumCount
+    ) {
+      // Harvesting is sticky across the staggered one-capture-per-scan arm
+      // plans, then releases once the local group has actually been eaten.
+      if (!predator.tristarClusterHarvesting) {
+        predator.tristarClusterBlockedScans = 0;
+      }
+      predator.tristarClusterHarvesting = true;
+    }
+
+    const captureCandidates = [...candidates];
+    if (cluster) {
+      const focusRadius =
+        (TRISTAR_RULES.beetleClusterRadiusBlocks +
+          TRISTAR_RULES.beetleClusterHashCellBlocks * Math.SQRT2) *
+        game.map.cellSize;
+      const focusRadiusSquared = focusRadius * focusRadius;
+      const capturePriority = (candidate) => {
+        if (candidate.prey.kind !== ENEMY_TYPES.BEETLE) return 2;
+        const dx = candidate.x - cluster.centerX;
+        const dy = candidate.prey.y - cluster.centerY;
+        return dx * dx + dy * dy <= focusRadiusSquared ? 0 : 1;
+      };
+      captureCandidates.sort(
+        (first, second) =>
+          capturePriority(first) - capturePriority(second) ||
+          second.distanceSquared - first.distanceSquared ||
+          first.prey.id - second.prey.id,
+      );
+    } else if (predator.tristarClusterHarvesting) {
+      captureCandidates.sort(
+        (first, second) =>
+          Number(second.prey.kind === ENEMY_TYPES.BEETLE) -
+            Number(first.prey.kind === ENEMY_TYPES.BEETLE) ||
+          second.distanceSquared - first.distanceSquared ||
+          first.prey.id - second.prey.id,
+      );
+    } else {
+      captureCandidates.sort(
+        (first, second) =>
+          second.distanceSquared - first.distanceSquared ||
+          first.prey.id - second.prey.id,
+      );
+    }
+
+    let capturesStarted = 0;
+    let beetleCapturesStarted = 0;
+    let planAttempts = 0;
+    for (let index = 0; index < captureCandidates.length; index += 1) {
+      const candidate = captureCandidates[index];
+      const { prey } = candidate;
+      if (!tristarCandidateIsWithinArmReach(predator, candidate)) continue;
+      const armOptions = orderedFreeTristarArmIndices(predator, prey);
+      let attached = false;
+      const armOption = armOptions[0];
+      if (
+        armOption &&
+        planAttempts < TRISTAR_RULES.maximumCapturePlanAttempts
+      ) {
+        planAttempts += 1;
+        const { armIndex } = armOption;
+        const reach = tristarArmReachSolution(predator, armIndex, prey);
+        if (
+          reach?.reached &&
+          attachTristarPrey(predator, armIndex, prey, reach)
+        ) {
+          attached = true;
+          capturesStarted += 1;
+          if (prey.kind === ENEMY_TYPES.BEETLE) {
+            beetleCapturesStarted += 1;
+          }
+        }
+      }
+      if (capturesStarted >= TRISTAR_RULES.maximumCapturesPerScan) break;
+      if (!attached) {
+        if (!predator.tristarArms.some(tristarArmIsAvailableForPrey)) break;
+        if (planAttempts >= TRISTAR_RULES.maximumCapturePlanAttempts) break;
+        continue;
+      }
+    }
+    predator.tristarCaptureArmCursor = positiveModulo(
+      Math.floor(Number(predator.tristarCaptureArmCursor) || 0) + 1,
+      TRISTAR_RULES.armCount,
+    );
+
+    const reachableBeetlesAfterCapture = beetles.reduce(
+      (count, candidate) =>
+        count +
+          (tristarPreyIsAvailable(candidate.prey) &&
+          tristarCandidateIsWithinArmReach(predator, candidate)
+            ? 1
+            : 0),
+      0,
+    );
+    const freeArmCount = predator.tristarArms.reduce(
+      (count, arm) =>
+        count + (tristarArmIsAvailableForPrey(arm) ? 1 : 0),
+      0,
+    );
+    const heldBeetleCount = predator.tristarArms.reduce(
+      (count, arm) =>
+        count + (arm.prey?.kind === ENEMY_TYPES.BEETLE ? 1 : 0),
+      0,
+    );
+    if (
+      beetleCapturesStarted > 0 &&
+      heldBeetleCount + reachableBeetlesAfterCapture >=
+        TRISTAR_RULES.beetleClusterMinimumCount
+    ) {
+      predator.tristarClusterHarvesting = true;
+      predator.tristarClusterBlockedScans = 0;
+      predator.tristarClusterRepositionCooldown = 0;
+    }
+    if (predator.tristarClusterHarvesting) {
+      if (reachableBeetlesAfterCapture > 0 && freeArmCount > 0) {
+        predator.tristarClusterBlockedScans = beetleCapturesStarted > 0
+          ? 0
+          : predator.tristarClusterBlockedScans + 1;
+      } else {
+        predator.tristarClusterBlockedScans = 0;
+      }
+      if (
+        predator.tristarClusterBlockedScans >=
+        TRISTAR_RULES.clusterBlockedScanLimit
+      ) {
+        predator.tristarClusterHarvesting = false;
+        predator.tristarClusterHolding = false;
+        predator.tristarClusterBlockedScans = 0;
+        predator.tristarClusterRepositionCooldown =
+          TRISTAR_RULES.clusterRepositionDuration;
+      } else if (
+        reachableBeetlesAfterCapture > 0 ||
+        heldBeetleCount > 0 ||
+        freeArmCount === 0
+      ) {
+        predator.tristarClusterHolding = true;
+      } else {
+        predator.tristarClusterHarvesting = false;
+        predator.tristarClusterHolding = false;
+      }
+    } else {
+      predator.tristarClusterHolding = false;
+      predator.tristarClusterBlockedScans = 0;
+    }
+  }
+
+  function tristarGroundPathIsClear(target, angle, distance) {
+    const maximumStep =
+      game.map.cellSize * TRISTAR_RULES.movementSubstepBlocks;
+    const steps = Math.max(1, Math.ceil(distance / maximumStep));
+    for (let step = 1; step <= steps; step += 1) {
+      const amount = step / steps;
+      if (
+        getBlockAtWorld(
+          target.x + Math.cos(angle) * distance * amount,
+          target.y + Math.sin(angle) * distance * amount,
+        )?.type !== BLOCK_TYPES.GROUND
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function tristarSteeringAngle(target, desiredAngle) {
+    const lookahead = Math.max(
+      game.map.cellSize * 1.5,
+      (Number(target.tristarSpeed) || 0) *
+        TRISTAR_RULES.terrainLookaheadSeconds,
+    );
+    for (
+      let index = 0;
+      index < TRISTAR_STEERING_OFFSETS.length;
+      index += 1
+    ) {
+      const candidateAngle = desiredAngle + TRISTAR_STEERING_OFFSETS[index];
+      if (!tristarGroundPathIsClear(target, candidateAngle, lookahead)) {
+        continue;
+      }
+      return candidateAngle;
+    }
+    const turnSide = Math.sin(target.id * 12.9898 + game.elapsed * 0.7) < 0
+      ? -1
+      : 1;
+    return target.angle + turnSide * Math.PI * 0.75;
+  }
+
+  function tristarPulseVertexAngle(target, vertexIndex) {
+    return (
+      target.angle +
+      TRISTAR_RULES.bodyFirstVertexOffset +
+      positiveModulo(vertexIndex, TRISTAR_RULES.armCount) *
+        TAU /
+        TRISTAR_RULES.armCount
+    );
+  }
+
+  function tristarPulseLaunchLookahead(target) {
+    return Math.max(
+      game.map.cellSize * 1.5,
+      Math.max(
+        TRISTAR_RULES.minimumWanderSpeed,
+        Number(target.tristarSpeed) || 0,
+      ) * TRISTAR_RULES.terrainLookaheadSeconds,
+    );
+  }
+
+  function tristarVertexImpulseAmount(
+    target,
+    launchAngle,
+    desiredSpeed,
+    scheduledImpulse,
+  ) {
+    const directionX = Math.cos(launchAngle);
+    const directionY = Math.sin(launchAngle);
+    const forwardSpeed =
+      target.vx * directionX + target.vy * directionY;
+    const remainingForwardSpeed = Math.max(
+      0,
+      clamp(desiredSpeed, 0, TRISTAR_RULES.maximumSpeed) -
+        forwardSpeed,
+    );
+    const currentSpeedSquared =
+      target.vx * target.vx + target.vy * target.vy;
+    const maximumVertexImpulse = Math.max(
+      0,
+      -forwardSpeed +
+        Math.sqrt(
+          Math.max(
+            0,
+            forwardSpeed * forwardSpeed +
+              TRISTAR_RULES.maximumSpeed ** 2 -
+              currentSpeedSquared,
+          ),
+        ),
+    );
+    return Math.min(
+      Math.max(0, scheduledImpulse),
+      remainingForwardSpeed,
+      maximumVertexImpulse,
+    );
+  }
+
+  function tristarPulseLaunchDirectionIsSafe(
+    target,
+    launchAngle,
+    desiredSpeed,
+  ) {
+    if (
+      !tristarGroundPathIsClear(
+        target,
+        launchAngle,
+        tristarPulseLaunchLookahead(target),
+      )
+    ) {
+      return false;
+    }
+    const danglingArmCount = target.tristarArms.reduce(
+      (count, arm) => count + (tristarArmIsDangling(arm) ? 1 : 0),
+      0,
+    );
+    const impulseScale =
+      TRISTAR_RULES.pulseArmImpulseScales[danglingArmCount] || 0;
+    const impulse = tristarVertexImpulseAmount(
+      target,
+      launchAngle,
+      desiredSpeed,
+      TRISTAR_RULES.pulseTotalImpulse * impulseScale,
+    );
+    if (!(impulse > 0)) return true;
+    return tristarVelocityPathIsClear(
+      target,
+      target.vx + Math.cos(launchAngle) * impulse,
+      target.vy + Math.sin(launchAngle) * impulse,
+    );
+  }
+
+  function selectTristarPulseLaunchVertex(
+    target,
+    desiredAngle,
+    desiredSpeed = TRISTAR_RULES.maximumSpeed,
+  ) {
+    let closestIndex = 0;
+    let closestAngle = tristarPulseVertexAngle(target, 0);
+    let closestDifference = Infinity;
+    let safestIndex = -1;
+    let safestAngle = closestAngle;
+    let safestDifference = Infinity;
+    for (
+      let vertexIndex = 0;
+      vertexIndex < TRISTAR_RULES.armCount;
+      vertexIndex += 1
+    ) {
+      const vertexAngle = tristarPulseVertexAngle(target, vertexIndex);
+      const difference = Math.abs(
+        Math.atan2(
+          Math.sin(desiredAngle - vertexAngle),
+          Math.cos(desiredAngle - vertexAngle),
+        ),
+      );
+      if (difference < closestDifference) {
+        closestIndex = vertexIndex;
+        closestAngle = vertexAngle;
+        closestDifference = difference;
+      }
+      if (
+        difference >= safestDifference ||
+        !tristarPulseLaunchDirectionIsSafe(
+          target,
+          vertexAngle,
+          desiredSpeed,
+        )
+      ) {
+        continue;
+      }
+      safestIndex = vertexIndex;
+      safestAngle = vertexAngle;
+      safestDifference = difference;
+    }
+    target.tristarPulseLaunchVertexIndex =
+      safestIndex >= 0 ? safestIndex : closestIndex;
+    target.tristarPulseLaunchAngle =
+      safestIndex >= 0 ? safestAngle : closestAngle;
+    target.tristarPulseLaunchReady = true;
+    target.tristarPulseLaunchBlocked = safestIndex < 0;
+  }
+
+  function turnAngleToward(currentAngle, desiredAngle, maximumTurn) {
+    const angleDifference = Math.atan2(
+      Math.sin(desiredAngle - currentAngle),
+      Math.cos(desiredAngle - currentAngle),
+    );
+    return (
+      currentAngle +
+      clamp(angleDifference, -maximumTurn, maximumTurn)
+    );
+  }
+
+  function tristarVelocityPathIsClear(target, vx, vy) {
+    const speed = magnitude(vx, vy);
+    if (!(speed > 0.0001)) return true;
+    const lookahead = Math.max(
+      game.map.cellSize * 1.5,
+      speed * TRISTAR_RULES.terrainLookaheadSeconds,
+    );
+    return tristarGroundPathIsClear(
+      target,
+      Math.atan2(vy, vx),
+      lookahead,
+    );
+  }
+
+  function applyTristarCoastDrag(target, dt) {
+    const speed = magnitude(target.vx, target.vy);
+    if (!(speed > 0.0001)) {
+      target.vx = 0;
+      target.vy = 0;
+      target.tristarSpeed = 0;
+      return;
+    }
+    const nextSpeed = Math.max(
+      0,
+      speed - TRISTAR_RULES.coastDeceleration * dt,
+    );
+    const scale = nextSpeed / speed;
+    target.vx *= scale;
+    target.vy *= scale;
+    target.tristarSpeed = nextSpeed;
+  }
+
+  function tristarBurstImpulseAtProgress(progress) {
+    const amount = clamp(progress, 0, 1);
+    return (
+      TRISTAR_RULES.pulseTotalImpulse *
+      0.5 *
+      (1 - Math.cos(Math.PI * amount))
+    );
+  }
+
+  function applyTristarBurstImpulse(
+    target,
+    desiredSpeed,
+    previousProgress,
+    nextProgress,
+  ) {
+    if (target.tristarPulseLaunchBlocked) return;
+    const danglingArmCount = target.tristarArms.reduce(
+      (count, arm) => count + (tristarArmIsDangling(arm) ? 1 : 0),
+      0,
+    );
+    if (danglingArmCount === 0) return;
+    const armImpulseScale =
+      TRISTAR_RULES.pulseArmImpulseScales[danglingArmCount] || 0;
+    const scheduledImpulse =
+      (tristarBurstImpulseAtProgress(nextProgress) -
+        tristarBurstImpulseAtProgress(previousProgress)) *
+      armImpulseScale;
+    if (!(scheduledImpulse > 0)) return;
+    const launchAngle = Number.isFinite(target.tristarPulseLaunchAngle)
+      ? target.tristarPulseLaunchAngle
+      : tristarPulseVertexAngle(
+          target,
+          target.tristarPulseLaunchVertexIndex,
+        );
+    const directionX = Math.cos(launchAngle);
+    const directionY = Math.sin(launchAngle);
+    const appliedImpulse = tristarVertexImpulseAmount(
+      target,
+      launchAngle,
+      desiredSpeed,
+      scheduledImpulse,
+    );
+    if (!(appliedImpulse > 0)) return;
+
+    const candidateVx = target.vx + directionX * appliedImpulse;
+    const candidateVy = target.vy + directionY * appliedImpulse;
+    // Old momentum and a safe launch direction can still combine into an
+    // unsafe resultant. Never accept thrust based on the launch ray alone.
+    if (!tristarVelocityPathIsClear(target, candidateVx, candidateVy)) {
+      return;
+    }
+    target.vx = candidateVx;
+    target.vy = candidateVy;
+    target.tristarSpeed = magnitude(candidateVx, candidateVy);
+    target.tristarPulsePushed = true;
+  }
+
+  function tristarPulseMuscleStrength(target) {
+    const duration = Math.max(
+      0.0001,
+      Number(target.tristarPulseDuration) ||
+        TRISTAR_RULES.pulseContractDuration,
+    );
+    const progress = clamp(
+      (Number(target.tristarPulseElapsed) || 0) / duration,
+      0,
+      1,
+    );
+    if (target.tristarPulsePhase === "contract") {
+      return easedTristarArmProgress(progress);
+    }
+    if (target.tristarPulsePhase === "burst") {
+      return 1 - easedTristarArmProgress(progress);
+    }
+    return 0;
+  }
+
+  function tristarPulseRearFanHeading(target, armIndex) {
+    const launchAngle = Number.isFinite(target.tristarPulseLaunchAngle)
+      ? target.tristarPulseLaunchAngle
+      : tristarPulseVertexAngle(
+          target,
+          target.tristarPulseLaunchVertexIndex,
+        );
+    const rearAngle = launchAngle + Math.PI;
+    const rearArmIndex = positiveModulo(
+      Math.round(
+        (rearAngle - target.angle) /
+          TAU *
+          TRISTAR_RULES.armCount,
+      ),
+      TRISTAR_RULES.armCount,
+    );
+    let fanSlot = positiveModulo(
+      armIndex - rearArmIndex,
+      TRISTAR_RULES.armCount,
+    );
+    if (fanSlot > TRISTAR_RULES.armCount * 0.5) {
+      fanSlot -= TRISTAR_RULES.armCount;
+    }
+    return rearAngle + fanSlot * TRISTAR_RULES.pulseRearFanSpread;
+  }
+
+  function beginTristarPulsePhase(
+    target,
+    phase,
+    steeringAngle = target.angle,
+    desiredSpeed = TRISTAR_RULES.maximumSpeed,
+  ) {
+    target.tristarPulsePhase = phase;
+    target.tristarPulseElapsed = 0;
+    if (phase === "contract") {
+      target.tristarPulseDuration = TRISTAR_RULES.pulseContractDuration;
+      target.tristarPulsePushed = false;
+      target.tristarPulseSteeringRemaining = 0;
+      selectTristarPulseLaunchVertex(
+        target,
+        steeringAngle,
+        desiredSpeed,
+      );
+    } else if (phase === "burst") {
+      target.tristarPulseDuration = TRISTAR_RULES.pulseBurstDuration;
+      target.tristarPulseSteeringRemaining = 0;
+      const launchAngle = Number.isFinite(target.tristarPulseLaunchAngle)
+        ? target.tristarPulseLaunchAngle
+        : tristarPulseVertexAngle(
+            target,
+            target.tristarPulseLaunchVertexIndex,
+          );
+      if (
+        target.tristarPulseLaunchBlocked ||
+        !tristarPulseLaunchDirectionIsSafe(
+          target,
+          launchAngle,
+          desiredSpeed,
+        )
+      ) {
+        selectTristarPulseLaunchVertex(
+          target,
+          steeringAngle,
+          desiredSpeed,
+        );
+      }
+    } else {
+      target.tristarPulseDuration = randomRange(
+        TRISTAR_RULES.pulseMinimumCoastDuration,
+        TRISTAR_RULES.pulseMaximumCoastDuration,
+      );
+      target.tristarPulseSteeringRemaining = target.tristarPulsePushed
+        ? TRISTAR_RULES.pulsePostBurstSteeringDuration
+        : 0;
+    }
+  }
+
+  function steerTristarAfterPulse(target, steeringAngle, dt) {
+    const steeringTime = Math.min(
+      dt,
+      Math.max(0, Number(target.tristarPulseSteeringRemaining) || 0),
+    );
+    target.tristarPulseSteeringRemaining = Math.max(
+      0,
+      (Number(target.tristarPulseSteeringRemaining) || 0) - dt,
+    );
+    if (
+      !(steeringTime > 0) ||
+      magnitude(target.vx, target.vy) <= 0.5
+    ) {
+      return;
+    }
+    const vertexOffset =
+      TRISTAR_RULES.bodyFirstVertexOffset +
+      positiveModulo(
+        Number(target.tristarPulseLaunchVertexIndex) || 0,
+        TRISTAR_RULES.armCount,
+      ) *
+        TAU /
+        TRISTAR_RULES.armCount;
+    const startingBodyAngle = target.angle;
+    const proposedBodyAngle = turnAngleToward(
+      target.angle,
+      steeringAngle - vertexOffset,
+      TRISTAR_RULES.pulseBodyTurnSpeed * steeringTime,
+    );
+    const fullTurn = Math.atan2(
+      Math.sin(proposedBodyAngle - startingBodyAngle),
+      Math.cos(proposedBodyAngle - startingBodyAngle),
+    );
+    if (Math.abs(fullTurn) <= 0.0000001) return;
+    const speed = magnitude(target.vx, target.vy);
+    const velocityAngle = Math.atan2(target.vy, target.vx);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const turn = fullTurn * 2 ** -attempt;
+      const candidateVelocityAngle = velocityAngle + turn;
+      const candidateVx = Math.cos(candidateVelocityAngle) * speed;
+      const candidateVy = Math.sin(candidateVelocityAngle) * speed;
+      if (!tristarVelocityPathIsClear(target, candidateVx, candidateVy)) {
+        continue;
+      }
+      target.angle = startingBodyAngle + turn;
+      target.vx = candidateVx;
+      target.vy = candidateVy;
+      target.tristarSpeed = speed;
+      return;
+    }
+  }
+
+  function advanceTristarPulse(
+    target,
+    desiredSpeed,
+    steeringAngle,
+    dt,
+  ) {
+    if (
+      target.tristarPulsePhase !== "contract" &&
+      target.tristarPulsePhase !== "burst" &&
+      target.tristarPulsePhase !== "coast"
+    ) {
+      beginTristarPulsePhase(
+        target,
+        "contract",
+        steeringAngle,
+        desiredSpeed,
+      );
+    }
+    if (
+      target.tristarPulsePhase === "contract" &&
+      !target.tristarPulseLaunchReady
+    ) {
+      selectTristarPulseLaunchVertex(
+        target,
+        steeringAngle,
+        desiredSpeed,
+      );
+    }
+
+    let remainingTime = dt;
+    for (
+      let substep = 0;
+      substep < 128 && remainingTime > 0.000001;
+      substep += 1
+    ) {
+      const duration = Math.max(
+        0.0001,
+        Number(target.tristarPulseDuration) ||
+          TRISTAR_RULES.pulseContractDuration,
+      );
+      const elapsed = clamp(
+        Number(target.tristarPulseElapsed) || 0,
+        0,
+        duration,
+      );
+      if (elapsed >= duration - 0.000001) {
+        if (target.tristarPulsePhase === "contract") {
+          beginTristarPulsePhase(
+            target,
+            "burst",
+            steeringAngle,
+            desiredSpeed,
+          );
+        } else if (target.tristarPulsePhase === "burst") {
+          beginTristarPulsePhase(
+            target,
+            "coast",
+            steeringAngle,
+            desiredSpeed,
+          );
+        } else {
+          beginTristarPulsePhase(
+            target,
+            "contract",
+            steeringAngle,
+            desiredSpeed,
+          );
+        }
+        continue;
+      }
+      const phaseTime = Math.min(
+        remainingTime,
+        TRISTAR_RULES.pulseMaximumSubstep,
+        duration - elapsed,
+      );
+      if (target.tristarPulsePhase === "coast") {
+        steerTristarAfterPulse(target, steeringAngle, phaseTime);
+      }
+      applyTristarCoastDrag(target, phaseTime);
+      if (target.tristarPulsePhase === "burst") {
+        applyTristarBurstImpulse(
+          target,
+          desiredSpeed,
+          elapsed / duration,
+          (elapsed + phaseTime) / duration,
+        );
+      }
+      target.tristarPulseElapsed = elapsed + phaseTime;
+      remainingTime -= phaseTime;
+      if (
+        !moveTristarMomentumThroughGround(
+          target,
+          steeringAngle,
+          phaseTime,
+          desiredSpeed,
+        )
+      ) {
+        return false;
+      }
+      if (target.tristarPulseElapsed < duration - 0.000001) continue;
+
+      if (target.tristarPulsePhase === "contract") {
+        beginTristarPulsePhase(
+          target,
+          "burst",
+          steeringAngle,
+          desiredSpeed,
+        );
+      } else if (target.tristarPulsePhase === "burst") {
+        beginTristarPulsePhase(
+          target,
+          "coast",
+          steeringAngle,
+          desiredSpeed,
+        );
+      } else {
+        beginTristarPulsePhase(
+          target,
+          "contract",
+          steeringAngle,
+          desiredSpeed,
+        );
+      }
+    }
+    return true;
+  }
+
+  function moveTristarMomentumThroughGround(
+    target,
+    steeringAngle,
+    dt,
+    desiredSpeed = TRISTAR_RULES.maximumSpeed,
+  ) {
+    let speed = magnitude(target.vx, target.vy);
+    if (speed > TRISTAR_RULES.maximumSpeed) {
+      const capScale = TRISTAR_RULES.maximumSpeed / speed;
+      target.vx *= capScale;
+      target.vy *= capScale;
+      speed = TRISTAR_RULES.maximumSpeed;
+    }
+    target.tristarSpeed = speed;
+    if (!(speed > 0.0001) || !(dt > 0)) {
+      target.vx = 0;
+      target.vy = 0;
+      target.tristarSpeed = 0;
+      target.regionType = BLOCK_TYPES.GROUND;
+      return true;
+    }
+
+    const maximumStep =
+      game.map.cellSize * TRISTAR_RULES.movementSubstepBlocks;
+    const stepCount = Math.max(
+      1,
+      Math.ceil(speed * dt / maximumStep),
+    );
+    const stepTime = dt / stepCount;
+    let blocked = false;
+    for (let step = 0; step < stepCount; step += 1) {
+      const nextX = target.x + target.vx * stepTime;
+      const nextY = target.y + target.vy * stepTime;
+      if (getBlockAtWorld(nextX, nextY)?.type !== BLOCK_TYPES.GROUND) {
+        blocked = true;
+        break;
+      }
+      target.x = nextX;
+      target.y = nextY;
+    }
+    keepEnemyInsideWorld(target);
+    target.regionType = BLOCK_TYPES.GROUND;
+    if (!blocked) return true;
+
+    target.vx = 0;
+    target.vy = 0;
+    target.tristarSpeed = 0;
+    beginTristarPulsePhase(
+      target,
+      "contract",
+      steeringAngle,
+      desiredSpeed,
+    );
+    const turnSide =
+      Math.sin(target.id * 7.193 + game.elapsed) < 0 ? -1 : 1;
+    target.tristarWanderAngle =
+      target.angle + turnSide * TRISTAR_RULES.maximumWanderTurn;
+    return false;
+  }
+
+  function updateTristarPulseLocomotion(
+    target,
+    desiredAngle,
+    desiredSpeed,
+    dt,
+    suppressForPrey = false,
+  ) {
+    if (target.tristarClusterHolding || suppressForPrey) {
+      if (!target.tristarPulseSuppressed) {
+        resetTristarPulseState(target);
+        target.tristarPulseSuppressed = true;
+      }
+      target.tristarSpeed = 0;
+      target.vx = 0;
+      target.vy = 0;
+      return "idle";
+    }
+    if (target.tristarPulseSuppressed) {
+      resetTristarPulseState(target, false);
+    }
+
+    let speed = magnitude(target.vx, target.vy);
+    if (speed > TRISTAR_RULES.maximumSpeed) {
+      const capScale = TRISTAR_RULES.maximumSpeed / speed;
+      target.vx *= capScale;
+      target.vy *= capScale;
+      speed = TRISTAR_RULES.maximumSpeed;
+    }
+    target.tristarSpeed = speed;
+    const steeringAngle = tristarSteeringAngle(target, desiredAngle);
+    advanceTristarPulse(target, desiredSpeed, steeringAngle, dt);
+    return target.tristarPulsePhase;
+  }
+
+  function updateTristarCapturedPrey(target, dt, devouredTargets) {
+    let heldCount = 0;
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      const arm = target.tristarArms[armIndex];
+      const prey = arm.prey;
+      if (!prey) continue;
+      if (!tristarHeldPreyIsValid(target, armIndex, prey)) {
+        releaseTristarArm(target, armIndex);
+        continue;
+      }
+      heldCount += 1;
+      if ((Number(arm.latchProgress) || 0) < 1) {
+        arm.latchProgress = Math.min(
+          1,
+          (Number(arm.latchProgress) || 0) +
+            dt / TRISTAR_RULES.preyReachDuration,
+        );
+        continue;
+      }
+      arm.pullProgress = Math.min(
+        1,
+        (Number(arm.pullProgress) || 0) +
+          TRISTAR_RULES.pullSpeed /
+          TRISTAR_RULES.armLength *
+            dt,
+      );
+    }
+
+    updateTristarHeldArmInertia(target, dt);
+
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      const arm = target.tristarArms[armIndex];
+      const prey = arm.prey;
+      if (!prey) continue;
+      const previousX = nearestPeriodicWorldX(prey.x, target.x);
+      const previousY = prey.y;
+      let nextX;
+      let nextY;
+      let preyAngle;
+      if ((Number(arm.latchProgress) || 0) < 1) {
+        const cosine = Math.cos(target.angle);
+        const sine = Math.sin(target.angle);
+        nextX =
+          target.x +
+          arm.preyCaptureLocalX * cosine - arm.preyCaptureLocalY * sine;
+        nextY =
+          target.y +
+          arm.preyCaptureLocalX * sine + arm.preyCaptureLocalY * cosine;
+        preyAngle = target.angle + (Number(arm.preyCaptureAngle) || 0);
+      } else {
+        const points =
+          arm.heldCandidatePoseValid &&
+          arm.heldCandidatePoints?.length ===
+          TRISTAR_RULES.armSegments + 1
+            ? arm.heldCandidatePoints
+            : getHeldTristarArmPoints(target, armIndex);
+        const tip = points[points.length - 1];
+        const previousTip = points[points.length - 2];
+        const tipAngle = Math.atan2(
+          tip.y - previousTip.y,
+          tip.x - previousTip.x,
+        );
+        preyAngle = tipAngle + (Number(arm.preyOffsetAngle) || 0);
+        const offsetDistance = Math.max(
+          0,
+          Number(arm.preyOffsetDistance) || 0,
+        );
+        nextX = tip.x + Math.cos(preyAngle) * offsetDistance;
+        nextY = tip.y + Math.sin(preyAngle) * offsetDistance;
+      }
+      if (
+        (Number(arm.latchProgress) || 0) >= 1 &&
+        (Number(arm.pullProgress) || 0) >= 1
+      ) {
+        preserveTristarArmDynamics(target, armIndex);
+        arm.prey = null;
+        arm.pullProgress = 0;
+        arm.latchProgress = 1;
+        arm.lengthScale = 1;
+        arm.latchStartLengthScale = 1;
+        arm.latchTargetLengthScale = 1;
+        arm.latchStartTurns = null;
+        arm.latchTargetTurns = null;
+        arm.curlTargetTurns = null;
+        arm.preyOffsetAngle = 0;
+        arm.preyOffsetDistance = 0;
+        arm.preyCaptureLocalX = 0;
+        arm.preyCaptureLocalY = 0;
+        arm.preyCaptureAngle = 0;
+        arm.heldCandidatePoseValid = false;
+        prey.tristarDevourQueued = true;
+        devouredTargets.push({ predator: target, prey });
+      }
+      prey.x = nextX;
+      prey.y = nextY;
+      prey.vx = dt > 0 ? (nextX - previousX) / dt : 0;
+      prey.vy = dt > 0 ? (nextY - previousY) / dt : 0;
+      prey.angle = preyAngle;
+      prey.regionType = BLOCK_TYPES.GROUND;
+      keepEnemyInsideWorld(prey);
+    }
+    return heldCount;
+  }
+
+  function updateTristar(target, dt, devouredTargets) {
+    if (target.movementMode === "burrowing") {
+      resetTristarPulseState(target, false);
+      updateBurrowingEnemy(target, dt);
+      updateTristarFreeArms(target, dt);
+      projectTristarFreeArmSeparation(target, dt);
+      return;
+    }
+    if (
+      target.movementMode === "falling" ||
+      target.regionType !== BLOCK_TYPES.GROUND
+    ) {
+      resetTristarPulseState(target, false);
+      updateFallingEnemy(target, dt);
+      updateTristarFreeArms(target, dt);
+      projectTristarFreeArmSeparation(target, dt);
+      return;
+    }
+
+    if (!String(target.movementMode).startsWith("tristar-")) {
+      resetTristarPulseState(target);
+      target.tristarWanderAngle = target.angle;
+    }
+
+    target.tristarClusterRepositionCooldown = Math.max(
+      0,
+      (Number(target.tristarClusterRepositionCooldown) || 0) - dt,
+    );
+
+    target.tristarSearchCooldown -= dt;
+    if (target.tristarSearchCooldown <= 0) {
+      target.tristarSearchCooldown = TRISTAR_RULES.scanInterval;
+      refreshTristarHunt(target);
+    }
+
+    let desiredAngle = target.tristarWanderAngle;
+    let desiredSpeed = target.tristarDesiredSpeed;
+    const huntTarget = target.tristarHuntTarget;
+    const releaseRadius =
+      TRISTAR_RULES.releaseRadiusBlocks * game.map.cellSize;
+    let hasHuntDestination = false;
+    if (huntTarget) {
+      const huntX = nearestPeriodicWorldX(huntTarget.x, target.x);
+      const dx = huntX - target.x;
+      const dy = huntTarget.y - target.y;
+      if (
+        !targetIsActive(huntTarget) ||
+        !tristarPreyIsAvailable(huntTarget) ||
+        dx * dx + dy * dy > releaseRadius * releaseRadius
+      ) {
+        target.tristarHuntTarget = null;
+        target.tristarHuntMode = "none";
+      } else {
+        hasHuntDestination = true;
+        desiredAngle = Math.atan2(dy, dx);
+        desiredSpeed = TRISTAR_RULES.maximumSpeed;
+      }
+    }
+
+    if (target.tristarClusterHolding) {
+      desiredAngle = target.angle;
+      desiredSpeed = 0;
+    } else if (!hasHuntDestination) {
+      target.tristarWanderTimer -= dt;
+      if (target.tristarWanderTimer <= 0) {
+        target.tristarWanderTimer = randomRange(
+          TRISTAR_RULES.minimumWanderDuration,
+          TRISTAR_RULES.maximumWanderDuration,
+        );
+        target.tristarWanderAngle =
+          target.angle +
+          randomRange(
+            -TRISTAR_RULES.maximumWanderTurn,
+            TRISTAR_RULES.maximumWanderTurn,
+          );
+        target.tristarDesiredSpeed = randomRange(
+          TRISTAR_RULES.minimumWanderSpeed,
+          TRISTAR_RULES.maximumSpeed,
+        );
+      }
+      desiredAngle = target.tristarWanderAngle;
+      desiredSpeed = target.tristarDesiredSpeed;
+    }
+
+    updateTristarPulseLocomotion(
+      target,
+      desiredAngle,
+      desiredSpeed,
+      dt,
+      tristarShouldSuppressLocomotionForPrey(target),
+    );
+    updateTristarFreeArms(target, dt);
+    const heldCount = updateTristarCapturedPrey(
+      target,
+      dt,
+      devouredTargets,
+    );
+    projectTristarFreeArmSeparation(target, dt);
+    target.movementMode = target.tristarClusterHolding
+      ? "tristar-feeding"
+      : heldCount > 0
+        ? "tristar-carrying"
+        : hasHuntDestination
+          ? "tristar-hunting"
+          : "tristar-roaming";
+  }
+
+  function finishTristarDevours(devouredTargets) {
+    if (devouredTargets.length === 0) return;
+    const removedTargets = new Set();
+    devouredTargets.forEach(({ predator, prey }) => {
+      const preyIndex = game.targets.indexOf(prey);
+      if (preyIndex < 0 || !prey.tristarDevourQueued) return;
+      game.targets.splice(preyIndex, 1);
+      prey.tristarCaptorId = null;
+      prey.tristarCaptorArm = -1;
+      prey.tristarDevourQueued = false;
+      if (prey.roundBudgeted) {
+        game.roundUnspawnedPoints += Math.max(
+          0,
+          Math.round(Number(prey.scoreValue) || 0),
+        );
+        prey.roundBudgeted = false;
+      }
+      removedTargets.add(prey);
+      spawnParticles(
+        predator.x,
+        predator.y,
+        Math.max(4, Math.round(4 * Math.min(3, prey.sizeScale))),
+        prey.kind,
+        prey.sizeScale,
+      );
+    });
+    if (removedTargets.size > 0) {
+      releaseAcidParticlesAttachedToTargets(removedTargets);
+    }
+  }
+
   function updateSequencedEnemy(target, dt) {
     const moveSpeed = enemyMoveSpeed(target);
     let remainingTime = dt;
@@ -9066,11 +11021,11 @@
   }
 
   function updateTargets(dt) {
+    // Snapshot every target before anything moves. Tri-Star arms update prey
+    // later in this pass, so acid still receives the prey's true full-frame
+    // sweep rather than a partially overwritten starting position.
     game.targets.forEach((target) => {
       keepEnemyInsideWorld(target);
-      // Acid particles update after enemies. Preserve this frame's starting
-      // position so a fast particle and a fast enemy are tested in their
-      // shared moving reference frame instead of only against the endpoint.
       target.acidPreviousX = target.x;
       target.acidPreviousY = target.y;
       target.healthBarTimer = Math.max(
@@ -9085,9 +11040,34 @@
         target.latched = false;
         target.boostLatchHitboxDisabled = true;
       }
+    });
+
+    const tristarTargets = [];
+    game.targets.forEach((target) => {
+      if (
+        target.kind === ENEMY_TYPES.TRISTAR &&
+        (target.tongueCaptured || target.paralyzed || target.latched)
+      ) {
+        releaseAllTristarPrey(target);
+      }
+      if (target.tristarCaptorId !== null) {
+        const captor = game.targets.find(
+          (candidate) => candidate.id === target.tristarCaptorId,
+        );
+        const arm = captor?.tristarArms?.[target.tristarCaptorArm];
+        if (arm?.prey === target) return;
+        target.tristarCaptorId = null;
+        target.tristarCaptorArm = -1;
+        target.tristarDevourQueued = false;
+      }
       if (target.tongueCaptured) return;
       if (target.paralyzed) {
         updateParalyzedEnemy(target, dt);
+        if (target.kind === ENEMY_TYPES.TRISTAR) {
+          if (!target.tristarArms) initializeTristarTarget(target);
+          updateTristarFreeArms(target, dt);
+          projectTristarFreeArmSeparation(target, dt);
+        }
         return;
       }
       if (target.latched) {
@@ -9108,7 +11088,9 @@
         0,
         (target.biteBounceCooldown || 0) - dt,
       );
-      if (target.kind === ENEMY_TYPES.RABBIT) {
+      if (target.kind === ENEMY_TYPES.TRISTAR) {
+        tristarTargets.push(target);
+      } else if (target.kind === ENEMY_TYPES.RABBIT) {
         updateRabbit(target, dt);
       } else if (target.kind === ENEMY_TYPES.MEAT) {
         updateDroppedMeat(target, dt);
@@ -9128,6 +11110,14 @@
         updateSequencedEnemy(target, dt);
       }
     });
+
+    const devouredTargets = [];
+    tristarTargets.forEach((target) => {
+      if (!targetIsActive(target)) return;
+      if (!target.tristarArms) initializeTristarTarget(target);
+      updateTristar(target, dt, devouredTargets);
+    });
+    finishTristarDevours(devouredTargets);
   }
 
   function acidParticleSizeScale() {
@@ -10009,6 +11999,7 @@
         target.tongueCaptured ||
         target.paralyzed ||
         target.boostLatchHitboxDisabled ||
+        targetHasBoostLatchReservation(target) ||
         claimedTargetIds.has(target.id) ||
         enemyMaximumHealth(target) > maximumPassengerHealth
       ) {
@@ -10291,6 +12282,7 @@
     defeatedTargets.forEach((target) => {
       const targetIndex = game.targets.indexOf(target);
       if (targetIndex < 0) return;
+      clearTristarRelationships(target);
       if (game.latchAttack?.target === target) {
         target.latched = false;
         game.latchAttack.targetDefeated = true;
@@ -10573,6 +12565,7 @@
   }
 
   function explodeTargetIntoMeat(target) {
+    clearTristarRelationships(target);
     spawnParticles(
       target.x,
       target.y,
@@ -10628,6 +12621,7 @@
       if (
         target.kind === ENEMY_TYPES.MEAT ||
         target.latched ||
+        target.tristarCaptorId !== null ||
         target.tongueCaptured ||
         targetHasActiveTongue(target) ||
         target.paralyzed ||
@@ -10663,10 +12657,6 @@
     game.heading = Number.isFinite(forcedLockAngle)
       ? forcedLockAngle
       : getWormHeadAngle();
-    target.latched = true;
-    target.boostLatchHitboxDisabled = false;
-    target.vx = 0;
-    target.vy = 0;
     game.latchAttack = {
       target,
       phase: "approach",
@@ -10703,6 +12693,7 @@
       if (
         target.kind === ENEMY_TYPES.MEAT ||
         target.latched ||
+        target.tristarCaptorId !== null ||
         target.tongueCaptured ||
         targetHasActiveTongue(target) ||
         target.paralyzed ||
@@ -10755,9 +12746,11 @@
       bounceAwayFromTarget &&
       latch.phase === "biting" &&
       !latch.targetDefeated;
-    if (!latch.targetDefeated) {
+    if (!latch.targetDefeated && latch.phase === "biting") {
       latch.target.latched = false;
       latch.target.boostLatchHitboxDisabled = true;
+    } else if (!latch.targetDefeated) {
+      latch.target.latched = false;
     }
     if (latch.phase === "biting") rebuildBodyPathFromSegments();
     game.latchAttack = null;
@@ -10791,12 +12784,18 @@
   }
 
   function lockBoostLatchOnTarget(latch) {
+    clearTristarRelationships(latch.target);
+    latch.target.latched = true;
+    latch.target.boostLatchHitboxDisabled = false;
+    latch.target.vx = 0;
+    latch.target.vy = 0;
     const arrivalVelocity = { ...game.velocity };
     latch.phase = "biting";
     latch.lockAngle = game.heading;
     const headOffset = wormDimension("headOffset");
+    const targetX = nearestPeriodicWorldX(latch.target.x, game.head.x);
     game.head.x =
-      latch.target.x - Math.cos(latch.lockAngle) * headOffset;
+      targetX - Math.cos(latch.lockAngle) * headOffset;
     game.head.y =
       latch.target.y - Math.sin(latch.lockAngle) * headOffset;
     latch.bodyVelocities = game.segments.map((_, index) => {
@@ -10834,7 +12833,8 @@
     for (let step = 0; step < substeps; step += 1) {
       const visualHeadX = game.head.x + Math.cos(game.heading) * headOffset;
       const visualHeadY = game.head.y + Math.sin(game.heading) * headOffset;
-      const dx = latch.target.x - visualHeadX;
+      const targetX = nearestPeriodicWorldX(latch.target.x, visualHeadX);
+      const dx = targetX - visualHeadX;
       const dy = latch.target.y - visualHeadY;
       const distance = magnitude(dx, dy);
       if (distance <= BOOST_LATCH_RULES.approachArrivalDistance) {
@@ -10871,7 +12871,11 @@
         game.head.x + Math.cos(game.heading) * headOffset;
       const nextVisualHeadY =
         game.head.y + Math.sin(game.heading) * headOffset;
-      const nextDx = latch.target.x - nextVisualHeadX;
+      const nextTargetX = nearestPeriodicWorldX(
+        latch.target.x,
+        nextVisualHeadX,
+      );
+      const nextDx = nextTargetX - nextVisualHeadX;
       const nextDy = latch.target.y - nextVisualHeadY;
       const nextDistance = magnitude(nextDx, nextDy);
       const crossedTarget = dx * nextDx + dy * nextDy <= 0;
@@ -10978,14 +12982,19 @@
   function updateBoostLatchAttack(dt) {
     const latch = game.latchAttack;
     if (!latch) return;
+    if (!targetIsActive(latch.target) || latch.target.health <= 0) {
+      releaseBoostLatchAttack(true, false);
+      return;
+    }
     if (latch.phase === "approach") {
       updateBoostLatchApproach(latch, dt);
       return;
     }
 
     const headOffset = wormDimension("headOffset");
+    const targetX = nearestPeriodicWorldX(latch.target.x, game.head.x);
     game.head.x =
-      latch.target.x - Math.cos(latch.lockAngle) * headOffset;
+      targetX - Math.cos(latch.lockAngle) * headOffset;
     game.head.y =
       latch.target.y - Math.sin(latch.lockAngle) * headOffset;
     game.speed = 0;
@@ -11145,6 +13154,10 @@
     return game.tongues.some((tongue) => tongue.targetId === target.id);
   }
 
+  function targetHasBoostLatchReservation(target) {
+    return Boolean(target && game.latchAttack?.target === target);
+  }
+
   function deliverTonguePassengersToMouth(tongue) {
     if (!tongue?.passengers?.length) return;
     const { pose, front } = tongueHeadAnchors();
@@ -11193,9 +13206,11 @@
   function tongueTargetIsUnavailable(target, claimedTargetIds) {
     return (
       target.latched ||
+      target.tristarCaptorId !== null ||
       target.tongueCaptured ||
       target.paralyzed ||
       target.boostLatchHitboxDisabled ||
+      targetHasBoostLatchReservation(target) ||
       claimedTargetIds.has(target.id)
     );
   }
@@ -11394,9 +13409,11 @@
     game.targets.forEach((target) => {
       if (
         target.latched ||
+        target.tristarCaptorId !== null ||
         target.tongueCaptured ||
         target.paralyzed ||
         target.boostLatchHitboxDisabled ||
+        targetHasBoostLatchReservation(target) ||
         targetHasActiveTongue(target) ||
         !enemyIsHardPrey(target)
       ) {
@@ -11451,9 +13468,11 @@
       target.kind !== ENEMY_TYPES.MEAT &&
       target.health > 0 &&
       !target.latched &&
+      target.tristarCaptorId === null &&
       !target.tongueCaptured &&
       !target.paralyzed &&
       !target.boostLatchHitboxDisabled &&
+      !targetHasBoostLatchReservation(target) &&
       !captureState.claimedTargetIds.has(target.id) &&
       enemyMaximumHealth(target) <= captureState.maximumHealth
     );
@@ -11608,6 +13627,7 @@
       if (!tonguePassengerTargetCanStick(target, captureState)) continue;
       const contact = tonguePassengerContact(points, target);
       if (!contact) continue;
+      clearTristarRelationships(target);
       target.tongueCaptured = true;
       target.paralyzed = true;
       target.movementMode = "tongue-paralyzed";
@@ -11639,6 +13659,7 @@
       tongue.targetId = null;
       return false;
     }
+    clearTristarRelationships(target);
     const targetVelocityX = Number(target.vx) || 0;
     const targetVelocityY = Number(target.vy) || 0;
     const nodeCount = geometry.route.points.length;
@@ -12595,6 +14616,7 @@
   }
 
   function captureTargetForBite(target, biteCount) {
+    clearTristarRelationships(target);
     const mouth = getEatAnimationConeWorldPoints();
     const targetAngle = Math.atan2(
       target.y - mouth.pivotY,
@@ -12633,6 +14655,7 @@
       game.meatTargetCount - consumedMeatCount,
     );
     consumedTargets.forEach((target) => {
+      clearTristarRelationships(target);
       game.targetsEaten += 1;
       const effectCountScale = Math.min(3, target.sizeScale);
       spawnParticles(
@@ -12729,7 +14752,13 @@
     }
     for (let index = game.targets.length - 1; index >= 0; index -= 1) {
       const target = game.targets[index];
-      if (target.tongueCaptured || targetHasActiveTongue(target)) continue;
+      if (
+        target.tristarCaptorId !== null ||
+        target.tongueCaptured ||
+        targetHasActiveTongue(target)
+      ) {
+        continue;
+      }
       if (Number.isFinite(target.boostDropReleaseX)) {
         if (!target.boostDropMovementArmed) {
           const playerDirectedMotion = game.inGround
@@ -15997,8 +18026,2547 @@
     drawMap();
   }
 
+  function tristarArmRoot(target, armIndex, visualScale = 1) {
+    const armAngle =
+      target.angle + armIndex * TAU / TRISTAR_RULES.armCount;
+    const rootDistance = target.radius * 0.5 * visualScale;
+    return {
+      angle: armAngle,
+      x: target.x + Math.cos(armAngle) * rootDistance,
+      y: target.y + Math.sin(armAngle) * rootDistance,
+    };
+  }
+
+  function tristarArmTurnLimit(segmentIndex) {
+    const progress =
+      TRISTAR_RULES.armSegments > 1
+        ? segmentIndex / (TRISTAR_RULES.armSegments - 1)
+        : 1;
+    return lerp(
+      TRISTAR_RULES.firstSegmentTurnLimit,
+      TRISTAR_RULES.lastSegmentTurnLimit,
+      progress,
+    );
+  }
+
+  function tristarArmHeadingsFromPoints(points) {
+    return Array.from(
+      { length: TRISTAR_RULES.armSegments },
+      (_, segmentIndex) => {
+        const start = points[segmentIndex] || points[points.length - 1];
+        const end = points[segmentIndex + 1] || start;
+        return Math.atan2(end.y - start.y, end.x - start.x);
+      },
+    );
+  }
+
+  function initializeTristarFreeArmState(target, armIndex, points = null) {
+    const arm = target.tristarArms?.[armIndex];
+    if (!arm) return;
+    const initialPoints = points || getIdleTristarArmPoints(target, armIndex, 1);
+    arm.freeHeadings = tristarArmHeadingsFromPoints(initialPoints);
+    arm.freeAngularVelocities = Array.from(
+      { length: TRISTAR_RULES.armSegments },
+      () => 0,
+    );
+    arm.freeLastRootAngle = tristarArmRoot(target, armIndex).angle;
+    arm.freeLastVx = Number(target.vx) || 0;
+    arm.freeLastVy = Number(target.vy) || 0;
+  }
+
+  function ensureTristarHeldInertiaBuffers(arm) {
+    const segmentCount = TRISTAR_RULES.armSegments;
+    const ensureNumberBuffer = (buffer) =>
+      buffer?.length === segmentCount
+        ? buffer
+        : new Float64Array(segmentCount);
+    const ensurePointBuffer = (points) =>
+      points?.length === segmentCount + 1 &&
+      points.every((point) => point && typeof point === "object")
+        ? points
+        : Array.from(
+            { length: segmentCount + 1 },
+            () => ({ x: 0, y: 0 }),
+          );
+    arm.heldStartingHeadings = ensureNumberBuffer(
+      arm.heldStartingHeadings,
+    );
+    arm.heldWorkingHeadings = ensureNumberBuffer(
+      arm.heldWorkingHeadings,
+    );
+    arm.heldWorkingAngularVelocities = ensureNumberBuffer(
+      arm.heldWorkingAngularVelocities,
+    );
+    arm.heldPlanTurns = ensureNumberBuffer(arm.heldPlanTurns);
+    arm.heldRawTurns = ensureNumberBuffer(arm.heldRawTurns);
+    arm.heldCandidateTurns = ensureNumberBuffer(arm.heldCandidateTurns);
+    arm.heldPlanPoints = ensurePointBuffer(arm.heldPlanPoints);
+    arm.heldCandidatePoints = ensurePointBuffer(
+      arm.heldCandidatePoints,
+    );
+  }
+
+  function preserveTristarArmDynamics(target, armIndex, points = null) {
+    const arm = target.tristarArms?.[armIndex];
+    if (!arm) return;
+    if (!tristarFreeArmStateIsValid(arm)) {
+      initializeTristarFreeArmState(target, armIndex, points);
+      return;
+    }
+    arm.freeLastRootAngle = tristarArmRoot(target, armIndex).angle;
+    arm.freeLastVx = Number(target.vx) || 0;
+    arm.freeLastVy = Number(target.vy) || 0;
+  }
+
+  function tristarFreeArmStateIsValid(arm) {
+    return Boolean(
+      arm?.freeHeadings?.length === TRISTAR_RULES.armSegments &&
+      arm?.freeAngularVelocities?.length === TRISTAR_RULES.armSegments,
+    );
+  }
+
+  function tristarArmPointsFromRootHeadings(
+    root,
+    headings,
+    visualScale = 1,
+    reusablePoints = null,
+    headingOffset = 0,
+    lengthScale = 1,
+  ) {
+    const points = reusablePoints || Array.from(
+      { length: TRISTAR_RULES.armSegments + 1 },
+      () => ({ x: 0, y: 0 }),
+    );
+    points[0].x = root.x;
+    points[0].y = root.y;
+    const linkLength =
+      TRISTAR_RULES.armLength *
+      visualScale *
+      lengthScale /
+      TRISTAR_RULES.armSegments;
+    let x = root.x;
+    let y = root.y;
+    let parentHeading = root.angle;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const storedHeading = Number(headings?.[segmentIndex]);
+      const desiredHeading = Number.isFinite(storedHeading)
+        ? storedHeading + headingOffset
+        : root.angle;
+      const turnLimit = tristarArmTurnLimit(segmentIndex);
+      const relativeTurn = Math.atan2(
+        Math.sin(desiredHeading - parentHeading),
+        Math.cos(desiredHeading - parentHeading),
+      );
+      const heading =
+        parentHeading + clamp(relativeTurn, -turnLimit, turnLimit);
+      x += Math.cos(heading) * linkLength;
+      y += Math.sin(heading) * linkLength;
+      points[segmentIndex + 1].x = x;
+      points[segmentIndex + 1].y = y;
+      parentHeading = heading;
+    }
+    return points;
+  }
+
+  function tristarArmPointsFromHeadings(
+    target,
+    armIndex,
+    headings,
+    visualScale = 1,
+    lengthScale = 1,
+  ) {
+    return tristarArmPointsFromRootHeadings(
+      tristarArmRoot(target, armIndex, visualScale),
+      headings,
+      visualScale,
+      null,
+      0,
+      lengthScale,
+    );
+  }
+
+  function tristarArmRootAtAngle(target, angle) {
+    const rootDistance = target.radius * 0.5;
+    return {
+      angle,
+      x: target.x + Math.cos(angle) * rootDistance,
+      y: target.y + Math.sin(angle) * rootDistance,
+    };
+  }
+
+  function closestTristarArmSegmentPoints(
+    startA,
+    endA,
+    startB,
+    endB,
+    result,
+  ) {
+    const directionAX = endA.x - startA.x;
+    const directionAY = endA.y - startA.y;
+    const directionBX = endB.x - startB.x;
+    const directionBY = endB.y - startB.y;
+    const offsetX = startA.x - startB.x;
+    const offsetY = startA.y - startB.y;
+    const lengthASquared =
+      directionAX * directionAX + directionAY * directionAY;
+    const lengthBSquared =
+      directionBX * directionBX + directionBY * directionBY;
+    const directionDot =
+      directionAX * directionBX + directionAY * directionBY;
+    const directionAOffset =
+      directionAX * offsetX + directionAY * offsetY;
+    const directionBOffset =
+      directionBX * offsetX + directionBY * offsetY;
+    const denominator =
+      lengthASquared * lengthBSquared - directionDot * directionDot;
+    let amountA = denominator > 0.0000001
+      ? clamp(
+          (directionDot * directionBOffset -
+            directionAOffset * lengthBSquared) /
+            denominator,
+          0,
+          1,
+        )
+      : 0;
+    let amountB = lengthBSquared > 0.0000001
+      ? (directionDot * amountA + directionBOffset) / lengthBSquared
+      : 0;
+    if (amountB < 0) {
+      amountB = 0;
+      amountA = lengthASquared > 0.0000001
+        ? clamp(-directionAOffset / lengthASquared, 0, 1)
+        : 0;
+    } else if (amountB > 1) {
+      amountB = 1;
+      amountA = lengthASquared > 0.0000001
+        ? clamp(
+            (directionDot - directionAOffset) / lengthASquared,
+            0,
+            1,
+          )
+        : 0;
+    }
+    const xA = startA.x + directionAX * amountA;
+    const yA = startA.y + directionAY * amountA;
+    const xB = startB.x + directionBX * amountB;
+    const yB = startB.y + directionBY * amountB;
+    const differenceX = xA - xB;
+    const differenceY = yA - yB;
+    result.amountA = amountA;
+    result.amountB = amountB;
+    result.xA = xA;
+    result.yA = yA;
+    result.xB = xB;
+    result.yB = yB;
+    result.differenceX = differenceX;
+    result.differenceY = differenceY;
+    result.distanceSquared =
+      differenceX * differenceX + differenceY * differenceY;
+    return result;
+  }
+
+  function tristarArmAvoidanceRadius(target, segmentIndex, amount) {
+    const progress = clamp(
+      (segmentIndex + amount) / TRISTAR_RULES.armSegments,
+      0,
+      1,
+    );
+    const taper = Math.pow(
+      Math.max(0, 1 - progress),
+      TRISTAR_RULES.taperExponent,
+    );
+    return Math.max(
+      TRISTAR_RULES.armAvoidanceMinimumRadius,
+      Math.sqrt(3) * target.radius * taper * 0.5,
+    );
+  }
+
+  function tristarArmAvoidanceForceBuffers(target, clear = true) {
+    const buffersAreValid = (buffers) =>
+      buffers?.length === TRISTAR_RULES.armCount &&
+      buffers.every(
+        (buffer) => buffer?.length === TRISTAR_RULES.armSegments,
+      );
+    if (!buffersAreValid(target.tristarAvoidanceForceX)) {
+      target.tristarAvoidanceForceX = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => new Float64Array(TRISTAR_RULES.armSegments),
+      );
+    }
+    if (!buffersAreValid(target.tristarAvoidanceForceY)) {
+      target.tristarAvoidanceForceY = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => new Float64Array(TRISTAR_RULES.armSegments),
+      );
+    }
+    if (!buffersAreValid(target.tristarAvoidanceContactStrength)) {
+      target.tristarAvoidanceContactStrength = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => new Float64Array(TRISTAR_RULES.armSegments),
+      );
+    }
+    if (clear) {
+      target.tristarAvoidanceForceX.forEach((buffer) => buffer.fill(0));
+      target.tristarAvoidanceForceY.forEach((buffer) => buffer.fill(0));
+      target.tristarAvoidanceContactStrength.forEach((buffer) =>
+        buffer.fill(0),
+      );
+    }
+    return {
+      contactStrength: target.tristarAvoidanceContactStrength,
+      forceX: target.tristarAvoidanceForceX,
+      forceY: target.tristarAvoidanceForceY,
+    };
+  }
+
+  function tristarArmAvoidancePointBuffers(target) {
+    const buffersAreValid =
+      target.tristarAvoidancePointSets?.length === TRISTAR_RULES.armCount &&
+      target.tristarAvoidancePointSets.every(
+        (points) =>
+          points?.length === TRISTAR_RULES.armSegments + 1 &&
+          points.every((point) => point && typeof point === "object"),
+      );
+    if (!buffersAreValid) {
+      target.tristarAvoidancePointSets = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => Array.from(
+          { length: TRISTAR_RULES.armSegments + 1 },
+          () => ({ x: 0, y: 0 }),
+        ),
+      );
+    }
+    return target.tristarAvoidancePointSets;
+  }
+
+  function tristarArmAvoidanceBroadRadii(target) {
+    if (
+      target.tristarAvoidanceBroadRadii?.length !==
+      TRISTAR_RULES.armSegments
+    ) {
+      target.tristarAvoidanceBroadRadii = Float64Array.from(
+        { length: TRISTAR_RULES.armSegments },
+        (_, segmentIndex) =>
+          tristarArmAvoidanceRadius(target, segmentIndex, 0),
+      );
+    }
+    return target.tristarAvoidanceBroadRadii;
+  }
+
+  function tristarArmAvoidanceProjectionBuffers(target) {
+    const buffersAreValid = (buffers) =>
+      buffers?.length === TRISTAR_RULES.armCount &&
+      buffers.every(
+        (buffer) => buffer?.length === TRISTAR_RULES.armSegments,
+      );
+    if (!buffersAreValid(target.tristarAvoidanceProjectionTurns)) {
+      target.tristarAvoidanceProjectionTurns = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => new Float64Array(TRISTAR_RULES.armSegments),
+      );
+    }
+    if (!buffersAreValid(target.tristarAvoidanceTurnCorrections)) {
+      target.tristarAvoidanceTurnCorrections = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => new Float64Array(TRISTAR_RULES.armSegments),
+      );
+    }
+    if (!buffersAreValid(target.tristarAvoidanceProjectionStartHeadings)) {
+      target.tristarAvoidanceProjectionStartHeadings = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => new Float64Array(TRISTAR_RULES.armSegments),
+      );
+    }
+    if (
+      target.tristarAvoidanceGradientA?.length !==
+      TRISTAR_RULES.armSegments
+    ) {
+      target.tristarAvoidanceGradientA = new Float64Array(
+        TRISTAR_RULES.armSegments,
+      );
+    }
+    if (
+      target.tristarAvoidanceGradientB?.length !==
+      TRISTAR_RULES.armSegments
+    ) {
+      target.tristarAvoidanceGradientB = new Float64Array(
+        TRISTAR_RULES.armSegments,
+      );
+    }
+    return {
+      corrections: target.tristarAvoidanceTurnCorrections,
+      gradientA: target.tristarAvoidanceGradientA,
+      gradientB: target.tristarAvoidanceGradientB,
+      startHeadings: target.tristarAvoidanceProjectionStartHeadings,
+      turns: target.tristarAvoidanceProjectionTurns,
+    };
+  }
+
+  function deepestTristarArmAvoidanceContact(
+    target,
+    pointsA,
+    pointsB,
+    result,
+  ) {
+    const broadRadii = tristarArmAvoidanceBroadRadii(target);
+    const contact = target.tristarAvoidanceClosestContactScratch || {};
+    target.tristarAvoidanceClosestContactScratch = contact;
+    const coreRadius =
+      target.radius * TRISTAR_RULES.armAvoidanceCoreRadiusScale;
+    const coreRadiusSquared = coreRadius * coreRadius;
+    for (
+      let segmentA = TRISTAR_RULES.armAvoidanceStartSegment;
+      segmentA < TRISTAR_RULES.armSegments;
+      segmentA += 1
+    ) {
+      const minimumAX = Math.min(
+        pointsA[segmentA].x,
+        pointsA[segmentA + 1].x,
+      );
+      const maximumAX = Math.max(
+        pointsA[segmentA].x,
+        pointsA[segmentA + 1].x,
+      );
+      const minimumAY = Math.min(
+        pointsA[segmentA].y,
+        pointsA[segmentA + 1].y,
+      );
+      const maximumAY = Math.max(
+        pointsA[segmentA].y,
+        pointsA[segmentA + 1].y,
+      );
+      for (
+        let segmentB = TRISTAR_RULES.armAvoidanceStartSegment;
+        segmentB < TRISTAR_RULES.armSegments;
+        segmentB += 1
+      ) {
+        const broadClearance =
+          broadRadii[segmentA] +
+          broadRadii[segmentB] +
+          TRISTAR_RULES.armAvoidancePadding;
+        if (
+          maximumAX + broadClearance <
+            Math.min(pointsB[segmentB].x, pointsB[segmentB + 1].x) ||
+          Math.max(pointsB[segmentB].x, pointsB[segmentB + 1].x) +
+              broadClearance <
+            minimumAX ||
+          maximumAY + broadClearance <
+            Math.min(pointsB[segmentB].y, pointsB[segmentB + 1].y) ||
+          Math.max(pointsB[segmentB].y, pointsB[segmentB + 1].y) +
+              broadClearance <
+            minimumAY
+        ) {
+          continue;
+        }
+        closestTristarArmSegmentPoints(
+          pointsA[segmentA],
+          pointsA[segmentA + 1],
+          pointsB[segmentB],
+          pointsB[segmentB + 1],
+          contact,
+        );
+        const centerAX = contact.xA - target.x;
+        const centerAY = contact.yA - target.y;
+        const centerBX = contact.xB - target.x;
+        const centerBY = contact.yB - target.y;
+        if (
+          centerAX * centerAX + centerAY * centerAY <=
+            coreRadiusSquared &&
+          centerBX * centerBX + centerBY * centerBY <= coreRadiusSquared
+        ) {
+          continue;
+        }
+        const clearance =
+          tristarArmAvoidanceRadius(
+            target,
+            segmentA,
+            contact.amountA,
+          ) +
+          tristarArmAvoidanceRadius(
+            target,
+            segmentB,
+            contact.amountB,
+          ) +
+          TRISTAR_RULES.armAvoidancePadding;
+        const distance = Math.sqrt(contact.distanceSquared);
+        const penetration = clearance - distance;
+        if (
+          penetration <= TRISTAR_RULES.armAvoidanceProjectionSlop ||
+          penetration <= (Number(result.penetration) || 0)
+        ) {
+          continue;
+        }
+        let normalX;
+        let normalY;
+        if (distance > 0.0001) {
+          normalX = contact.differenceX / distance;
+          normalY = contact.differenceY / distance;
+        } else {
+          const directionBX =
+            pointsB[segmentB + 1].x - pointsB[segmentB].x;
+          const directionBY =
+            pointsB[segmentB + 1].y - pointsB[segmentB].y;
+          const directionLength = Math.max(
+            0.0001,
+            magnitude(directionBX, directionBY),
+          );
+          normalX = -directionBY / directionLength;
+          normalY = directionBX / directionLength;
+          const rootDifferenceX = pointsA[0].x - pointsB[0].x;
+          const rootDifferenceY = pointsA[0].y - pointsB[0].y;
+          if (
+            normalX * rootDifferenceX + normalY * rootDifferenceY < 0
+          ) {
+            normalX *= -1;
+            normalY *= -1;
+          }
+        }
+        result.penetration = penetration;
+        result.segmentA = segmentA;
+        result.segmentB = segmentB;
+        result.xA = contact.xA;
+        result.yA = contact.yA;
+        result.xB = contact.xB;
+        result.yB = contact.yB;
+        result.normalX = normalX;
+        result.normalY = normalY;
+      }
+    }
+    return result;
+  }
+
+  function accumulateTristarArmProjection(
+    pointsA,
+    turnsA,
+    correctionsA,
+    pointsB,
+    turnsB,
+    correctionsB,
+    contact,
+    projectionBuffers,
+  ) {
+    const gradientA = projectionBuffers.gradientA;
+    const gradientB = projectionBuffers.gradientB;
+    gradientA.fill(0);
+    gradientB.fill(0);
+    let denominator = 1;
+    for (let jointIndex = 0; jointIndex <= contact.segmentA; jointIndex += 1) {
+      const gradient =
+        (contact.xA - pointsA[jointIndex].x) * contact.normalY -
+        (contact.yA - pointsA[jointIndex].y) * contact.normalX;
+      const limit = tristarArmTurnLimit(jointIndex);
+      const turn = turnsA[jointIndex];
+      if (
+        (gradient > 0 && turn >= limit - 0.000001) ||
+        (gradient < 0 && turn <= -limit + 0.000001)
+      ) {
+        continue;
+      }
+      gradientA[jointIndex] = gradient;
+      denominator += gradient * gradient;
+    }
+    if (correctionsB) {
+      for (
+        let jointIndex = 0;
+        jointIndex <= contact.segmentB;
+        jointIndex += 1
+      ) {
+        const gradient =
+          -(
+            (contact.xB - pointsB[jointIndex].x) * contact.normalY -
+            (contact.yB - pointsB[jointIndex].y) * contact.normalX
+          );
+        const limit = tristarArmTurnLimit(jointIndex);
+        const turn = turnsB[jointIndex];
+        if (
+          (gradient > 0 && turn >= limit - 0.000001) ||
+          (gradient < 0 && turn <= -limit + 0.000001)
+        ) {
+          continue;
+        }
+        gradientB[jointIndex] = gradient;
+        denominator += gradient * gradient;
+      }
+    }
+    if (denominator <= 1.000001) return false;
+    const correctionDistance = Math.min(
+      TRISTAR_RULES.armAvoidanceProjectionLinearLimit,
+      contact.penetration - TRISTAR_RULES.armAvoidanceProjectionSlop,
+    );
+    const multiplier =
+      TRISTAR_RULES.armAvoidanceProjectionGain *
+      correctionDistance /
+      denominator;
+    for (let jointIndex = 0; jointIndex <= contact.segmentA; jointIndex += 1) {
+      correctionsA[jointIndex] += gradientA[jointIndex] * multiplier;
+    }
+    if (correctionsB) {
+      for (
+        let jointIndex = 0;
+        jointIndex <= contact.segmentB;
+        jointIndex += 1
+      ) {
+        correctionsB[jointIndex] += gradientB[jointIndex] * multiplier;
+      }
+    }
+    return true;
+  }
+
+  function projectTristarFreeArmSeparation(target, dt) {
+    if (!target.tristarArms) return;
+    const freeArmMask = target.tristarArms.map(tristarArmIsDangling);
+    if (!freeArmMask.some(Boolean)) return;
+    const pointSets = tristarArmAvoidancePointBuffers(target);
+    const projectionBuffers = tristarArmAvoidanceProjectionBuffers(target);
+    freeArmMask.forEach((isFree, armIndex) => {
+      if (!isFree) return;
+      const arm = target.tristarArms[armIndex];
+      projectionBuffers.startHeadings[armIndex].set(arm.freeHeadings);
+    });
+    const contact = target.tristarAvoidanceProjectionContact || {};
+    target.tristarAvoidanceProjectionContact = contact;
+    let projected = false;
+
+    for (
+      let iteration = 0;
+      iteration < TRISTAR_RULES.armAvoidanceProjectionIterations;
+      iteration += 1
+    ) {
+      target.tristarArms.forEach((arm, armIndex) => {
+        if (freeArmMask[armIndex]) {
+          tristarArmPointsFromRootHeadings(
+            tristarArmRoot(target, armIndex),
+            arm.freeHeadings,
+            1,
+            pointSets[armIndex],
+            0,
+            resolvedTristarArmLengthScale(arm),
+          );
+          const turns = projectionBuffers.turns[armIndex];
+          let parentHeading = tristarArmRoot(target, armIndex).angle;
+          for (
+            let segmentIndex = 0;
+            segmentIndex < TRISTAR_RULES.armSegments;
+            segmentIndex += 1
+          ) {
+            const turnLimit = tristarArmTurnLimit(segmentIndex);
+            const turn = clamp(
+              Math.atan2(
+                Math.sin(arm.freeHeadings[segmentIndex] - parentHeading),
+                Math.cos(arm.freeHeadings[segmentIndex] - parentHeading),
+              ),
+              -turnLimit,
+              turnLimit,
+            );
+            turns[segmentIndex] = turn;
+            parentHeading += turn;
+          }
+          return;
+        }
+        const points = getTristarArmPoints(target, armIndex);
+        for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+          pointSets[armIndex][pointIndex].x = points[pointIndex].x;
+          pointSets[armIndex][pointIndex].y = points[pointIndex].y;
+        }
+      });
+      projectionBuffers.corrections.forEach((buffer) => buffer.fill(0));
+      let foundContact = false;
+
+      for (
+        let armA = 0;
+        armA < TRISTAR_RULES.armCount - 1;
+        armA += 1
+      ) {
+        for (
+          let armB = armA + 1;
+          armB < TRISTAR_RULES.armCount;
+          armB += 1
+        ) {
+          if (!freeArmMask[armA] && !freeArmMask[armB]) continue;
+          contact.penetration = 0;
+          if (!freeArmMask[armA]) {
+            deepestTristarArmAvoidanceContact(
+              target,
+              pointSets[armB],
+              pointSets[armA],
+              contact,
+            );
+            if (
+              contact.penetration > TRISTAR_RULES.armAvoidanceProjectionSlop
+            ) {
+              foundContact =
+                accumulateTristarArmProjection(
+                  pointSets[armB],
+                  projectionBuffers.turns[armB],
+                  projectionBuffers.corrections[armB],
+                  pointSets[armA],
+                  null,
+                  null,
+                  contact,
+                  projectionBuffers,
+                ) || foundContact;
+            }
+            continue;
+          }
+          deepestTristarArmAvoidanceContact(
+            target,
+            pointSets[armA],
+            pointSets[armB],
+            contact,
+          );
+          if (
+            contact.penetration <= TRISTAR_RULES.armAvoidanceProjectionSlop
+          ) {
+            continue;
+          }
+          foundContact =
+            accumulateTristarArmProjection(
+              pointSets[armA],
+              projectionBuffers.turns[armA],
+              projectionBuffers.corrections[armA],
+              pointSets[armB],
+              freeArmMask[armB]
+                ? projectionBuffers.turns[armB]
+                : null,
+              freeArmMask[armB]
+                ? projectionBuffers.corrections[armB]
+                : null,
+              contact,
+              projectionBuffers,
+            ) || foundContact;
+        }
+      }
+      if (!foundContact) break;
+
+      freeArmMask.forEach((isFree, armIndex) => {
+        if (!isFree) return;
+        const arm = target.tristarArms[armIndex];
+        const turns = projectionBuffers.turns[armIndex];
+        const corrections = projectionBuffers.corrections[armIndex];
+        let parentHeading = tristarArmRoot(target, armIndex).angle;
+        for (
+          let segmentIndex = 0;
+          segmentIndex < TRISTAR_RULES.armSegments;
+          segmentIndex += 1
+        ) {
+          const turnLimit = tristarArmTurnLimit(segmentIndex);
+          const turnCorrection = clamp(
+            corrections[segmentIndex],
+            -TRISTAR_RULES.armAvoidanceProjectionAngularLimit,
+            TRISTAR_RULES.armAvoidanceProjectionAngularLimit,
+          );
+          const nextTurn = clamp(
+            turns[segmentIndex] + turnCorrection,
+            -turnLimit,
+            turnLimit,
+          );
+          parentHeading += nextTurn;
+          arm.freeHeadings[segmentIndex] = parentHeading;
+        }
+      });
+      projected = true;
+    }
+
+    if (!projected) return;
+    const velocityTime = Math.max(dt, 1 / 120);
+    freeArmMask.forEach((isFree, armIndex) => {
+      if (!isFree) return;
+      const arm = target.tristarArms[armIndex];
+      for (
+        let segmentIndex = 0;
+        segmentIndex < TRISTAR_RULES.armSegments;
+        segmentIndex += 1
+      ) {
+        const headingDelta = Math.atan2(
+          Math.sin(
+            arm.freeHeadings[segmentIndex] -
+              projectionBuffers.startHeadings[armIndex][segmentIndex],
+          ),
+          Math.cos(
+            arm.freeHeadings[segmentIndex] -
+              projectionBuffers.startHeadings[armIndex][segmentIndex],
+          ),
+        );
+        const angularVelocity =
+          Number(arm.freeAngularVelocities[segmentIndex]) || 0;
+        if (headingDelta * angularVelocity < 0) {
+          arm.freeAngularVelocities[segmentIndex] = 0;
+        } else if (Math.abs(headingDelta) > 0.000001) {
+          arm.freeAngularVelocities[segmentIndex] = clamp(
+            headingDelta / velocityTime,
+            -TRISTAR_RULES.freeArmMaximumAngularSpeed,
+            TRISTAR_RULES.freeArmMaximumAngularSpeed,
+          );
+        }
+      }
+    });
+  }
+
+  function accumulateTristarArmAvoidanceForces(
+    target,
+    pointSets,
+    freeArmMask,
+    options = {},
+  ) {
+    const buffers = tristarArmAvoidanceForceBuffers(
+      target,
+      options.clear !== false,
+    );
+    const contact = {};
+    const broadRadii = tristarArmAvoidanceBroadRadii(target);
+    const coreRadius =
+      target.radius * TRISTAR_RULES.armAvoidanceCoreRadiusScale;
+    const coreRadiusSquared = coreRadius * coreRadius;
+    for (
+      let armA = 0;
+      armA < TRISTAR_RULES.armCount - 1;
+      armA += 1
+    ) {
+      for (
+        let armB = armA + 1;
+        armB < TRISTAR_RULES.armCount;
+        armB += 1
+      ) {
+        if (!freeArmMask[armA] && !freeArmMask[armB]) continue;
+        if (
+          options.heldFreeOnly &&
+          freeArmMask[armA] === freeArmMask[armB]
+        ) {
+          continue;
+        }
+        const pointsA = pointSets[armA];
+        const pointsB = pointSets[armB];
+        if (!pointsA?.length || !pointsB?.length) continue;
+        for (
+          let segmentA = TRISTAR_RULES.armAvoidanceStartSegment;
+          segmentA < TRISTAR_RULES.armSegments;
+          segmentA += 1
+        ) {
+          const minimumAX = Math.min(
+            pointsA[segmentA].x,
+            pointsA[segmentA + 1].x,
+          );
+          const maximumAX = Math.max(
+            pointsA[segmentA].x,
+            pointsA[segmentA + 1].x,
+          );
+          const minimumAY = Math.min(
+            pointsA[segmentA].y,
+            pointsA[segmentA + 1].y,
+          );
+          const maximumAY = Math.max(
+            pointsA[segmentA].y,
+            pointsA[segmentA + 1].y,
+          );
+          for (
+            let segmentB = TRISTAR_RULES.armAvoidanceStartSegment;
+            segmentB < TRISTAR_RULES.armSegments;
+            segmentB += 1
+          ) {
+            const broadClearance =
+              broadRadii[segmentA] +
+              broadRadii[segmentB] +
+              TRISTAR_RULES.armAvoidancePadding;
+            if (
+              maximumAX + broadClearance <
+                Math.min(pointsB[segmentB].x, pointsB[segmentB + 1].x) ||
+              Math.max(pointsB[segmentB].x, pointsB[segmentB + 1].x) +
+                  broadClearance <
+                minimumAX ||
+              maximumAY + broadClearance <
+                Math.min(pointsB[segmentB].y, pointsB[segmentB + 1].y) ||
+              Math.max(pointsB[segmentB].y, pointsB[segmentB + 1].y) +
+                  broadClearance <
+                minimumAY
+            ) {
+              continue;
+            }
+            closestTristarArmSegmentPoints(
+              pointsA[segmentA],
+              pointsA[segmentA + 1],
+              pointsB[segmentB],
+              pointsB[segmentB + 1],
+              contact,
+            );
+            const contactAFromCenterX = contact.xA - target.x;
+            const contactAFromCenterY = contact.yA - target.y;
+            const contactBFromCenterX = contact.xB - target.x;
+            const contactBFromCenterY = contact.yB - target.y;
+            if (
+              contactAFromCenterX * contactAFromCenterX +
+                  contactAFromCenterY * contactAFromCenterY <=
+                coreRadiusSquared &&
+              contactBFromCenterX * contactBFromCenterX +
+                  contactBFromCenterY * contactBFromCenterY <=
+                coreRadiusSquared
+            ) {
+              continue;
+            }
+            const clearance =
+              tristarArmAvoidanceRadius(
+                target,
+                segmentA,
+                contact.amountA,
+              ) +
+              tristarArmAvoidanceRadius(
+                target,
+                segmentB,
+                contact.amountB,
+              ) +
+              TRISTAR_RULES.armAvoidancePadding;
+            if (contact.distanceSquared >= clearance * clearance) continue;
+
+            const distance = Math.sqrt(contact.distanceSquared);
+            let normalX;
+            let normalY;
+            if (distance > 0.0001) {
+              normalX = contact.differenceX / distance;
+              normalY = contact.differenceY / distance;
+            } else {
+              const rootDifferenceX = pointsA[0].x - pointsB[0].x;
+              const rootDifferenceY = pointsA[0].y - pointsB[0].y;
+              const rootDistance = Math.max(
+                0.0001,
+                magnitude(rootDifferenceX, rootDifferenceY),
+              );
+              normalX = rootDifferenceX / rootDistance;
+              normalY = rootDifferenceY / rootDistance;
+            }
+
+            const directionAX =
+              pointsA[segmentA + 1].x - pointsA[segmentA].x;
+            const directionAY =
+              pointsA[segmentA + 1].y - pointsA[segmentA].y;
+            const directionBX =
+              pointsB[segmentB + 1].x - pointsB[segmentB].x;
+            const directionBY =
+              pointsB[segmentB + 1].y - pointsB[segmentB].y;
+            const turnResponse =
+              Math.abs(directionAX * normalY - directionAY * normalX) +
+              Math.abs(directionBX * normalY - directionBY * normalX);
+            if (turnResponse < 0.04) {
+              const side =
+                Math.sin((armB - armA) * TAU / TRISTAR_RULES.armCount) < 0
+                  ? -1
+                  : 1;
+              const angle = side * 0.14;
+              const cosine = Math.cos(angle);
+              const sine = Math.sin(angle);
+              const rotatedX = normalX * cosine - normalY * sine;
+              normalY = normalX * sine + normalY * cosine;
+              normalX = rotatedX;
+            }
+
+            const penetration = clamp(1 - distance / clearance, 0, 1);
+            const smoothPenetration =
+              penetration * penetration * (3 - 2 * penetration);
+            const force = 0.28 + smoothPenetration * 0.72;
+            const forceX = normalX * force;
+            const forceY = normalY * force;
+            buffers.forceX[armA][segmentA] += forceX;
+            buffers.forceY[armA][segmentA] += forceY;
+            buffers.forceX[armB][segmentB] -= forceX;
+            buffers.forceY[armB][segmentB] -= forceY;
+            buffers.contactStrength[armA][segmentA] = Math.max(
+              buffers.contactStrength[armA][segmentA],
+              smoothPenetration,
+            );
+            buffers.contactStrength[armB][segmentB] = Math.max(
+              buffers.contactStrength[armB][segmentB],
+              smoothPenetration,
+            );
+          }
+        }
+      }
+    }
+    return buffers;
+  }
+
+  function tristarArmAvoidanceAtJoint(
+    points,
+    forceX,
+    forceY,
+    segmentContactStrength,
+    jointIndex,
+    result,
+  ) {
+    const joint = points[jointIndex];
+    let torque = 0;
+    let contactStrength = 0;
+    for (
+      let segmentIndex = jointIndex;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const segmentForceX = forceX[segmentIndex];
+      const segmentForceY = forceY[segmentIndex];
+      contactStrength = Math.max(
+        contactStrength,
+        Number(segmentContactStrength?.[segmentIndex]) || 0,
+      );
+      if (segmentForceX === 0 && segmentForceY === 0) continue;
+      const forcePointX =
+        (points[segmentIndex].x + points[segmentIndex + 1].x) * 0.5;
+      const forcePointY =
+        (points[segmentIndex].y + points[segmentIndex + 1].y) * 0.5;
+      const contactTorque =
+        (forcePointX - joint.x) * segmentForceY -
+        (forcePointY - joint.y) * segmentForceX;
+      if (Math.abs(contactTorque) > Math.abs(torque)) {
+        torque = contactTorque;
+      }
+    }
+    result.contactStrength = contactStrength;
+    result.torque = clamp(torque / TRISTAR_RULES.armLength, -1, 1);
+    return result;
+  }
+
+  function tristarArmGravity(target) {
+    return target?.regionType === BLOCK_TYPES.GROUND
+      ? 0
+      : TRISTAR_RULES.freeArmGravity;
+  }
+
+  function updateTristarFreeArms(target, dt) {
+    if (!(dt > 0) || !target.tristarArms) return;
+    const substeps = clamp(
+      Math.ceil(dt / TRISTAR_RULES.freeArmMaximumSubstep),
+      1,
+      12,
+    );
+    const stepTime = dt / substeps;
+    const armMotions = target.tristarArms.map((arm, armIndex) => {
+      if (!tristarArmIsDangling(arm)) return null;
+      arm.lengthScale = moveToward(
+        resolvedTristarArmLengthScale(arm),
+        1,
+        (TRISTAR_RULES.preyReachMaximumStretch - 1) /
+          TRISTAR_RULES.freeArmStretchRecoveryDuration *
+          dt,
+      );
+      if (!tristarFreeArmStateIsValid(arm)) {
+        initializeTristarFreeArmState(target, armIndex);
+      }
+      const endRootAngle = tristarArmRoot(target, armIndex).angle;
+      const startRootAngle = Number.isFinite(arm.freeLastRootAngle)
+        ? arm.freeLastRootAngle
+        : endRootAngle;
+      const rootAngleDelta = Math.atan2(
+        Math.sin(endRootAngle - startRootAngle),
+        Math.cos(endRootAngle - startRootAngle),
+      );
+      const rootAngularVelocity = clamp(
+        rootAngleDelta / dt,
+        -TRISTAR_RULES.freeArmMaximumAngularSpeed,
+        TRISTAR_RULES.freeArmMaximumAngularSpeed,
+      );
+      const endVx = Number(target.vx) || 0;
+      const endVy = Number(target.vy) || 0;
+      const startVx = Number(arm.freeLastVx) || 0;
+      const startVy = Number(arm.freeLastVy) || 0;
+      const accelerationX = (endVx - startVx) / dt;
+      const accelerationY = (endVy - startVy) / dt;
+      return {
+        accelerationX,
+        accelerationY,
+        endRootAngle,
+        endVx,
+        endVy,
+        rootAngleDelta,
+        rootAngularVelocity,
+        startRootAngle,
+        startVx,
+        startVy,
+      };
+    });
+    const freeArmMask = armMotions.map(Boolean);
+    if (!freeArmMask.some(Boolean)) return;
+    const commonRootAngleDelta =
+      armMotions.find((motion) => motion)?.rootAngleDelta || 0;
+    const heldArmHeadings = target.tristarArms.map((arm, armIndex) =>
+      tristarArmIsConstrained(arm)
+        ? tristarArmHeadingsFromPoints(
+            getTristarArmPoints(target, armIndex),
+          )
+        : null,
+    );
+    const pointSets = tristarArmAvoidancePointBuffers(target);
+    const jointAvoidance = { contactStrength: 0, torque: 0 };
+    const pulseMuscleStrength = tristarPulseMuscleStrength(target);
+    const armGravity = tristarArmGravity(target);
+
+    for (let substep = 0; substep < substeps; substep += 1) {
+      const progress = (substep + 1) / substeps;
+      target.tristarArms.forEach((arm, armIndex) => {
+        const motion = armMotions[armIndex];
+        if (motion) {
+          const rootAngle =
+            motion.startRootAngle + motion.rootAngleDelta * progress;
+          tristarArmPointsFromRootHeadings(
+            tristarArmRootAtAngle(target, rootAngle),
+            arm.freeHeadings,
+            1,
+            pointSets[armIndex],
+            0,
+            resolvedTristarArmLengthScale(arm),
+          );
+          return;
+        }
+        const endRootAngle = tristarArmRoot(target, armIndex).angle;
+        const angleOffset = commonRootAngleDelta * (progress - 1);
+        tristarArmPointsFromRootHeadings(
+          tristarArmRootAtAngle(target, endRootAngle + angleOffset),
+          heldArmHeadings[armIndex],
+          1,
+          pointSets[armIndex],
+          angleOffset,
+          resolvedTristarArmLengthScale(arm),
+        );
+      });
+      const avoidanceForces = accumulateTristarArmAvoidanceForces(
+        target,
+        pointSets,
+        freeArmMask,
+      );
+      target.tristarArms.forEach((arm, armIndex) => {
+        const motion = armMotions[armIndex];
+        if (!motion) return;
+        const pulseFanHeading = tristarPulseRearFanHeading(
+          target,
+          armIndex,
+        );
+        const rootAngle =
+          motion.startRootAngle + motion.rootAngleDelta * progress;
+        const velocityX = lerp(motion.startVx, motion.endVx, progress);
+        const velocityY = lerp(motion.startVy, motion.endVy, progress);
+        const flowX =
+          -velocityX * TRISTAR_RULES.freeArmSoilDrag -
+          motion.accelerationX * TRISTAR_RULES.freeArmAccelerationInfluence;
+        const flowY =
+          armGravity -
+          velocityY * TRISTAR_RULES.freeArmSoilDrag -
+          motion.accelerationY * TRISTAR_RULES.freeArmAccelerationInfluence;
+        const flowMagnitude = magnitude(flowX, flowY);
+        const flowAngle = flowMagnitude > 0.0001
+          ? Math.atan2(flowY, flowX)
+          : rootAngle;
+        const flowStrength = clamp(
+          flowMagnitude /
+            Math.max(
+              1,
+              TRISTAR_RULES.maximumSpeed * TRISTAR_RULES.freeArmSoilDrag,
+            ),
+          0,
+          1,
+        );
+        let parentHeading = rootAngle;
+        let parentAngularVelocity = motion.rootAngularVelocity;
+
+        for (
+          let segmentIndex = 0;
+          segmentIndex < TRISTAR_RULES.armSegments;
+          segmentIndex += 1
+        ) {
+          let heading =
+            parentHeading +
+            Math.atan2(
+              Math.sin(arm.freeHeadings[segmentIndex] - parentHeading),
+              Math.cos(arm.freeHeadings[segmentIndex] - parentHeading),
+            );
+          let angularVelocity =
+            Number(arm.freeAngularVelocities[segmentIndex]) || 0;
+          let flowError = Math.atan2(
+            Math.sin(flowAngle - heading),
+            Math.cos(flowAngle - heading),
+          );
+          if (Math.abs(Math.abs(flowError) - Math.PI) < 0.0001) {
+            flowError = arm.curlDirection * Math.PI;
+          }
+          const torqueError = clamp(
+            flowError,
+            -Math.PI / 2,
+            Math.PI / 2,
+          );
+          const distalWeight = lerp(
+            0.35,
+            1,
+            (segmentIndex + 1) / TRISTAR_RULES.armSegments,
+          );
+          const relativeAngularVelocity =
+            angularVelocity - parentAngularVelocity;
+          const avoidance = tristarArmAvoidanceAtJoint(
+            pointSets[armIndex],
+            avoidanceForces.forceX[armIndex],
+            avoidanceForces.forceY[armIndex],
+            avoidanceForces.contactStrength[armIndex],
+            segmentIndex,
+            jointAvoidance,
+          );
+          const separationError = clamp(
+            Math.atan2(
+              Math.sin(rootAngle - heading),
+              Math.cos(rootAngle - heading),
+            ),
+            -Math.PI / 2,
+            Math.PI / 2,
+          );
+          const pulseFanError = clamp(
+            Math.atan2(
+              Math.sin(pulseFanHeading - heading),
+              Math.cos(pulseFanHeading - heading),
+            ),
+            -Math.PI / 2,
+            Math.PI / 2,
+          );
+          const angularAcceleration =
+            torqueError *
+              TRISTAR_RULES.freeArmAngularAcceleration *
+              flowStrength *
+              distalWeight *
+              (1 - avoidance.contactStrength) +
+            pulseFanError *
+              TRISTAR_RULES.pulseRearFanAngularAcceleration *
+              pulseMuscleStrength *
+              distalWeight *
+              (1 - avoidance.contactStrength) -
+            relativeAngularVelocity *
+              (TRISTAR_RULES.freeArmAngularDamping +
+                avoidance.contactStrength *
+                  TRISTAR_RULES.freeArmAvoidanceAngularDamping) +
+            avoidance.torque *
+              TRISTAR_RULES.freeArmAvoidanceAngularAcceleration +
+            separationError *
+              avoidance.contactStrength *
+              TRISTAR_RULES.freeArmAvoidanceSeparationAcceleration;
+          angularVelocity = clamp(
+            angularVelocity + angularAcceleration * stepTime,
+            -TRISTAR_RULES.freeArmMaximumAngularSpeed,
+            TRISTAR_RULES.freeArmMaximumAngularSpeed,
+          );
+          if (avoidance.contactStrength > 0) {
+            const avoidanceDirection = Math.abs(avoidance.torque) > 0.0001
+              ? Math.sign(avoidance.torque)
+              : Math.sign(separationError);
+            const separationAngularVelocity =
+              avoidanceDirection *
+              TRISTAR_RULES.freeArmMaximumAngularSpeed;
+            angularVelocity = lerp(
+              angularVelocity,
+              separationAngularVelocity,
+              clamp(avoidance.contactStrength * 1.4, 0, 1),
+            );
+          }
+          heading += angularVelocity * stepTime;
+
+          const turnLimit = tristarArmTurnLimit(segmentIndex);
+          const unconstrainedTurn = Math.atan2(
+            Math.sin(heading - parentHeading),
+            Math.cos(heading - parentHeading),
+          );
+          const constrainedTurn = clamp(
+            unconstrainedTurn,
+            -turnLimit,
+            turnLimit,
+          );
+          if (
+            (unconstrainedTurn > turnLimit &&
+              angularVelocity > parentAngularVelocity) ||
+            (unconstrainedTurn < -turnLimit &&
+              angularVelocity < parentAngularVelocity)
+          ) {
+            angularVelocity = parentAngularVelocity;
+          }
+          heading = parentHeading + constrainedTurn;
+          arm.freeHeadings[segmentIndex] = heading;
+          arm.freeAngularVelocities[segmentIndex] = angularVelocity;
+          parentHeading = heading;
+          parentAngularVelocity = angularVelocity;
+        }
+      });
+    }
+
+    target.tristarArms.forEach((arm, armIndex) => {
+      const motion = armMotions[armIndex];
+      if (!motion) return;
+      arm.freeLastRootAngle = motion.endRootAngle;
+      arm.freeLastVx = motion.endVx;
+      arm.freeLastVy = motion.endVy;
+    });
+  }
+
+  function tristarArmTurnsFromPoints(target, armIndex, points) {
+    const root = tristarArmRoot(target, armIndex);
+    const turns = [];
+    let previousAngle = root.angle;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const start = points[segmentIndex] || points[points.length - 1] || root;
+      const end = points[segmentIndex + 1] || start;
+      const heading = Math.atan2(end.y - start.y, end.x - start.x);
+      const turn = Math.atan2(
+        Math.sin(heading - previousAngle),
+        Math.cos(heading - previousAngle),
+      );
+      const limit = tristarArmTurnLimit(segmentIndex);
+      turns.push(clamp(turn, -limit, limit));
+      previousAngle += turns[segmentIndex];
+    }
+    return turns;
+  }
+
+  function tristarArmPointsFromTurns(
+    target,
+    armIndex,
+    turns,
+    visualScale = 1,
+    lengthScale = 1,
+  ) {
+    const root = tristarArmRoot(target, armIndex, visualScale);
+    const points = [{ x: root.x, y: root.y }];
+    const linkLength =
+      TRISTAR_RULES.armLength *
+      visualScale *
+      lengthScale /
+      TRISTAR_RULES.armSegments;
+    let x = root.x;
+    let y = root.y;
+    let angle = root.angle;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const limit = tristarArmTurnLimit(segmentIndex);
+      angle += clamp(
+        Number(turns?.[segmentIndex]) || 0,
+        -limit,
+        limit,
+      );
+      x += Math.cos(angle) * linkLength;
+      y += Math.sin(angle) * linkLength;
+      points.push({ x, y });
+    }
+    return points;
+  }
+
+  function fillTristarArmPointsFromTurns(
+    target,
+    armIndex,
+    turns,
+    points,
+    visualScale = 1,
+    lengthScale = 1,
+  ) {
+    const root = tristarArmRoot(target, armIndex, visualScale);
+    points[0].x = root.x;
+    points[0].y = root.y;
+    const linkLength =
+      TRISTAR_RULES.armLength *
+      visualScale *
+      lengthScale /
+      TRISTAR_RULES.armSegments;
+    let x = root.x;
+    let y = root.y;
+    let angle = root.angle;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const limit = tristarArmTurnLimit(segmentIndex);
+      angle += clamp(
+        Number(turns?.[segmentIndex]) || 0,
+        -limit,
+        limit,
+      );
+      x += Math.cos(angle) * linkLength;
+      y += Math.sin(angle) * linkLength;
+      points[segmentIndex + 1].x = x;
+      points[segmentIndex + 1].y = y;
+    }
+    return points;
+  }
+
+  function tristarReachTurnProgress(latchProgress, segmentIndex) {
+    const maximumDelay = clamp(
+      TRISTAR_RULES.preyReachDistalTurnDelayProgress,
+      0,
+      0.9,
+    );
+    const segmentAmount =
+      TRISTAR_RULES.armSegments > 1
+        ? segmentIndex / (TRISTAR_RULES.armSegments - 1)
+        : 1;
+    const delay = maximumDelay * segmentAmount;
+    return easedTristarArmProgress(
+      clamp((latchProgress - delay) / Math.max(0.0001, 1 - delay), 0, 1),
+    );
+  }
+
+  function fillTristarArmPlanTurns(
+    arm,
+    turns,
+    latchProgress = arm?.latchProgress,
+    pullProgress = arm?.pullProgress,
+  ) {
+    const resolvedLatchProgress = clamp(
+      Number(latchProgress) || 0,
+      0,
+      1,
+    );
+    const pulling = resolvedLatchProgress >= 1;
+    const pullAmount = easedTristarArmProgress(
+      Number(pullProgress) || 0,
+    );
+    const startTurns = pulling
+      ? arm.latchTargetTurns
+      : arm.latchStartTurns;
+    const endTurns = pulling
+      ? arm.curlTargetTurns
+      : arm.latchTargetTurns;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const progress = pulling
+        ? pullAmount
+        : tristarReachTurnProgress(
+            resolvedLatchProgress,
+            segmentIndex,
+          );
+      turns[segmentIndex] = lerp(
+        Number(startTurns?.[segmentIndex]) || 0,
+        Number(endTurns?.[segmentIndex]) || 0,
+        progress,
+      );
+    }
+    return turns;
+  }
+
+  function fillTristarArmTurnsFromHeadings(
+    target,
+    armIndex,
+    headings,
+    turns,
+  ) {
+    let parentHeading = tristarArmRoot(target, armIndex).angle;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const limit = tristarArmTurnLimit(segmentIndex);
+      const heading = Number(headings?.[segmentIndex]);
+      const turn = Number.isFinite(heading)
+        ? Math.atan2(
+            Math.sin(heading - parentHeading),
+            Math.cos(heading - parentHeading),
+          )
+        : 0;
+      turns[segmentIndex] = clamp(turn, -limit, limit);
+      parentHeading += turns[segmentIndex];
+    }
+    return turns;
+  }
+
+  function fillTristarArmHeadingsFromPoints(points, headings) {
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      headings[segmentIndex] = Math.atan2(
+        points[segmentIndex + 1].y - points[segmentIndex].y,
+        points[segmentIndex + 1].x - points[segmentIndex].x,
+      );
+    }
+    return headings;
+  }
+
+  function repairTristarHeldArmEndpoint(
+    target,
+    armIndex,
+    arm,
+    turns,
+    points,
+    goalX,
+    goalY,
+    lengthScale = 1,
+  ) {
+    fillTristarArmPointsFromTurns(
+      target,
+      armIndex,
+      turns,
+      points,
+      1,
+      lengthScale,
+    );
+    const endOffsetAngle = Number(arm.preyOffsetAngle) || 0;
+    const endOffsetDistance = Math.max(
+      0,
+      Number(arm.preyOffsetDistance) || 0,
+    );
+    let tip = points[TRISTAR_RULES.armSegments];
+    let previousTip = points[TRISTAR_RULES.armSegments - 1];
+    let tipHeading = Math.atan2(
+      tip.y - previousTip.y,
+      tip.x - previousTip.x,
+    );
+    let effectorX =
+      tip.x + Math.cos(tipHeading + endOffsetAngle) * endOffsetDistance;
+    let effectorY =
+      tip.y + Math.sin(tipHeading + endOffsetAngle) * endOffsetDistance;
+
+    for (
+      let pass = 0;
+      pass < TRISTAR_RULES.heldArmEndpointPasses;
+      pass += 1
+    ) {
+      for (
+        let segmentIndex = TRISTAR_RULES.armSegments - 1;
+        segmentIndex >= 0;
+        segmentIndex -= 1
+      ) {
+        const pivot = points[segmentIndex];
+        const effectorAngle = Math.atan2(
+          effectorY - pivot.y,
+          effectorX - pivot.x,
+        );
+        const goalAngle = Math.atan2(goalY - pivot.y, goalX - pivot.x);
+        const angleDelta = Math.atan2(
+          Math.sin(goalAngle - effectorAngle),
+          Math.cos(goalAngle - effectorAngle),
+        );
+        const limit = tristarArmTurnLimit(segmentIndex);
+        const oldTurn = turns[segmentIndex];
+        const nextTurn = clamp(oldTurn + angleDelta, -limit, limit);
+        const appliedTurn = nextTurn - oldTurn;
+        if (Math.abs(appliedTurn) <= 0.0000001) continue;
+        turns[segmentIndex] = nextTurn;
+        const cosine = Math.cos(appliedTurn);
+        const sine = Math.sin(appliedTurn);
+        for (
+          let pointIndex = segmentIndex + 1;
+          pointIndex < points.length;
+          pointIndex += 1
+        ) {
+          const offsetX = points[pointIndex].x - pivot.x;
+          const offsetY = points[pointIndex].y - pivot.y;
+          points[pointIndex].x =
+            pivot.x + offsetX * cosine - offsetY * sine;
+          points[pointIndex].y =
+            pivot.y + offsetX * sine + offsetY * cosine;
+        }
+        const effectorOffsetX = effectorX - pivot.x;
+        const effectorOffsetY = effectorY - pivot.y;
+        effectorX =
+          pivot.x + effectorOffsetX * cosine - effectorOffsetY * sine;
+        effectorY =
+          pivot.y + effectorOffsetX * sine + effectorOffsetY * cosine;
+      }
+      if (
+        magnitude(effectorX - goalX, effectorY - goalY) <=
+        TRISTAR_RULES.tipIkTolerance
+      ) {
+        break;
+      }
+    }
+    return magnitude(effectorX - goalX, effectorY - goalY);
+  }
+
+  function tristarArmTurnDistance(firstTurns, secondTurns) {
+    let totalSquared = 0;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const difference = Math.atan2(
+        Math.sin(
+          (Number(firstTurns?.[segmentIndex]) || 0) -
+            (Number(secondTurns?.[segmentIndex]) || 0),
+        ),
+        Math.cos(
+          (Number(firstTurns?.[segmentIndex]) || 0) -
+            (Number(secondTurns?.[segmentIndex]) || 0),
+        ),
+      );
+      totalSquared += difference * difference;
+    }
+    return Math.sqrt(totalSquared / TRISTAR_RULES.armSegments);
+  }
+
+  function easedTristarArmProgress(progress) {
+    const amount = clamp(progress, 0, 1);
+    return amount * amount * (3 - 2 * amount);
+  }
+
+  function prepareTristarHeldArmCandidate(target, armIndex, factor) {
+    const arm = target.tristarArms[armIndex];
+    const turns = arm.heldCandidateTurns;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      turns[segmentIndex] = lerp(
+        arm.heldPlanTurns[segmentIndex],
+        arm.heldRawTurns[segmentIndex],
+        factor,
+      );
+    }
+    if (factor <= 0) {
+      fillTristarArmPointsFromTurns(
+        target,
+        armIndex,
+        turns,
+        arm.heldCandidatePoints,
+        1,
+        resolvedTristarArmLengthScale(arm),
+      );
+      return true;
+    }
+    const endpointIsValid =
+      repairTristarHeldArmEndpoint(
+        target,
+        armIndex,
+        arm,
+        turns,
+        arm.heldCandidatePoints,
+        arm.heldPlanEffectorX,
+        arm.heldPlanEffectorY,
+        resolvedTristarArmLengthScale(arm),
+      ) <= TRISTAR_RULES.tipIkTolerance;
+    if (!endpointIsValid) return false;
+    const maximumDeviationSquared =
+      TRISTAR_RULES.heldArmMaximumPlanDeviation ** 2;
+    for (
+      let pointIndex = 1;
+      pointIndex < arm.heldCandidatePoints.length;
+      pointIndex += 1
+    ) {
+      const dx =
+        arm.heldCandidatePoints[pointIndex].x -
+        arm.heldPlanPoints[pointIndex].x;
+      const dy =
+        arm.heldCandidatePoints[pointIndex].y -
+        arm.heldPlanPoints[pointIndex].y;
+      if (dx * dx + dy * dy > maximumDeviationSquared) return false;
+    }
+    return true;
+  }
+
+  function updateTristarHeldArmInertia(target, dt) {
+    if (!(dt > 0) || !target.tristarArms) return;
+    if (target.tristarHeldArmMask?.length !== TRISTAR_RULES.armCount) {
+      target.tristarHeldArmMask = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => false,
+      );
+    }
+    const heldMask = target.tristarHeldArmMask;
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      heldMask[armIndex] = Boolean(target.tristarArms[armIndex].prey);
+    }
+    if (!heldMask.some(Boolean)) return;
+    const substeps = clamp(
+      Math.ceil(dt / TRISTAR_RULES.freeArmMaximumSubstep),
+      1,
+      12,
+    );
+    const stepTime = dt / substeps;
+    const armGravity = tristarArmGravity(target);
+
+    target.tristarArms.forEach((arm, armIndex) => {
+      if (!heldMask[armIndex]) return;
+      ensureTristarHeldInertiaBuffers(arm);
+      arm.lengthScale = tristarHeldArmLengthScaleAtProgress(arm);
+      fillTristarArmPlanTurns(arm, arm.heldPlanTurns);
+      fillTristarArmPointsFromTurns(
+        target,
+        armIndex,
+        arm.heldPlanTurns,
+        arm.heldPlanPoints,
+        1,
+        arm.lengthScale,
+      );
+      const planTip = arm.heldPlanPoints[TRISTAR_RULES.armSegments];
+      const previousPlanTip =
+        arm.heldPlanPoints[TRISTAR_RULES.armSegments - 1];
+      const planTipHeading = Math.atan2(
+        planTip.y - previousPlanTip.y,
+        planTip.x - previousPlanTip.x,
+      );
+      const endOffsetAngle = Number(arm.preyOffsetAngle) || 0;
+      const endOffsetDistance = Math.max(
+        0,
+        Number(arm.preyOffsetDistance) || 0,
+      );
+      arm.heldPlanEffectorX =
+        planTip.x +
+        Math.cos(planTipHeading + endOffsetAngle) * endOffsetDistance;
+      arm.heldPlanEffectorY =
+        planTip.y +
+        Math.sin(planTipHeading + endOffsetAngle) * endOffsetDistance;
+      if (
+        (Number(arm.latchProgress) || 0) >= 1 &&
+        (Number(arm.pullProgress) || 0) >= 1
+      ) {
+        // The stored curl plan already ends within the IK tolerance of the
+        // mouth. Repair the live inertial pose against the actual mouth so
+        // that the plan error and the live repair error cannot accumulate.
+        arm.heldPlanEffectorX = target.x;
+        arm.heldPlanEffectorY = target.y;
+      }
+
+      if (!tristarFreeArmStateIsValid(arm)) {
+        initializeTristarFreeArmState(
+          target,
+          armIndex,
+          arm.heldPlanPoints,
+        );
+      }
+      for (
+        let segmentIndex = 0;
+        segmentIndex < TRISTAR_RULES.armSegments;
+        segmentIndex += 1
+      ) {
+        arm.heldStartingHeadings[segmentIndex] =
+          arm.freeHeadings[segmentIndex];
+        arm.heldWorkingHeadings[segmentIndex] =
+          arm.freeHeadings[segmentIndex];
+        arm.heldWorkingAngularVelocities[segmentIndex] =
+          Number(arm.freeAngularVelocities[segmentIndex]) || 0;
+      }
+
+      const endRootAngle = tristarArmRoot(target, armIndex).angle;
+      const startRootAngle = Number.isFinite(arm.freeLastRootAngle)
+        ? arm.freeLastRootAngle
+        : endRootAngle;
+      const rootAngleDelta = Math.atan2(
+        Math.sin(endRootAngle - startRootAngle),
+        Math.cos(endRootAngle - startRootAngle),
+      );
+      const rootAngularVelocity = clamp(
+        rootAngleDelta / dt,
+        -TRISTAR_RULES.freeArmMaximumAngularSpeed,
+        TRISTAR_RULES.freeArmMaximumAngularSpeed,
+      );
+      const endVx = Number(target.vx) || 0;
+      const endVy = Number(target.vy) || 0;
+      const startVx = Number(arm.freeLastVx) || 0;
+      const startVy = Number(arm.freeLastVy) || 0;
+      const accelerationX = (endVx - startVx) / dt;
+      const accelerationY = (endVy - startVy) / dt;
+
+      for (let substep = 0; substep < substeps; substep += 1) {
+        const progress = (substep + 1) / substeps;
+        const rootAngle = startRootAngle + rootAngleDelta * progress;
+        const velocityX = lerp(startVx, endVx, progress);
+        const velocityY = lerp(startVy, endVy, progress);
+        const flowX =
+          -velocityX * TRISTAR_RULES.freeArmSoilDrag -
+          accelerationX * TRISTAR_RULES.freeArmAccelerationInfluence;
+        const flowY =
+          armGravity -
+          velocityY * TRISTAR_RULES.freeArmSoilDrag -
+          accelerationY * TRISTAR_RULES.freeArmAccelerationInfluence;
+        const flowMagnitude = magnitude(flowX, flowY);
+        const flowAngle = flowMagnitude > 0.0001
+          ? Math.atan2(flowY, flowX)
+          : rootAngle;
+        const flowStrength = clamp(
+          flowMagnitude /
+            Math.max(
+              1,
+              TRISTAR_RULES.maximumSpeed * TRISTAR_RULES.freeArmSoilDrag,
+            ),
+          0,
+          1,
+        );
+        let parentHeading = rootAngle;
+        let parentAngularVelocity = rootAngularVelocity;
+        let desiredHeading = rootAngle;
+        for (
+          let segmentIndex = 0;
+          segmentIndex < TRISTAR_RULES.armSegments;
+          segmentIndex += 1
+        ) {
+          desiredHeading += arm.heldPlanTurns[segmentIndex];
+          let heading =
+            parentHeading +
+            Math.atan2(
+              Math.sin(
+                arm.heldWorkingHeadings[segmentIndex] - parentHeading,
+              ),
+              Math.cos(
+                arm.heldWorkingHeadings[segmentIndex] - parentHeading,
+              ),
+            );
+          let angularVelocity =
+            arm.heldWorkingAngularVelocities[segmentIndex];
+          const trackingError = Math.atan2(
+            Math.sin(desiredHeading - heading),
+            Math.cos(desiredHeading - heading),
+          );
+          const flowError = clamp(
+            Math.atan2(
+              Math.sin(flowAngle - heading),
+              Math.cos(flowAngle - heading),
+            ),
+            -Math.PI / 2,
+            Math.PI / 2,
+          );
+          const distalWeight = lerp(
+            0.3,
+            1,
+            (segmentIndex + 1) / TRISTAR_RULES.armSegments,
+          );
+          const angularAcceleration =
+            trackingError * TRISTAR_RULES.heldArmTrackingAcceleration -
+            (angularVelocity - parentAngularVelocity) *
+              TRISTAR_RULES.heldArmTrackingDamping +
+            flowError *
+              TRISTAR_RULES.freeArmAngularAcceleration *
+              TRISTAR_RULES.heldArmFlowInfluence *
+              flowStrength *
+              distalWeight;
+          angularVelocity = clamp(
+            angularVelocity + angularAcceleration * stepTime,
+            -TRISTAR_RULES.freeArmMaximumAngularSpeed,
+            TRISTAR_RULES.freeArmMaximumAngularSpeed,
+          );
+          heading += angularVelocity * stepTime;
+          const headingLag = Math.atan2(
+            Math.sin(heading - desiredHeading),
+            Math.cos(heading - desiredHeading),
+          );
+          heading =
+            desiredHeading +
+            clamp(
+              headingLag,
+              -TRISTAR_RULES.heldArmMaximumHeadingLag,
+              TRISTAR_RULES.heldArmMaximumHeadingLag,
+            );
+          const turnLimit = tristarArmTurnLimit(segmentIndex);
+          const unconstrainedTurn = Math.atan2(
+            Math.sin(heading - parentHeading),
+            Math.cos(heading - parentHeading),
+          );
+          const constrainedTurn = clamp(
+            unconstrainedTurn,
+            -turnLimit,
+            turnLimit,
+          );
+          if (
+            (unconstrainedTurn > turnLimit &&
+              angularVelocity > parentAngularVelocity) ||
+            (unconstrainedTurn < -turnLimit &&
+              angularVelocity < parentAngularVelocity)
+          ) {
+            angularVelocity = parentAngularVelocity;
+          }
+          heading = parentHeading + constrainedTurn;
+          arm.heldWorkingHeadings[segmentIndex] = heading;
+          arm.heldWorkingAngularVelocities[segmentIndex] = angularVelocity;
+          parentHeading = heading;
+          parentAngularVelocity = angularVelocity;
+        }
+      }
+      fillTristarArmTurnsFromHeadings(
+        target,
+        armIndex,
+        arm.heldWorkingHeadings,
+        arm.heldRawTurns,
+      );
+    });
+
+    let selectedFactor = 1;
+    let candidatesAreValid = false;
+    for (
+      let attempt = 0;
+      attempt < TRISTAR_RULES.heldArmInertiaBackoffPasses;
+      attempt += 1
+    ) {
+      let endpointsAreValid = true;
+      target.tristarArms.forEach((arm, armIndex) => {
+        if (!heldMask[armIndex]) return;
+        endpointsAreValid =
+          prepareTristarHeldArmCandidate(
+            target,
+            armIndex,
+            selectedFactor,
+          ) && endpointsAreValid;
+      });
+      candidatesAreValid = endpointsAreValid;
+      if (candidatesAreValid) break;
+      selectedFactor *= 0.5;
+    }
+    if (!candidatesAreValid) {
+      selectedFactor = 0;
+      target.tristarArms.forEach((arm, armIndex) => {
+        if (!heldMask[armIndex]) return;
+        prepareTristarHeldArmCandidate(target, armIndex, 0);
+      });
+    }
+
+    const velocityTime = Math.max(dt, 1 / 120);
+    target.tristarArms.forEach((arm, armIndex) => {
+      if (!heldMask[armIndex]) return;
+      fillTristarArmHeadingsFromPoints(
+        arm.heldCandidatePoints,
+        arm.heldWorkingHeadings,
+      );
+      for (
+        let segmentIndex = 0;
+        segmentIndex < TRISTAR_RULES.armSegments;
+        segmentIndex += 1
+      ) {
+        const nextHeading = arm.heldWorkingHeadings[segmentIndex];
+        const headingDelta = Math.atan2(
+          Math.sin(nextHeading - arm.heldStartingHeadings[segmentIndex]),
+          Math.cos(nextHeading - arm.heldStartingHeadings[segmentIndex]),
+        );
+        const repairedAngularVelocity = clamp(
+          headingDelta / velocityTime,
+          -TRISTAR_RULES.freeArmMaximumAngularSpeed,
+          TRISTAR_RULES.freeArmMaximumAngularSpeed,
+        );
+        arm.freeHeadings[segmentIndex] = nextHeading;
+        arm.freeAngularVelocities[segmentIndex] = clamp(
+          lerp(
+            repairedAngularVelocity,
+            arm.heldWorkingAngularVelocities[segmentIndex],
+            selectedFactor * 0.5,
+          ),
+          -TRISTAR_RULES.freeArmMaximumAngularSpeed,
+          TRISTAR_RULES.freeArmMaximumAngularSpeed,
+        );
+      }
+      preserveTristarArmDynamics(target, armIndex);
+      arm.heldCandidatePoseValid = true;
+    });
+  }
+
+  function tristarPassiveArmHeadings(target, armIndex) {
+    const root = tristarArmRoot(target, armIndex);
+    const velocityX = Number(target.vx) || 0;
+    const velocityY = Number(target.vy) || 0;
+    const flowX = -velocityX * TRISTAR_RULES.freeArmSoilDrag;
+    const flowY =
+      tristarArmGravity(target) -
+      velocityY * TRISTAR_RULES.freeArmSoilDrag;
+    const desiredHeading = magnitude(flowX, flowY) > 0.0001
+      ? Math.atan2(flowY, flowX)
+      : root.angle;
+    const headings = [];
+    let parentHeading = root.angle;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const difference = Math.atan2(
+        Math.sin(desiredHeading - parentHeading),
+        Math.cos(desiredHeading - parentHeading),
+      );
+      parentHeading += clamp(
+        difference,
+        -tristarArmTurnLimit(segmentIndex),
+        tristarArmTurnLimit(segmentIndex),
+      );
+      headings.push(parentHeading);
+    }
+    return headings;
+  }
+
+  function tristarArmGreedyTurns(
+    target,
+    armIndex,
+    goal,
+    lengthScale = 1,
+  ) {
+    const root = tristarArmRoot(target, armIndex);
+    const linkLength =
+      TRISTAR_RULES.armLength * lengthScale / TRISTAR_RULES.armSegments;
+    const turns = [];
+    let x = root.x;
+    let y = root.y;
+    let heading = root.angle;
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const desiredHeading = Math.atan2(goal.y - y, goal.x - x);
+      const difference = Math.atan2(
+        Math.sin(desiredHeading - heading),
+        Math.cos(desiredHeading - heading),
+      );
+      const turn = clamp(
+        difference,
+        -tristarArmTurnLimit(segmentIndex),
+        tristarArmTurnLimit(segmentIndex),
+      );
+      turns.push(turn);
+      heading += turn;
+      x += Math.cos(heading) * linkLength;
+      y += Math.sin(heading) * linkLength;
+    }
+    return turns;
+  }
+
+  function tristarArmTipIkSolution(
+    target,
+    armIndex,
+    goal,
+    seedTurns,
+    options = {},
+  ) {
+    const root = tristarArmRoot(target, armIndex);
+    const resolvedGoal = {
+      x: nearestPeriodicWorldX(goal.x, root.x),
+      y: goal.y,
+    };
+    const lengthScale = clamp(
+      Number(options.lengthScale) || 1,
+      1,
+      TRISTAR_RULES.preyReachMaximumStretch,
+    );
+    const turnDirection = Math.sign(Number(options.turnDirection) || 0);
+    const turns = Array.from(
+      { length: TRISTAR_RULES.armSegments },
+      (_, segmentIndex) => {
+        const limit = tristarArmTurnLimit(segmentIndex);
+        const seed = Number(seedTurns?.[segmentIndex]) || 0;
+        return turnDirection > 0
+          ? clamp(seed, 0, limit)
+          : turnDirection < 0
+            ? clamp(seed, -limit, 0)
+            : clamp(seed, -limit, limit);
+      },
+    );
+    const points = tristarArmPointsFromTurns(
+      target,
+      armIndex,
+      turns,
+      1,
+      lengthScale,
+    );
+    const endOffsetAngle = Number(options.endOffsetAngle) || 0;
+    const endOffsetDistance = Math.max(
+      0,
+      Number(options.endOffsetDistance) || 0,
+    );
+    const tip = points[points.length - 1];
+    const previousTip = points[points.length - 2];
+    const tipHeading = Math.atan2(
+      tip.y - previousTip.y,
+      tip.x - previousTip.x,
+    );
+    let effectorX =
+      tip.x + Math.cos(tipHeading + endOffsetAngle) * endOffsetDistance;
+    let effectorY =
+      tip.y + Math.sin(tipHeading + endOffsetAngle) * endOffsetDistance;
+
+    for (
+      let pass = 0;
+      pass < TRISTAR_RULES.tipIkPasses;
+      pass += 1
+    ) {
+      for (
+        let segmentIndex = TRISTAR_RULES.armSegments - 1;
+        segmentIndex >= 0;
+        segmentIndex -= 1
+      ) {
+        const pivot = points[segmentIndex];
+        const effectorAngle = Math.atan2(
+          effectorY - pivot.y,
+          effectorX - pivot.x,
+        );
+        const goalAngle = Math.atan2(
+          resolvedGoal.y - pivot.y,
+          resolvedGoal.x - pivot.x,
+        );
+        const angleDelta = Math.atan2(
+          Math.sin(goalAngle - effectorAngle),
+          Math.cos(goalAngle - effectorAngle),
+        );
+        const limit = tristarArmTurnLimit(segmentIndex);
+        const oldTurn = turns[segmentIndex];
+        const nextTurn = turnDirection > 0
+          ? clamp(oldTurn + angleDelta, 0, limit)
+          : turnDirection < 0
+            ? clamp(oldTurn + angleDelta, -limit, 0)
+            : clamp(oldTurn + angleDelta, -limit, limit);
+        const appliedTurn = nextTurn - oldTurn;
+        if (Math.abs(appliedTurn) <= 0.0000001) continue;
+        turns[segmentIndex] = nextTurn;
+        const cosine = Math.cos(appliedTurn);
+        const sine = Math.sin(appliedTurn);
+        for (
+          let pointIndex = segmentIndex + 1;
+          pointIndex < points.length;
+          pointIndex += 1
+        ) {
+          const offsetX = points[pointIndex].x - pivot.x;
+          const offsetY = points[pointIndex].y - pivot.y;
+          points[pointIndex].x =
+            pivot.x + offsetX * cosine - offsetY * sine;
+          points[pointIndex].y =
+            pivot.y + offsetX * sine + offsetY * cosine;
+        }
+        const effectorOffsetX = effectorX - pivot.x;
+        const effectorOffsetY = effectorY - pivot.y;
+        effectorX =
+          pivot.x + effectorOffsetX * cosine - effectorOffsetY * sine;
+        effectorY =
+          pivot.y + effectorOffsetX * sine + effectorOffsetY * cosine;
+      }
+      if (
+        magnitude(
+          effectorX - resolvedGoal.x,
+          effectorY - resolvedGoal.y,
+        ) <= TRISTAR_RULES.tipIkTolerance
+      ) {
+        break;
+      }
+    }
+
+    const error = magnitude(
+      effectorX - resolvedGoal.x,
+      effectorY - resolvedGoal.y,
+    );
+    return {
+      turns,
+      points,
+      goal: resolvedGoal,
+      effector: { x: effectorX, y: effectorY },
+      error,
+      lengthScale,
+      reached: error <= TRISTAR_RULES.tipIkTolerance,
+    };
+  }
+
+  function tristarArmReachSolution(target, armIndex, prey) {
+    const root = tristarArmRoot(target, armIndex);
+    const preyX = nearestPeriodicWorldX(prey.x, root.x);
+    const preyOffsetX = root.x - preyX;
+    const preyOffsetY = root.y - prey.y;
+    const preyDistance = magnitude(preyOffsetX, preyOffsetY);
+    const contactDirectionX = preyDistance > 0.0001
+      ? preyOffsetX / preyDistance
+      : -Math.cos(root.angle);
+    const contactDirectionY = preyDistance > 0.0001
+      ? preyOffsetY / preyDistance
+      : -Math.sin(root.angle);
+    const goal = {
+      x: preyX + contactDirectionX * prey.radius,
+      y: prey.y + contactDirectionY * prey.radius,
+    };
+    const currentTurns = tristarArmTurnsFromPoints(
+      target,
+      armIndex,
+      getTristarArmPoints(target, armIndex),
+    );
+    let bestSolution = null;
+    const alternatives = [];
+    const reachScales = [TRISTAR_RULES.preyReachMaximumStretch, 1];
+    for (
+      let scaleIndex = 0;
+      scaleIndex < reachScales.length;
+      scaleIndex += 1
+    ) {
+      const lengthScale = reachScales[scaleIndex];
+      const seeds = [
+        currentTurns,
+        tristarArmGreedyTurns(target, armIndex, goal, lengthScale),
+        Array.from({ length: TRISTAR_RULES.armSegments }, () => 0),
+        Array.from(
+          { length: TRISTAR_RULES.armSegments },
+          (_, segmentIndex) =>
+            tristarArmTurnLimit(segmentIndex) * 0.72,
+        ),
+        Array.from(
+          { length: TRISTAR_RULES.armSegments },
+          (_, segmentIndex) =>
+            -tristarArmTurnLimit(segmentIndex) * 0.72,
+        ),
+      ];
+      for (let seedIndex = 0; seedIndex < seeds.length; seedIndex += 1) {
+        const solution = tristarArmTipIkSolution(
+          target,
+          armIndex,
+          goal,
+          seeds[seedIndex],
+          { lengthScale },
+        );
+        if (!bestSolution || solution.error < bestSolution.error) {
+          bestSolution = solution;
+        }
+        if (
+          solution.reached &&
+          alternatives.every(
+            (candidate) =>
+              tristarArmTurnDistance(candidate.turns, solution.turns) >=
+              0.01,
+          )
+        ) {
+          alternatives.push(solution);
+        }
+      }
+      if (alternatives.length > 0) break;
+    }
+    alternatives.sort((first, second) => first.error - second.error);
+    if (alternatives.length > 0) bestSolution = alternatives[0];
+    if (bestSolution) bestSolution.alternatives = alternatives;
+    return bestSolution;
+  }
+
+  function getIdleTristarArmPoints(
+    target,
+    armIndex,
+    visualScale = target.captureScale ?? 1,
+    lengthScale = 1,
+  ) {
+    return tristarArmPointsFromHeadings(
+      target,
+      armIndex,
+      tristarPassiveArmHeadings(target, armIndex),
+      visualScale,
+      lengthScale,
+    );
+  }
+
+  function tristarArmPointsAtProgress(
+    target,
+    armIndex,
+    latchProgress,
+    pullProgress,
+  ) {
+    const visualScale = target.captureScale ?? 1;
+    const arm = target.tristarArms?.[armIndex];
+    if (!arm) return [];
+    const resolvedLatchProgress = clamp(
+      Number(latchProgress) || 0,
+      0,
+      1,
+    );
+    const turns = new Float64Array(TRISTAR_RULES.armSegments);
+    fillTristarArmPlanTurns(
+      arm,
+      turns,
+      resolvedLatchProgress,
+      pullProgress,
+    );
+    return tristarArmPointsFromTurns(
+      target,
+      armIndex,
+      turns,
+      visualScale,
+      tristarHeldArmLengthScaleAtProgress(
+        arm,
+        resolvedLatchProgress,
+        pullProgress,
+      ),
+    );
+  }
+
+  function getHeldTristarArmPoints(target, armIndex) {
+    const arm = target.tristarArms?.[armIndex];
+    if (tristarFreeArmStateIsValid(arm)) {
+      return tristarArmPointsFromHeadings(
+        target,
+        armIndex,
+        arm.freeHeadings,
+        target.captureScale ?? 1,
+        resolvedTristarArmLengthScale(arm),
+      );
+    }
+    return tristarArmPointsAtProgress(
+      target,
+      armIndex,
+      arm?.latchProgress,
+      arm?.pullProgress,
+    );
+  }
+
+  function getTristarArmPoints(target, armIndex) {
+    const visualScale = target.captureScale ?? 1;
+    const arm = target.tristarArms?.[armIndex];
+    const prey = arm?.prey;
+    const hasLatchedPrey = Boolean(
+      prey &&
+      prey.tristarCaptorId === target.id &&
+      prey.tristarCaptorArm === armIndex,
+    );
+    if (hasLatchedPrey) return getHeldTristarArmPoints(target, armIndex);
+    if (tristarFreeArmStateIsValid(arm)) {
+      return tristarArmPointsFromHeadings(
+        target,
+        armIndex,
+        arm.freeHeadings,
+        visualScale,
+        resolvedTristarArmLengthScale(arm),
+      );
+    }
+    return getIdleTristarArmPoints(
+      target,
+      armIndex,
+      visualScale,
+      resolvedTristarArmLengthScale(arm),
+    );
+  }
+
+  function tristarArmNormalAngle(target, armIndex, points, pointIndex) {
+    if (pointIndex === 0) {
+      return (
+        target.angle +
+        armIndex * TAU / TRISTAR_RULES.armCount +
+        Math.PI / 2
+      );
+    }
+    const previous = points[pointIndex - 1];
+    const next = points[Math.min(points.length - 1, pointIndex + 1)];
+    return Math.atan2(next.y - previous.y, next.x - previous.x) + Math.PI / 2;
+  }
+
+  function appendTristarArmRibbon(
+    targetContext,
+    target,
+    armIndex,
+    points,
+    baseWidth,
+  ) {
+    if (points.length < 2) return;
+    const denominator = points.length - 1;
+    for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+      const taper = Math.pow(
+        Math.max(0, 1 - pointIndex / denominator),
+        TRISTAR_RULES.taperExponent,
+      );
+      const normalAngle = tristarArmNormalAngle(
+        target,
+        armIndex,
+        points,
+        pointIndex,
+      );
+      const halfWidth = baseWidth * taper * 0.5;
+      const x = points[pointIndex].x + Math.cos(normalAngle) * halfWidth;
+      const y = points[pointIndex].y + Math.sin(normalAngle) * halfWidth;
+      if (pointIndex === 0) targetContext.moveTo(x, y);
+      else targetContext.lineTo(x, y);
+    }
+    for (let pointIndex = points.length - 1; pointIndex >= 0; pointIndex -= 1) {
+      const taper = Math.pow(
+        Math.max(0, 1 - pointIndex / denominator),
+        TRISTAR_RULES.taperExponent,
+      );
+      const normalAngle = tristarArmNormalAngle(
+        target,
+        armIndex,
+        points,
+        pointIndex,
+      );
+      const halfWidth = baseWidth * taper * 0.5;
+      targetContext.lineTo(
+        points[pointIndex].x - Math.cos(normalAngle) * halfWidth,
+        points[pointIndex].y - Math.sin(normalAngle) * halfWidth,
+      );
+    }
+    targetContext.closePath();
+  }
+
+  function drawTristarArms(target, targetContext = ctx) {
+    const visualScale = target.captureScale ?? 1;
+    const armPointSets = Array.from(
+      { length: TRISTAR_RULES.armCount },
+      (_, armIndex) => getTristarArmPoints(target, armIndex),
+    );
+    targetContext.save();
+    const outerBaseWidth = Math.sqrt(3) * target.radius * visualScale;
+    const innerBaseWidth = Math.max(0, outerBaseWidth - 5 * visualScale);
+    targetContext.beginPath();
+    armPointSets.forEach((points, armIndex) => {
+      appendTristarArmRibbon(
+        targetContext,
+        target,
+        armIndex,
+        points,
+        outerBaseWidth,
+      );
+    });
+    targetContext.fillStyle = palette.tristarDark;
+    targetContext.fill();
+    targetContext.beginPath();
+    armPointSets.forEach((points, armIndex) => {
+      appendTristarArmRibbon(
+        targetContext,
+        target,
+        armIndex,
+        points,
+        innerBaseWidth,
+      );
+    });
+    targetContext.fillStyle = palette.tristar;
+    targetContext.fill();
+
+    targetContext.beginPath();
+    armPointSets.forEach((points, armIndex) => {
+      for (let index = 1; index < points.length - 1; index += 1) {
+        const normalAngle = tristarArmNormalAngle(
+          target,
+          armIndex,
+          points,
+          index,
+        );
+        const taper = Math.pow(
+          Math.max(0, 1 - index / (points.length - 1)),
+          TRISTAR_RULES.taperExponent,
+        );
+        const bandHalfWidth = innerBaseWidth * taper * 0.42;
+        targetContext.moveTo(
+          points[index].x - Math.cos(normalAngle) * bandHalfWidth,
+          points[index].y - Math.sin(normalAngle) * bandHalfWidth,
+        );
+        targetContext.lineTo(
+          points[index].x + Math.cos(normalAngle) * bandHalfWidth,
+          points[index].y + Math.sin(normalAngle) * bandHalfWidth,
+        );
+      }
+    });
+    targetContext.strokeStyle = palette.tristarHighlight;
+    targetContext.lineWidth = Math.max(1.1, 1.8 * visualScale);
+    targetContext.stroke();
+    targetContext.restore();
+  }
+
+  function tristarCorePulseScale(target) {
+    const duration = Math.max(
+      0.0001,
+      Number(target.tristarPulseDuration) || 1,
+    );
+    const progress = clamp(
+      (Number(target.tristarPulseElapsed) || 0) / duration,
+      0,
+      1,
+    );
+    if (target.tristarPulsePhase === "contract") {
+      return 1 - easedTristarArmProgress(progress) * 0.055;
+    }
+    if (target.tristarPulsePhase === "burst") {
+      return 0.945 + easedTristarArmProgress(progress) * 0.055;
+    }
+    return 1;
+  }
+
+  function drawTristarCore(target, targetContext = ctx) {
+    const visualScale = target.captureScale ?? 1;
+    const coreRadius =
+      target.radius * visualScale * tristarCorePulseScale(target);
+    targetContext.save();
+    targetContext.translate(target.x, target.y);
+    targetContext.rotate(target.angle);
+    targetContext.beginPath();
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      const angle =
+        TRISTAR_RULES.bodyFirstVertexOffset + vertex * TAU / 3;
+      const x = Math.cos(angle) * coreRadius;
+      const y = Math.sin(angle) * coreRadius;
+      if (vertex === 0) targetContext.moveTo(x, y);
+      else targetContext.lineTo(x, y);
+    }
+    targetContext.closePath();
+    targetContext.fillStyle = palette.tristar;
+    targetContext.strokeStyle = palette.tristarDark;
+    targetContext.lineWidth = 5 * visualScale;
+    targetContext.fill();
+    targetContext.stroke();
+
+    targetContext.beginPath();
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      const angle = -Math.PI / 3 + vertex * TAU / 3;
+      const radius = coreRadius * 0.34;
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      if (vertex === 0) targetContext.moveTo(x, y);
+      else targetContext.lineTo(x, y);
+    }
+    targetContext.closePath();
+    targetContext.fillStyle = palette.tristarDark;
+    targetContext.fill();
+
+    targetContext.beginPath();
+    targetContext.moveTo(coreRadius * 0.12, -coreRadius * 0.5);
+    targetContext.lineTo(coreRadius * 0.5, -coreRadius * 0.28);
+    targetContext.strokeStyle = palette.tristarHighlight;
+    targetContext.lineWidth = 3 * visualScale;
+    targetContext.lineCap = "round";
+    targetContext.stroke();
+    targetContext.restore();
+  }
+
+  function drawTristarPreview(canvas) {
+    const previewContext = canvas.getContext("2d");
+    if (!previewContext) return;
+    previewContext.clearRect(0, 0, canvas.width, canvas.height);
+    const previewTarget = {
+      id: -1,
+      x: canvas.width * 0.5,
+      y: canvas.height * 0.5,
+      angle: -0.22,
+      radius: ENEMY_DEFINITIONS[ENEMY_TYPES.TRISTAR].radius,
+      regionType: BLOCK_TYPES.GROUND,
+      captureScale: 0.5,
+      vx: 220,
+      vy: 0,
+      tristarArms: Array.from(
+        { length: TRISTAR_RULES.armCount },
+        (_, armIndex) => ({
+          prey: null,
+          pullProgress: 0,
+          freeHeadings: null,
+          freeAngularVelocities: null,
+          preyOffsetAngle: 0,
+          curlDirection: armIndex % 2 === 0 ? 1 : -1,
+        }),
+      ),
+    };
+    previewTarget.tristarArms.forEach((arm, armIndex) => {
+      arm.freeHeadings = tristarPassiveArmHeadings(
+        previewTarget,
+        armIndex,
+      );
+      arm.freeAngularVelocities = Array.from(
+        { length: TRISTAR_RULES.armSegments },
+        () => 0,
+      );
+    });
+    for (let step = 0; step < 90; step += 1) {
+      updateTristarFreeArms(previewTarget, 1 / 60);
+    }
+    drawTristarArms(previewTarget, previewContext);
+    drawTristarCore(previewTarget, previewContext);
+  }
+
   function drawEnemy(target) {
     const definition = ENEMY_DEFINITIONS[target.kind];
+    if (definition.procedural === "tristar") {
+      drawTristarCore(target);
+      return;
+    }
     const frameName =
       definition.spriteFrames[
         target.animationFrame % definition.spriteFrames.length
@@ -16039,7 +20607,8 @@
 
   function drawTargets() {
     const visible = getVisibleWorldBounds(MAXIMUM_ENEMY_SPRITE_RADIUS);
-    [...game.targets, ...game.capturedTargets].forEach((target) => {
+    const targets = [...game.targets, ...game.capturedTargets];
+    const visibleTargets = targets.filter((target) => {
       const spriteRadius =
         ENEMY_DEFINITIONS[target.kind].spriteSize *
         (target.captureScale ?? 1) *
@@ -16050,9 +20619,18 @@
         target.y + spriteRadius < visible.y ||
         target.y - spriteRadius > visible.y + visible.height
       ) {
-        return;
+        return false;
       }
-      drawEnemy(target);
+      return true;
+    });
+    visibleTargets.forEach((target) => {
+      if (target.kind === ENEMY_TYPES.TRISTAR) drawTristarArms(target);
+    });
+    visibleTargets.forEach((target) => {
+      if (target.kind !== ENEMY_TYPES.TRISTAR) drawEnemy(target);
+    });
+    visibleTargets.forEach((target) => {
+      if (target.kind === ENEMY_TYPES.TRISTAR) drawEnemy(target);
     });
   }
 
@@ -16148,6 +20726,10 @@
             ? particle.tone > 0.5
               ? palette.rabbitHighlight
               : palette.rabbit
+          : particle.kind === "tristar"
+            ? particle.tone > 0.5
+              ? palette.tristarHighlight
+              : palette.tristarDark
           : particle.kind === "meat"
             ? particle.tone > 0.5
               ? palette.splatterBright
@@ -18591,9 +23173,6 @@
   homeWorldButton.addEventListener("click", openWorldSelect);
   homeWormButton.addEventListener("click", openWormTypeSelect);
   homeWormEditButton.addEventListener("click", openWormAppearanceEditor);
-  homeEnemyLimitInput.addEventListener("change", () =>
-    selectEnemyCountLimit(homeEnemyLimitInput.value),
-  );
   mainMenuButton.addEventListener("click", openMainMenu);
   mainMenuCloseButton.addEventListener("click", closeMainMenu);
   menuContinueButton.addEventListener("click", closeMainMenu);
@@ -18740,7 +23319,6 @@
     populateDevEnemyButtons();
     loadCustomWorlds();
     loadSelectedWorld();
-    loadSelectedEnemyCountLimit();
     loadSavedWormType();
     await loadSavedWormAppearance();
     // Build the seven bounded liquid-density sprites before play. Leveling up

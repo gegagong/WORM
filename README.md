@@ -258,29 +258,25 @@ ignore meat and any enemy whose maximum HP is greater than twice the current bit
 manual tongue targeting and heavy grapples keep their existing behavior and have no latch fee.
 
 Every playable round contains exactly **10,000,000 points**. Point value is held in a
-rolling reserve rather than eagerly creating millions of enemies. The start menu's
-**Max Enemies** selector instead controls how many non-meat enemies may exist on the map
-at once: **250**, **500**, or **1,000**, with 1,000 as the default. The selection is saved
-for later runs and is copied into the active round when Play is pressed; Reset restarts
-the same enemy-limit run. Every open enemy slot is refilled in the same simulation update
-while unspawned round points remain. Meat uses an independent 500-chunk limit and never
-consumes or blocks an enemy slot.
+rolling reserve rather than eagerly creating millions of enemies. Every round has a fixed
+ceiling of **1,000 non-meat enemies** on the map at once, and Reset restarts that same
+fixed-cap round. Open enemy slots are filled immediately whenever a valid spawn position
+is found; a failed bounded placement search retries after a short backoff while unspawned
+round points remain. Meat uses an independent 500-chunk limit and never consumes or blocks
+an enemy slot.
 
-Initial populations use the same deterministic 60/25/8/5/2 percent weighting. The
-250-enemy setting starts with 150 beetles, 63 dragonflies, 20 moles, 12 rabbits, and
-5 vultures, worth 1,522 points. The 500-enemy setting starts with 300 beetles,
-125 dragonflies, 40 moles, 25 rabbits, and 10 vultures, worth 3,050 points. The
-1,000-enemy setting starts with 600 beetles, 250 dragonflies, 80 moles, 50 rabbits,
-and 20 vultures, worth 6,100 points. Replacements use the same weighted chances,
+Initial population requests use a deterministic 59/25/8/5/2/1 percent weighting.
+The requested 1,000-enemy mix is 590 beetles, 250 dragonflies, 80 moles, 50 rabbits,
+20 vultures, and 10 Tri-Stars, worth 8,090 points. Replacements use the same weighted chances,
 renormalized near the end of a round when an enemy's point value no longer fits.
 Hard-prey meat transfers its source enemy's value, so it cannot create extra points,
-and developer-spawned test enemies are scoreless and still obey the selected enemy cap.
+and developer-spawned test enemies are scoreless and still obey the fixed enemy cap.
 Spawn positions are sampled on demand instead of being collected by a full-world scan
 or retained in a location pool.
 Beetles usually seed close colonies, moles choose the most separated of four random choices,
-vultures choose the most horizontally separated of ten, and rabbit and dragonfly positions
-are random. Worlds containing ground place beetles and moles underground, rabbits on the
-nearest solid top surface, and both flying species above the nearest surface;
+vultures choose the most horizontally separated of ten, Tri-Stars choose the most separated
+of six, and rabbit and dragonfly positions are random. Worlds containing ground place beetles,
+moles, and Tri-Stars underground, rabbits on the nearest solid top surface, and both flying species above the nearest surface;
 all-air worlds place every enemy in air. A world containing neither ground nor air material
 starts an explicit empty round instead of retaining an impossible spawn reserve. An enemy
 turns in place by a randomly selected angle of up to 180 degrees, moves a short distance
@@ -294,6 +290,57 @@ down and it immediately burrows into the next ground surface
 it encounters. Running the worm's head through an enemy eats it, produces a burst, and
 reduces the remaining-target count. Collision checks follow the full distance traveled
 by the head each frame so enemies still register at maximum speed.
+
+Tri-Stars are neutral, three-armed underground predators with an equilateral triangular
+core, 120 HP, and a 200-point value. Each arm begins as wide as its attached triangle side,
+tapers segment by segment to a point, and has 24 equal-length links over a 250-pixel resting
+reach. A prey-directed arm can elastically lengthen those links by up to five percent.
+Unlatched arms are persistent, freely dangling chains rather than body-locked poses. They
+have no looping squirm animation: soil drag and momentum stream their distal links behind
+the moving body, and damped angular motion gives turns visible follow-through. Underground,
+the arms ignore gravity entirely; gravity pulls them downward only after the body leaves the
+dirt. That joint-by-joint inertia continues through prey
+pickup and carrying; the arm's intermediate segments lag the moving and turning core while
+the constrained tip remains pinned to its pickup path. Dangling chains sense one another and
+steer apart symmetrically. Prey-directed arms are authoritative, however: they may cross a
+sibling's route instead of rejecting or bending away from an otherwise valid grab.
+Every link in an arm remains the same length at any instant, and every joint—including the
+body joint—stays inside the same progressive 10-to-30-degree turn limits as the Licker's
+tongue. Tri-Stars move through
+dirt in rhythmic, jellyfish-like pulses rather than gliding continuously. During a brief
+contraction the available dangling arms cup into three separated rear-facing fans. A short
+thrust burst then launches the body strictly along one of the three points of its triangular
+core. Its orientation stays locked throughout the contraction and thrust. For the first
+0.22 seconds of the resulting coast it can rotate that chosen point toward its next
+destination, and its momentum rotates by exactly the same amount. After that short
+post-launch window it holds its course through a substantially longer 1.2-to-1.5-second
+coast before the next contraction. Only the burst adds propulsion, coast drag steadily
+slows the body, and its speed remains capped at 600 pixels per second. The burst weakens when
+one or two arms are carrying prey and is suppressed entirely when all three are occupied.
+Tentacle inertia makes the released fan flare and trail naturally, while dangling-arm
+separation and the joint limits remain authoritative throughout the pulse.
+
+Tri-Stars pulse toward the nearest available beetle or mole. They still recognize local
+beetle groups when choosing which reachable prey to collect with multiple arms, but a
+farther colony no longer overrides a closer navigation target. They approach to roughly
+70 percent of an arm's resting reach before beginning the first grab, bringing the triangular
+body substantially closer to its prey. At that inner grab radius they cancel any pending
+launch, make no movement input, and favor the farther reachable prey within the current
+beetle or fallback-prey priority. Once one arm has secured prey, the stationary sibling arms
+may use their full stretched reach to finish the local group. A rotating arm-attempt order
+prevents one awkward outer target from monopolizing every reach attempt. Pursuit points
+directly toward the nearest prey and never
+rotates the body merely to line up a particular prey arm. Each available arm can
+independently secure one prey that its constrained tapered tip can physically reach.
+The reach unfolds from the body toward the tip with a slight timing delay while its links
+stretch, then the extra length relaxes early in the pull. The prey stays attached to that tip
+while all 24 links curl backward, placing the held prey in the exact triangle center for
+devouring without sliding it along the arm or handing it off at the root. The released curl
+and any remaining stretch then relax naturally back into the dangling simulation. They
+ignore rabbits, dragonflies, vultures, meat, other Tri-Stars, and the worm. A devoured prey
+awards no worm score or boost; its reserved point value is
+returned to the round reserve and an enemy replacement is spawned, preserving both the
+1,000-enemy ceiling and the exact 10,000,000-point round total.
 
 Rabbits use a 90 × 90 world-pixel sprite and a 30.9-pixel hurtbox radius, exactly 1.2×
 the mole's dimensions. Each rabbit has 12 HP and is worth 10 points. It rests for a
@@ -348,7 +395,9 @@ hard-prey threshold because classification uses maximum HP. Contact reverses and
 the worm's momentum while leaving the enemy alive. Holding Boost while underground targets
 the nearest hard prey inside the mouth sensor and
 spends boost charge while the worm rapidly curves toward it using a pursuit turn rate
-above normal ground steering. The bite sequence
+above normal ground steering. Reserving that target does not stop its own movement; it
+continues its current enemy behavior during the pursuit and freezes only when the worm's
+head actually reaches it. The bite sequence
 does not begin until the visual center of the head reaches
 the enemy's center. While airborne, holding Boost does not target or pursue hard prey;
 an actual swept-mouth collision instead starts the same latch directly at the point of
