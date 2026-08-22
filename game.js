@@ -252,7 +252,7 @@
       <section class="dev-enemy-spawner" aria-labelledby="dev-enemy-heading">
         <span class="dev-option-copy" id="dev-enemy-heading">
           <strong>Place enemy</strong>
-          <small>Add an enemy inside the current view</small>
+          <small>Add an enemy inside the current view · 500 max per type</small>
         </span>
         <div class="dev-enemy-buttons" id="dev-enemy-buttons"></div>
       </section>
@@ -719,6 +719,8 @@
   const ROUND_POINT_LIMIT = 10000000;
   const ENEMY_SPAWN_RULES = Object.freeze({
     maximumCount: 1000,
+    maximumKindShare: 0.5,
+    maximumRefillSpawnsPerUpdate: 4,
     placementAttempts: 32,
     failedPlacementRetryDelay: 0.5,
     beetleColonyChance: 0.8,
@@ -855,6 +857,7 @@
     taperExponent: 0.9,
     senseRadiusBlocks: 32,
     releaseRadiusBlocks: 40,
+    preySpatialHashCellBlocks: 8,
     beetleClusterRadiusBlocks: 16,
     beetleClusterHashCellBlocks: 4,
     beetleClusterMinimumCount: 2,
@@ -914,10 +917,14 @@
     maximumCapturePlanAttempts: 3,
     maximumReachAlternatives: 3,
     maximumCurlPlanEvaluations: 8,
-    pullSpeed: 120,
+    pullSpeed: 360,
     tipIkPasses: 32,
     tipIkTolerance: 0.75,
     scanInterval: 0.15,
+    offMinimapSearchInterval: 0.75,
+    offMinimapDevourRadiusBlocks: 18,
+    offMinimapMinimumDevourInterval: 8,
+    offMinimapMaximumDevourInterval: 11.5,
     minimumWanderDuration: 0.8,
     maximumWanderDuration: 2.4,
   });
@@ -932,6 +939,52 @@
     Math.PI / 3,
     -Math.PI / 3,
   ]);
+  const TRISTAR_ARM_TURN_LIMITS = Object.freeze(
+    Array.from(
+      { length: TRISTAR_RULES.armSegments },
+      (_, segmentIndex) => {
+        const progress = TRISTAR_RULES.armSegments > 1
+          ? segmentIndex / (TRISTAR_RULES.armSegments - 1)
+          : 1;
+        return (
+          TRISTAR_RULES.firstSegmentTurnLimit +
+          (TRISTAR_RULES.lastSegmentTurnLimit -
+            TRISTAR_RULES.firstSegmentTurnLimit) *
+            progress
+        );
+      },
+    ),
+  );
+  const TRISTAR_ARM_ZERO_TURNS = Object.freeze(
+    Array.from({ length: TRISTAR_RULES.armSegments }, () => 0),
+  );
+  const TRISTAR_ARM_POSITIVE_REACH_SEED = Object.freeze(
+    TRISTAR_ARM_TURN_LIMITS.map((limit) => limit * 0.72),
+  );
+  const TRISTAR_ARM_NEGATIVE_REACH_SEED = Object.freeze(
+    TRISTAR_ARM_TURN_LIMITS.map((limit) => -limit * 0.72),
+  );
+  const tristarStaticCurlSeed = (direction, start, span) =>
+    Object.freeze(
+      TRISTAR_ARM_TURN_LIMITS.map((limit, segmentIndex) => {
+        const progress =
+          segmentIndex / (TRISTAR_RULES.armSegments - 1);
+        const amount = Math.max(
+          0,
+          Math.min(1, (progress - start) / span),
+        );
+        const weight = amount * amount * (3 - 2 * amount);
+        return direction * limit * weight;
+      }),
+    );
+  const TRISTAR_ARM_BACK_LOADED_CURL_SEEDS = Object.freeze({
+    [-1]: tristarStaticCurlSeed(-1, 0.25, 0.5),
+    [1]: tristarStaticCurlSeed(1, 0.25, 0.5),
+  });
+  const TRISTAR_ARM_DISTAL_CURL_SEEDS = Object.freeze({
+    [-1]: tristarStaticCurlSeed(-1, 0.15, 0.65),
+    [1]: tristarStaticCurlSeed(1, 0.15, 0.65),
+  });
   const DEV_WORM_LEVEL_MAX = 100;
   const DEV_ENEMY_SPAWN_POSITIONS = Object.freeze([
     Object.freeze([0.76, 0.38]),
@@ -3341,28 +3394,63 @@
 
   function createEnemySpawnKinds(targetCount, random) {
     targetCount = Math.max(0, Math.floor(targetCount));
-    const allocations = ENEMY_SPAWN_RULES.weights.map((entry) => {
-      const exactCount = entry.weight * targetCount;
-      return {
-        kind: entry.kind,
-        count: Math.floor(exactCount),
-        remainder: exactCount - Math.floor(exactCount),
-      };
-    });
-    let assignedCount = allocations.reduce(
-      (total, allocation) => total + allocation.count,
-      0,
+    const maximumKindCount = Math.floor(
+      targetCount * ENEMY_SPAWN_RULES.maximumKindShare,
     );
-    while (assignedCount < targetCount) {
-      let nextAllocation = allocations[0];
-      allocations.forEach((allocation) => {
-        if (allocation.remainder > nextAllocation.remainder) {
-          nextAllocation = allocation;
-        }
+    const allocations = ENEMY_SPAWN_RULES.weights.map((entry, index) => ({
+      index,
+      kind: entry.kind,
+      count: 0,
+      weight: entry.weight,
+    }));
+    let remainingCount = targetCount;
+    while (remainingCount > 0) {
+      const available = allocations.filter(
+        (allocation) => allocation.count < maximumKindCount,
+      );
+      const availableWeight = available.reduce(
+        (total, allocation) => total + allocation.weight,
+        0,
+      );
+      if (available.length === 0 || !(availableWeight > 0)) break;
+
+      let truncatedByCap = false;
+      const passCount = remainingCount;
+      const pass = available.map((allocation) => {
+        const exactCount =
+          passCount * allocation.weight / availableWeight;
+        const capacity = maximumKindCount - allocation.count;
+        const baseCount = Math.floor(exactCount);
+        const addedCount = Math.min(capacity, baseCount);
+        if (exactCount > capacity) truncatedByCap = true;
+        allocation.count += addedCount;
+        remainingCount -= addedCount;
+        return {
+          allocation,
+          remainder: exactCount - baseCount,
+        };
       });
-      nextAllocation.count += 1;
-      nextAllocation.remainder = -1;
-      assignedCount += 1;
+      if (remainingCount <= 0) break;
+      if (truncatedByCap) continue;
+
+      pass.sort(
+        (first, second) =>
+          second.remainder - first.remainder ||
+          first.allocation.index - second.allocation.index,
+      );
+      let assignedRemainders = 0;
+      for (
+        let index = 0;
+        index < pass.length && remainingCount > 0;
+        index += 1
+      ) {
+        const allocation = pass[index].allocation;
+        if (allocation.count >= maximumKindCount) continue;
+        allocation.count += 1;
+        remainingCount -= 1;
+        assignedRemainders += 1;
+      }
+      if (assignedRemainders === 0) break;
     }
 
     const kinds = allocations.flatMap((allocation) =>
@@ -3415,6 +3503,38 @@
         game.roundPopulationCap,
         ENEMY_SPAWN_RULES.maximumCount,
       ),
+    );
+  }
+
+  function enemyKindPopulationLimit() {
+    return Math.max(
+      0,
+      Math.floor(
+        enemyPopulationLimit() * ENEMY_SPAWN_RULES.maximumKindShare,
+      ),
+    );
+  }
+
+  function liveEnemyKindCounts() {
+    const counts = new Map();
+    const countTargets = (targets) => {
+      for (let index = 0; index < targets.length; index += 1) {
+        const target = targets[index];
+        if (target.kind === ENEMY_TYPES.MEAT) continue;
+        counts.set(target.kind, (counts.get(target.kind) || 0) + 1);
+      }
+    };
+    countTargets(game.targets);
+    countTargets(game.capturedTargets);
+    return counts;
+  }
+
+  function availableEnemyKindSlots(kind, counts = null) {
+    if (kind === ENEMY_TYPES.MEAT) return 0;
+    const resolvedCounts = counts || liveEnemyKindCounts();
+    return Math.max(
+      0,
+      enemyKindPopulationLimit() - (resolvedCounts.get(kind) || 0),
     );
   }
 
@@ -3604,13 +3724,19 @@
     return bestTarget;
   }
 
-  function randomAffordableRoundSpawnKind(random) {
+  function randomAffordableRoundSpawnKind(
+    random,
+    kindCounts = liveEnemyKindCounts(),
+  ) {
     let totalWeight = 0;
+    let fallbackKind = null;
     ENEMY_SPAWN_RULES.weights.forEach((entry) => {
       if (
-        ENEMY_DEFINITIONS[entry.kind].score <= game.roundUnspawnedPoints
+        ENEMY_DEFINITIONS[entry.kind].score <= game.roundUnspawnedPoints &&
+        availableEnemyKindSlots(entry.kind, kindCounts) > 0
       ) {
         totalWeight += entry.weight;
+        fallbackKind = entry.kind;
       }
     });
     if (totalWeight <= 0) return null;
@@ -3618,14 +3744,15 @@
     for (let index = 0; index < ENEMY_SPAWN_RULES.weights.length; index += 1) {
       const entry = ENEMY_SPAWN_RULES.weights[index];
       if (
-        ENEMY_DEFINITIONS[entry.kind].score > game.roundUnspawnedPoints
+        ENEMY_DEFINITIONS[entry.kind].score > game.roundUnspawnedPoints ||
+        availableEnemyKindSlots(entry.kind, kindCounts) <= 0
       ) {
         continue;
       }
       choice -= entry.weight;
       if (choice <= 0) return entry.kind;
     }
-    return ENEMY_TYPES.BEETLE;
+    return fallbackKind;
   }
 
   function buildTargets() {
@@ -3714,7 +3841,15 @@
     return true;
   }
 
-  function refillRoundTargetsImmediately() {
+  function deferRoundSpawnRetry() {
+    game.roundSpawnBlockedLiveCount = liveEnemyCount();
+    game.roundSpawnBlockedPoints = game.roundUnspawnedPoints;
+    game.roundSpawnBlockedNextTargetId = game.nextTargetId;
+    game.roundSpawnRetryAt =
+      game.elapsed + ENEMY_SPAWN_RULES.failedPlacementRetryDelay;
+  }
+
+  function refillRoundTargetsTimeSliced() {
     if (
       game.roundUnspawnedPoints <= 0 ||
       game.roundPopulationCap <= 0
@@ -3742,7 +3877,13 @@
     game.roundSpawnBlockedNextTargetId = -1;
     game.roundSpawnRetryAt = 0;
     let availableSlots = populationLimit - currentLiveCount;
-    while (availableSlots > 0 && game.roundUnspawnedPoints > 0) {
+    const kindCounts = liveEnemyKindCounts();
+    let spawnedThisUpdate = 0;
+    while (
+      availableSlots > 0 &&
+      game.roundUnspawnedPoints > 0 &&
+      spawnedThisUpdate < ENEMY_SPAWN_RULES.maximumRefillSpawnsPerUpdate
+    ) {
       const attemptSerial = game.roundSpawnAttemptSerial;
       game.roundSpawnAttemptSerial += 1;
       const random = seededRandom(
@@ -3750,24 +3891,28 @@
           `${game.activeWorldId}:${attemptSerial}:${game.roundSpawnSerial}:instant-spawn`,
         ),
       );
-      const kind = randomAffordableRoundSpawnKind(random);
-      if (!kind) break;
+      const kind = randomAffordableRoundSpawnKind(random, kindCounts);
+      if (!kind) {
+        // The remaining points may only afford a kind that is already at its
+        // 50% quota. Preserve those points until a matching slot opens rather
+        // than violating the cap or repeating this scan every frame.
+        deferRoundSpawnRetry();
+        break;
+      }
       const target = createRoundSpawnTarget(kind, random);
       if (!target || !reserveRoundPointsForTarget(target)) {
         // Do not repeat the same bounded 32-probe failure every frame on a
         // saturated custom map. Any later population, reserve, or target-set
         // change makes the state eligible immediately; otherwise a short
         // backoff allows moving geometry to make the next search viable.
-        game.roundSpawnBlockedLiveCount = liveEnemyCount();
-        game.roundSpawnBlockedPoints = game.roundUnspawnedPoints;
-        game.roundSpawnBlockedNextTargetId = game.nextTargetId;
-        game.roundSpawnRetryAt =
-          game.elapsed + ENEMY_SPAWN_RULES.failedPlacementRetryDelay;
+        deferRoundSpawnRetry();
         break;
       }
       game.targets.push(target);
+      kindCounts.set(kind, (kindCounts.get(kind) || 0) + 1);
       game.totalTargets += 1;
       availableSlots -= 1;
+      spawnedThisUpdate += 1;
     }
   }
 
@@ -3827,17 +3972,35 @@
     };
   }
 
-  function drawMinimapTarget(target, bounds) {
-    const x = ((target.x - bounds.x) / bounds.width) * MINIMAP_RULES.width;
+  function minimapTargetMarkerPosition(target, bounds) {
+    const boundsCenterX = bounds.x + bounds.width * 0.5;
+    const targetX = nearestPeriodicWorldX(target.x, boundsCenterX);
+    return {
+      x: ((targetX - bounds.x) / bounds.width) * MINIMAP_RULES.width,
+      y: ((target.y - bounds.y) / bounds.height) * MINIMAP_RULES.height,
+    };
+  }
+
+  function minimapMarkerCoordinatesAreVisible(x, y) {
+    return Boolean(
+      x >= -4 &&
+      x <= MINIMAP_RULES.width + 4 &&
+      y >= -4 &&
+      y <= MINIMAP_RULES.height + 4
+    );
+  }
+
+  function minimapTargetMarkerIsVisible(target, bounds) {
+    const boundsCenterX = bounds.x + bounds.width * 0.5;
+    const targetX = nearestPeriodicWorldX(target.x, boundsCenterX);
+    const x = ((targetX - bounds.x) / bounds.width) * MINIMAP_RULES.width;
     const y = ((target.y - bounds.y) / bounds.height) * MINIMAP_RULES.height;
-    if (
-      x < -4 ||
-      x > MINIMAP_RULES.width + 4 ||
-      y < -4 ||
-      y > MINIMAP_RULES.height + 4
-    ) {
-      return;
-    }
+    return minimapMarkerCoordinatesAreVisible(x, y);
+  }
+
+  function drawMinimapTarget(target, bounds) {
+    const { x, y } = minimapTargetMarkerPosition(target, bounds);
+    if (!minimapMarkerCoordinatesAreVisible(x, y)) return;
 
     const radius =
       target.kind === ENEMY_TYPES.VULTURE
@@ -8016,7 +8179,11 @@
     return false;
   }
 
-  function spawnSwarmTargets(consumedTarget, count = 2) {
+  function spawnSwarmTargets(
+    consumedTarget,
+    count = 2,
+    kindCounts = liveEnemyKindCounts(),
+  ) {
     const enemyDefinition = ENEMY_DEFINITIONS[consumedTarget.kind];
     if (!consumedTarget.roundBudgeted || enemyDefinition.score <= 0) return;
     const availableSlots = Math.max(
@@ -8026,6 +8193,7 @@
     count = Math.min(
       count,
       availableSlots,
+      availableEnemyKindSlots(consumedTarget.kind, kindCounts),
       Math.floor(game.roundUnspawnedPoints / enemyDefinition.score),
     );
     if (count <= 0) return;
@@ -8142,6 +8310,10 @@
     game.roundUnspawnedPoints -= spawned.length * enemyDefinition.score;
     game.roundSpawnSerial += spawned.length;
     game.targets.push(...spawned);
+    kindCounts.set(
+      consumedTarget.kind,
+      (kindCounts.get(consumedTarget.kind) || 0) + spawned.length,
+    );
     game.totalTargets += spawned.length;
   }
 
@@ -8749,6 +8921,16 @@
     target.tristarPulseSteeringRemaining = 0;
     target.tristarPulseSuppressed = false;
     target.tristarCaptureArmCursor = 0;
+    target.tristarOffMinimap = false;
+    target.tristarOffMinimapTarget = null;
+    target.tristarOffMinimapBlockedTargetId = null;
+    target.tristarOffMinimapBlockedUntil = 0;
+    target.tristarOffMinimapSearchCooldown =
+      positiveModulo(target.id * 0.61803398875, 1) *
+      TRISTAR_RULES.offMinimapSearchInterval;
+    target.tristarOffMinimapDevourCooldown =
+      positiveModulo(target.id * 0.754877666, 1) *
+      TRISTAR_RULES.offMinimapMaximumDevourInterval;
     target.tristarAvoidanceForceX = Array.from(
       { length: TRISTAR_RULES.armCount },
       () => new Float64Array(TRISTAR_RULES.armSegments),
@@ -8872,11 +9054,15 @@
     return tristarArmIsDangling(arm);
   }
 
-  function targetIsActive(target) {
-    return Boolean(target && game.targets.includes(target));
+  function targetIsActive(target, tristarFrameContext = null) {
+    if (!target) return false;
+    if (tristarFrameContext?.targetById) {
+      return tristarFrameContext.targetById.get(target.id) === target;
+    }
+    return game.targets.includes(target);
   }
 
-  function tristarPreyIsAvailable(target) {
+  function tristarPreyIsAvailable(target, tristarFrameContext = null) {
     return Boolean(
       target &&
       (target.kind === ENEMY_TYPES.BEETLE ||
@@ -8889,9 +9075,137 @@
       !target.paralyzed &&
       !target.boostLatchHitboxDisabled &&
       !targetHasBoostLatchReservation(target) &&
-      !targetHasActiveTongue(target) &&
+      !targetHasActiveTongue(target, tristarFrameContext) &&
       getBlockAtWorld(target.x, target.y)?.type === BLOCK_TYPES.GROUND
     );
+  }
+
+  function createTristarFrameContext(targetById) {
+    const desiredCellSize = Math.max(
+      game.map.cellSize,
+      TRISTAR_RULES.preySpatialHashCellBlocks * game.map.cellSize,
+    );
+    const columnCount = Math.max(
+      1,
+      Math.ceil(game.width / desiredCellSize),
+    );
+    const cellSize = game.width / columnCount;
+    const tristarFrameContext = game.tristarFrameContext || {
+      preyBucketPool: [],
+      preyGrid: new Map(),
+      tongueTargetIds: new Set(),
+      beetles: [],
+      moles: [],
+    };
+    game.tristarFrameContext = tristarFrameContext;
+    const { preyBucketPool, preyGrid, tongueTargetIds } = tristarFrameContext;
+    const beetles = tristarFrameContext.beetles || [];
+    const moles = tristarFrameContext.moles || [];
+    tristarFrameContext.beetles = beetles;
+    tristarFrameContext.moles = moles;
+    preyGrid.clear();
+    tongueTargetIds.clear();
+    beetles.length = 0;
+    moles.length = 0;
+    let preyBucketCount = 0;
+    game.targets.forEach((target) => {
+      if (
+        target.kind !== ENEMY_TYPES.BEETLE &&
+        target.kind !== ENEMY_TYPES.MOLE
+      ) {
+        return;
+      }
+      if (target.kind === ENEMY_TYPES.MOLE) moles.push(target);
+      else beetles.push(target);
+      const column = positiveModulo(
+        Math.floor(wrapWorldX(target.x) / cellSize),
+        columnCount,
+      );
+      const row = Math.floor(target.y / cellSize);
+      const key = row * columnCount + column;
+      let bucket = preyGrid.get(key);
+      if (!bucket) {
+        bucket = preyBucketPool[preyBucketCount];
+        if (!bucket) {
+          bucket = [];
+          preyBucketPool[preyBucketCount] = bucket;
+        }
+        bucket.length = 0;
+        preyBucketCount += 1;
+        preyGrid.set(key, bucket);
+      }
+      bucket.push(target);
+    });
+    game.tongues.forEach((tongue) => {
+      if (Number.isFinite(tongue.targetId)) {
+        tongueTargetIds.add(tongue.targetId);
+      }
+    });
+    tristarFrameContext.cellSize = cellSize;
+    tristarFrameContext.columnCount = columnCount;
+    tristarFrameContext.targetById = targetById;
+    return tristarFrameContext;
+  }
+
+  function visitTristarPreyInRadius(
+    predator,
+    radius,
+    tristarFrameContext,
+    visitor,
+  ) {
+    const radiusSquared = radius * radius;
+    if (!tristarFrameContext?.preyGrid) {
+      for (let index = 0; index < game.targets.length; index += 1) {
+        const prey = game.targets[index];
+        if (
+          prey.kind !== ENEMY_TYPES.BEETLE &&
+          prey.kind !== ENEMY_TYPES.MOLE
+        ) {
+          continue;
+        }
+        const preyX = nearestPeriodicWorldX(prey.x, predator.x);
+        const dx = preyX - predator.x;
+        const dy = prey.y - predator.y;
+        const distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared > radiusSquared) continue;
+        if (visitor(prey, preyX, distanceSquared) === false) return false;
+      }
+      return true;
+    }
+
+    const { cellSize, columnCount, preyGrid } = tristarFrameContext;
+    const wrappedX = wrapWorldX(predator.x);
+    const minimumColumn = Math.floor((wrappedX - radius) / cellSize);
+    const maximumColumn = Math.floor((wrappedX + radius) / cellSize);
+    const queryColumnCount = Math.min(
+      columnCount,
+      maximumColumn - minimumColumn + 1,
+    );
+    const minimumRow = Math.floor((predator.y - radius) / cellSize);
+    const maximumRow = Math.floor((predator.y + radius) / cellSize);
+    for (let row = minimumRow; row <= maximumRow; row += 1) {
+      for (
+        let columnOffset = 0;
+        columnOffset < queryColumnCount;
+        columnOffset += 1
+      ) {
+        const column = queryColumnCount === columnCount
+          ? columnOffset
+          : positiveModulo(minimumColumn + columnOffset, columnCount);
+        const bucket = preyGrid.get(row * columnCount + column);
+        if (!bucket) continue;
+        for (let index = 0; index < bucket.length; index += 1) {
+          const prey = bucket[index];
+          const preyX = nearestPeriodicWorldX(prey.x, predator.x);
+          const dx = preyX - predator.x;
+          const dy = prey.y - predator.y;
+          const distanceSquared = dx * dx + dy * dy;
+          if (distanceSquared > radiusSquared) continue;
+          if (visitor(prey, preyX, distanceSquared) === false) return false;
+        }
+      }
+    }
+    return true;
   }
 
   function resumeTargetAfterTristarRelease(target) {
@@ -8994,6 +9308,9 @@
     predator.tristarClusterBlockedScans = 0;
     predator.tristarClusterRepositionCooldown = 0;
     predator.tristarCaptureArmCursor = 0;
+    predator.tristarOffMinimapTarget = null;
+    predator.tristarOffMinimapBlockedTargetId = null;
+    predator.tristarOffMinimapBlockedUntil = 0;
   }
 
   function detachTargetFromTristar(target) {
@@ -9019,9 +9336,14 @@
     detachTargetFromTristar(target);
   }
 
-  function tristarHeldPreyIsValid(predator, armIndex, prey) {
+  function tristarHeldPreyIsValid(
+    predator,
+    armIndex,
+    prey,
+    tristarFrameContext = null,
+  ) {
     return Boolean(
-      targetIsActive(prey) &&
+      targetIsActive(prey, tristarFrameContext) &&
       prey.health > 0 &&
       !prey.tristarDevourQueued &&
       prey.tristarCaptorId === predator.id &&
@@ -9032,12 +9354,18 @@
     );
   }
 
-  function attachTristarPrey(predator, armIndex, prey, providedReach = null) {
+  function attachTristarPrey(
+    predator,
+    armIndex,
+    prey,
+    providedReach = null,
+    tristarFrameContext = null,
+  ) {
     const arm = predator.tristarArms?.[armIndex];
     if (
       !arm ||
       !tristarArmIsAvailableForPrey(arm) ||
-      !tristarPreyIsAvailable(prey)
+      !tristarPreyIsAvailable(prey, tristarFrameContext)
     ) {
       return false;
     }
@@ -9101,40 +9429,10 @@
           return;
         }
         const curlSeeds = [
-          Array.from(
-            { length: TRISTAR_RULES.armSegments },
-            (_, segmentIndex) => {
-              const progress =
-                segmentIndex / (TRISTAR_RULES.armSegments - 1);
-              const backLoadedWeight = easedTristarArmProgress(
-                clamp((progress - 0.25) / 0.5, 0, 1),
-              );
-              return (
-                curlDirection *
-                tristarArmTurnLimit(segmentIndex) *
-                backLoadedWeight
-              );
-            },
-          ),
+          TRISTAR_ARM_BACK_LOADED_CURL_SEEDS[curlDirection],
         ];
         if (reachRank === 0) {
-          curlSeeds.push(
-            Array.from(
-              { length: TRISTAR_RULES.armSegments },
-              (_, segmentIndex) => {
-                const progress =
-                  segmentIndex / (TRISTAR_RULES.armSegments - 1);
-                const distalWeight = easedTristarArmProgress(
-                  clamp((progress - 0.15) / 0.65, 0, 1),
-                );
-                return (
-                  curlDirection *
-                  tristarArmTurnLimit(segmentIndex) *
-                  distalWeight
-                );
-              },
-            ),
-          );
+          curlSeeds.push(TRISTAR_ARM_DISTAL_CURL_SEEDS[curlDirection]);
         }
         const curlCandidates = [];
         curlSeeds.forEach((curlSeedTurns) => {
@@ -9211,8 +9509,10 @@
     );
     arm.lengthScale = arm.latchStartLengthScale;
     arm.latchStartTurns = latchStartTurns;
-    arm.latchTargetTurns = selectedPlan.reach.turns;
-    arm.curlTargetTurns = selectedPlan.curl.turns;
+    // IK candidates live in a per-predator scratch pool. Only the chosen
+    // plan escapes the synchronous planning transaction.
+    arm.latchTargetTurns = Array.from(selectedPlan.reach.turns);
+    arm.curlTargetTurns = Array.from(selectedPlan.curl.turns);
     arm.curlDirection = selectedPlan.curlDirection;
     arm.heldCandidatePoseValid = false;
     const preyXFromPredator = nearestPeriodicWorldX(prey.x, predator.x);
@@ -9428,13 +9728,22 @@
     return candidate.distanceSquared <= latchDistance * latchDistance;
   }
 
-  function tristarShouldSuppressLocomotionForPrey(predator) {
+  function tristarShouldSuppressLocomotionForPrey(
+    predator,
+    tristarFrameContext = null,
+  ) {
     if (predator.tristarArms?.some((arm) => arm.prey)) return true;
-    for (let index = 0; index < game.targets.length; index += 1) {
-      const prey = game.targets[index];
+    const maximumPreyRadius = Math.max(
+      ENEMY_DEFINITIONS[ENEMY_TYPES.BEETLE].radius,
+      ENEMY_DEFINITIONS[ENEMY_TYPES.MOLE].radius,
+    );
+    let shouldSuppress = false;
+    visitTristarPreyInRadius(
+      predator,
+      tristarApproachReach() + maximumPreyRadius,
+      tristarFrameContext,
+      (prey, preyX) => {
       if (
-        (prey.kind !== ENEMY_TYPES.BEETLE &&
-          prey.kind !== ENEMY_TYPES.MOLE) ||
         prey.health <= 0 ||
         prey.tristarDevourQueued ||
         prey.tristarCaptorId !== null ||
@@ -9443,32 +9752,36 @@
         prey.paralyzed ||
         prey.boostLatchHitboxDisabled
       ) {
-        continue;
+        return true;
       }
-      const preyX = nearestPeriodicWorldX(prey.x, predator.x);
       const dx = preyX - predator.x;
       const dy = prey.y - predator.y;
       const reach = tristarApproachReach() + prey.radius;
-      if (dx * dx + dy * dy > reach * reach) continue;
-      if (tristarPreyIsAvailable(prey)) return true;
-    }
-    return false;
+      if (dx * dx + dy * dy > reach * reach) return true;
+      if (tristarPreyIsAvailable(prey, tristarFrameContext)) {
+        shouldSuppress = true;
+        return false;
+      }
+      return true;
+      },
+    );
+    return shouldSuppress;
   }
 
-  function refreshTristarHunt(predator) {
+  function refreshTristarHunt(predator, tristarFrameContext = null) {
     const senseRadius =
       TRISTAR_RULES.senseRadiusBlocks * game.map.cellSize;
     const candidates = [];
-    for (let index = 0; index < game.targets.length; index += 1) {
-      const prey = game.targets[index];
-      if (!tristarPreyIsAvailable(prey)) continue;
-      const preyX = nearestPeriodicWorldX(prey.x, predator.x);
-      const dx = preyX - predator.x;
-      const dy = prey.y - predator.y;
-      const distanceSquared = dx * dx + dy * dy;
-      if (distanceSquared > senseRadius * senseRadius) continue;
+    visitTristarPreyInRadius(
+      predator,
+      senseRadius,
+      tristarFrameContext,
+      (prey, preyX, distanceSquared) => {
+      if (!tristarPreyIsAvailable(prey, tristarFrameContext)) return true;
       candidates.push({ prey, distanceSquared, x: preyX });
-    }
+      return true;
+      },
+    );
     candidates.sort(
       (first, second) =>
         first.distanceSquared - second.distanceSquared ||
@@ -9567,16 +9880,31 @@
       ) {
         planAttempts += 1;
         const { armIndex } = armOption;
-        const reach = tristarArmReachSolution(predator, armIndex, prey);
-        if (
-          reach?.reached &&
-          attachTristarPrey(predator, armIndex, prey, reach)
-        ) {
-          attached = true;
-          capturesStarted += 1;
-          if (prey.kind === ENEMY_TYPES.BEETLE) {
-            beetleCapturesStarted += 1;
+        beginTristarIkScratchSession(predator);
+        try {
+          const reach = tristarArmReachSolution(
+            predator,
+            armIndex,
+            prey,
+          );
+          if (
+            reach?.reached &&
+            attachTristarPrey(
+              predator,
+              armIndex,
+              prey,
+              reach,
+              tristarFrameContext,
+            )
+          ) {
+            attached = true;
+            capturesStarted += 1;
+            if (prey.kind === ENEMY_TYPES.BEETLE) {
+              beetleCapturesStarted += 1;
+            }
           }
+        } finally {
+          endTristarIkScratchSession(predator);
         }
       }
       if (capturesStarted >= TRISTAR_RULES.maximumCapturesPerScan) break;
@@ -9594,7 +9922,10 @@
     const reachableBeetlesAfterCapture = beetles.reduce(
       (count, candidate) =>
         count +
-          (tristarPreyIsAvailable(candidate.prey) &&
+          (tristarPreyIsAvailable(
+            candidate.prey,
+            tristarFrameContext,
+          ) &&
           tristarCandidateIsWithinArmReach(predator, candidate)
             ? 1
             : 0),
@@ -10303,7 +10634,379 @@
     return target.tristarPulsePhase;
   }
 
-  function updateTristarCapturedPrey(target, dt, devouredTargets) {
+  function tristarHasHeldPrey(target) {
+    return Boolean(target.tristarArms?.some((arm) => arm.prey));
+  }
+
+  function nearestOffMinimapTristarPrey(
+    predator,
+    tristarFrameContext = null,
+  ) {
+    const blockedTargetId =
+      game.elapsed < (Number(predator.tristarOffMinimapBlockedUntil) || 0)
+        ? predator.tristarOffMinimapBlockedTargetId
+        : null;
+    const kinds = [ENEMY_TYPES.MOLE, ENEMY_TYPES.BEETLE];
+    for (let kindIndex = 0; kindIndex < kinds.length; kindIndex += 1) {
+      const kind = kinds[kindIndex];
+      const candidates = kind === ENEMY_TYPES.MOLE
+        ? tristarFrameContext?.moles
+        : tristarFrameContext?.beetles;
+      const candidateCount = candidates?.length ?? game.targets.length;
+      let nearest = null;
+      let nearestDistanceSquared = Infinity;
+      for (let index = 0; index < candidateCount; index += 1) {
+        const prey = candidates ? candidates[index] : game.targets[index];
+        if (
+          prey.kind !== kind ||
+          prey.id === blockedTargetId ||
+          !tristarPreyIsAvailable(prey, tristarFrameContext)
+        ) {
+          continue;
+        }
+        const preyX = nearestPeriodicWorldX(prey.x, predator.x);
+        const dx = preyX - predator.x;
+        const dy = prey.y - predator.y;
+        const distanceSquared = dx * dx + dy * dy;
+        if (
+          distanceSquared < nearestDistanceSquared ||
+          (distanceSquared === nearestDistanceSquared &&
+            prey.id < (nearest?.id ?? Infinity))
+        ) {
+          nearest = prey;
+          nearestDistanceSquared = distanceSquared;
+        }
+      }
+      if (nearest) return nearest;
+    }
+    return null;
+  }
+
+  function refreshOffMinimapTristarTarget(
+    predator,
+    dt,
+    tristarFrameContext = null,
+  ) {
+    predator.tristarOffMinimapSearchCooldown = Math.max(
+      0,
+      (Number(predator.tristarOffMinimapSearchCooldown) || 0) - dt,
+    );
+    const incumbent = predator.tristarOffMinimapTarget;
+    const incumbentIsAvailable = Boolean(
+      incumbent &&
+      targetIsActive(incumbent, tristarFrameContext) &&
+      tristarPreyIsAvailable(incumbent, tristarFrameContext),
+    );
+    if (predator.tristarOffMinimapSearchCooldown > 0) {
+      if (incumbentIsAvailable) return incumbent;
+      if (!incumbent) return null;
+    }
+    predator.tristarOffMinimapTarget = nearestOffMinimapTristarPrey(
+      predator,
+      tristarFrameContext,
+    );
+    predator.tristarOffMinimapSearchCooldown =
+      TRISTAR_RULES.offMinimapSearchInterval;
+    return predator.tristarOffMinimapTarget;
+  }
+
+  function enterTristarOffMinimapSimulation(target) {
+    if (target.tristarOffMinimap || tristarHasHeldPrey(target)) return false;
+    resetTristarPulseState(target, false);
+    target.tristarOffMinimap = true;
+    target.tristarOffMinimapTarget = null;
+    target.tristarHuntTarget = null;
+    target.tristarHuntMode = "none";
+    target.tristarClusterCount = 0;
+    target.tristarClusterAnchorId = null;
+    target.tristarClusterHarvesting = false;
+    target.tristarClusterHolding = false;
+    target.tristarClusterBlockedScans = 0;
+    target.tristarClusterRepositionCooldown = 0;
+    if (!Number.isFinite(target.tristarOffMinimapSearchCooldown)) {
+      target.tristarOffMinimapSearchCooldown =
+        positiveModulo(target.id * 0.61803398875, 1) *
+        TRISTAR_RULES.offMinimapSearchInterval;
+    }
+    if (!Number.isFinite(target.tristarOffMinimapDevourCooldown)) {
+      target.tristarOffMinimapDevourCooldown =
+        positiveModulo(target.id * 0.754877666, 1) *
+        TRISTAR_RULES.offMinimapMaximumDevourInterval;
+    }
+    if (
+      target.regionType === BLOCK_TYPES.GROUND &&
+      target.movementMode !== "burrowing"
+    ) {
+      target.movementMode = "tristar-off-minimap";
+    }
+    return true;
+  }
+
+  function leaveTristarOffMinimapSimulation(target) {
+    if (!target.tristarOffMinimap) return;
+    target.tristarOffMinimap = false;
+    target.tristarOffMinimapTarget = null;
+    target.tristarOffMinimapBlockedTargetId = null;
+    target.tristarOffMinimapBlockedUntil = 0;
+    target.tristarHuntTarget = null;
+    target.tristarHuntMode = "none";
+    target.tristarClusterCount = 0;
+    target.tristarClusterAnchorId = null;
+    target.tristarClusterHarvesting = false;
+    target.tristarClusterHolding = false;
+    target.tristarClusterBlockedScans = 0;
+    target.tristarClusterRepositionCooldown = 0;
+    target.tristarSearchCooldown = 0;
+    target.tristarWanderAngle = magnitude(target.vx, target.vy) > 0.5
+      ? Math.atan2(target.vy, target.vx)
+      : target.angle;
+    target.tristarDesiredSpeed = TRISTAR_RULES.maximumSpeed;
+    resetTristarPulseState(target, false);
+    target.tristarArms?.forEach((arm, armIndex) => {
+      if (!tristarArmIsDangling(arm)) return;
+      arm.lengthScale = 1;
+      initializeTristarFreeArmState(target, armIndex);
+    });
+    if (target.regionType === BLOCK_TYPES.GROUND) {
+      target.movementMode = "tristar-roaming";
+    }
+  }
+
+  function nearestOffMinimapTristarBeetleToDevour(
+    predator,
+    tristarFrameContext,
+    minimapBounds,
+  ) {
+    const devourRadius =
+      TRISTAR_RULES.offMinimapDevourRadiusBlocks * game.map.cellSize;
+    let nearest = null;
+    let nearestDistanceSquared = Infinity;
+    visitTristarPreyInRadius(
+      predator,
+      devourRadius,
+      tristarFrameContext,
+      (prey, _preyX, distanceSquared) => {
+        if (
+          prey.kind !== ENEMY_TYPES.BEETLE ||
+          minimapTargetMarkerIsVisible(prey, minimapBounds) ||
+          !tristarPreyIsAvailable(prey, tristarFrameContext)
+        ) {
+          return true;
+        }
+        if (
+          distanceSquared < nearestDistanceSquared ||
+          (distanceSquared === nearestDistanceSquared &&
+            prey.id < (nearest?.id ?? Infinity))
+        ) {
+          nearest = prey;
+          nearestDistanceSquared = distanceSquared;
+        }
+        return true;
+      },
+    );
+    return nearest;
+  }
+
+  function queueOffMinimapTristarDevour(
+    predator,
+    dt,
+    devouredTargets,
+    tristarFrameContext,
+    minimapBounds,
+  ) {
+    if (
+      predator.regionType !== BLOCK_TYPES.GROUND ||
+      predator.movementMode === "burrowing" ||
+      predator.movementMode === "falling"
+    ) {
+      return;
+    }
+    predator.tristarOffMinimapDevourCooldown = Math.max(
+      0,
+      (Number(predator.tristarOffMinimapDevourCooldown) || 0) - dt,
+    );
+    if (predator.tristarOffMinimapDevourCooldown > 0) return;
+    const prey = nearestOffMinimapTristarBeetleToDevour(
+      predator,
+      tristarFrameContext,
+      minimapBounds,
+    );
+    if (!prey) return;
+    prey.tristarDevourQueued = true;
+    devouredTargets.push({ predator, prey, emitEffects: false });
+    predator.tristarOffMinimapDevourCooldown = randomRange(
+      TRISTAR_RULES.offMinimapMinimumDevourInterval,
+      TRISTAR_RULES.offMinimapMaximumDevourInterval,
+    );
+    if (predator.tristarOffMinimapTarget === prey) {
+      predator.tristarOffMinimapTarget = null;
+      predator.tristarOffMinimapSearchCooldown = 0;
+    }
+  }
+
+  function moveTristarOffMinimapThroughGround(
+    target,
+    desiredAngle,
+    dt,
+    minimapBounds,
+  ) {
+    const lookahead = Math.max(
+      game.map.cellSize * 1.5,
+      TRISTAR_RULES.maximumSpeed * TRISTAR_RULES.terrainLookaheadSeconds,
+    );
+    let steeringAngle = null;
+    for (
+      let index = 0;
+      index < TRISTAR_STEERING_OFFSETS.length;
+      index += 1
+    ) {
+      const candidateAngle =
+        desiredAngle + TRISTAR_STEERING_OFFSETS[index];
+      if (!tristarGroundPathIsClear(target, candidateAngle, lookahead)) {
+        continue;
+      }
+      steeringAngle = candidateAngle;
+      break;
+    }
+    if (steeringAngle === null) {
+      const turnSide = Math.sin(target.id * 12.9898 + game.elapsed * 0.7) < 0
+        ? -1
+        : 1;
+      const fallbackAngle = target.angle + turnSide * Math.PI * 0.75;
+      if (tristarGroundPathIsClear(target, fallbackAngle, lookahead)) {
+        steeringAngle = fallbackAngle;
+      }
+    }
+    if (steeringAngle === null) {
+      target.vx = 0;
+      target.vy = 0;
+      target.tristarSpeed = 0;
+      return "blocked";
+    }
+
+    const vx = Math.cos(steeringAngle) * TRISTAR_RULES.maximumSpeed;
+    const vy = Math.sin(steeringAngle) * TRISTAR_RULES.maximumSpeed;
+    const maximumStep =
+      game.map.cellSize * TRISTAR_RULES.movementSubstepBlocks;
+    const stepCount = Math.max(
+      1,
+      Math.ceil(TRISTAR_RULES.maximumSpeed * dt / maximumStep),
+    );
+    const stepTime = dt / stepCount;
+    for (let step = 0; step < stepCount; step += 1) {
+      const nextX = target.x + vx * stepTime;
+      const nextY = target.y + vy * stepTime;
+      if (getBlockAtWorld(nextX, nextY)?.type !== BLOCK_TYPES.GROUND) {
+        target.vx = 0;
+        target.vy = 0;
+        target.tristarSpeed = 0;
+        return "blocked";
+      }
+      target.x = nextX;
+      target.y = nextY;
+    }
+    target.vx = vx;
+    target.vy = vy;
+    target.tristarSpeed = TRISTAR_RULES.maximumSpeed;
+    target.angle = turnAngleToward(
+      target.angle,
+      steeringAngle - TRISTAR_RULES.bodyFirstVertexOffset,
+      TRISTAR_RULES.pulseBodyTurnSpeed * dt,
+    );
+    keepEnemyInsideWorld(target);
+    target.regionType = BLOCK_TYPES.GROUND;
+    return minimapTargetMarkerIsVisible(target, minimapBounds)
+      ? "visible"
+      : "moved";
+  }
+
+  function updateTristarOffMinimap(
+    target,
+    dt,
+    devouredTargets,
+    tristarFrameContext,
+    minimapBounds,
+  ) {
+    if (!target.tristarOffMinimap && !enterTristarOffMinimapSimulation(target)) {
+      return false;
+    }
+    queueOffMinimapTristarDevour(
+      target,
+      dt,
+      devouredTargets,
+      tristarFrameContext,
+      minimapBounds,
+    );
+
+    if (target.movementMode === "burrowing") {
+      updateBurrowingEnemy(target, dt);
+    } else if (
+      target.movementMode === "falling" ||
+      target.regionType !== BLOCK_TYPES.GROUND
+    ) {
+      updateFallingEnemy(target, dt);
+    } else {
+      const huntTarget = refreshOffMinimapTristarTarget(
+        target,
+        dt,
+        tristarFrameContext,
+      );
+      if (!huntTarget) {
+        target.vx = 0;
+        target.vy = 0;
+        target.tristarSpeed = 0;
+      } else {
+        const huntX = nearestPeriodicWorldX(huntTarget.x, target.x);
+        const dx = huntX - target.x;
+        const dy = huntTarget.y - target.y;
+        const stopRadius =
+          TRISTAR_RULES.offMinimapDevourRadiusBlocks * game.map.cellSize;
+        const huntTargetMarkerIsVisible = minimapTargetMarkerIsVisible(
+          huntTarget,
+          minimapBounds,
+        );
+        if (
+          !huntTargetMarkerIsVisible &&
+          dx * dx + dy * dy <= stopRadius * stopRadius
+        ) {
+          target.vx = 0;
+          target.vy = 0;
+          target.tristarSpeed = 0;
+        } else {
+          const movementResult = moveTristarOffMinimapThroughGround(
+            target,
+            Math.atan2(dy, dx),
+            dt,
+            minimapBounds,
+          );
+          if (movementResult === "blocked") {
+            target.tristarOffMinimapBlockedTargetId = huntTarget.id;
+            target.tristarOffMinimapBlockedUntil =
+              game.elapsed + TRISTAR_RULES.offMinimapSearchInterval * 4;
+            target.tristarOffMinimapTarget = null;
+            target.tristarOffMinimapSearchCooldown = 0;
+          }
+        }
+      }
+    }
+    if (
+      target.regionType === BLOCK_TYPES.GROUND &&
+      target.movementMode !== "burrowing"
+    ) {
+      target.movementMode = "tristar-off-minimap";
+    }
+    if (minimapTargetMarkerIsVisible(target, minimapBounds)) {
+      leaveTristarOffMinimapSimulation(target);
+    }
+    return true;
+  }
+
+  function updateTristarCapturedPrey(
+    target,
+    dt,
+    devouredTargets,
+    tristarFrameContext = null,
+  ) {
     let heldCount = 0;
     for (
       let armIndex = 0;
@@ -10313,7 +11016,14 @@
       const arm = target.tristarArms[armIndex];
       const prey = arm.prey;
       if (!prey) continue;
-      if (!tristarHeldPreyIsValid(target, armIndex, prey)) {
+      if (
+        !tristarHeldPreyIsValid(
+          target,
+          armIndex,
+          prey,
+          tristarFrameContext,
+        )
+      ) {
         releaseTristarArm(target, armIndex);
         continue;
       }
@@ -10415,7 +11125,12 @@
     return heldCount;
   }
 
-  function updateTristar(target, dt, devouredTargets) {
+  function updateTristar(
+    target,
+    dt,
+    devouredTargets,
+    tristarFrameContext = null,
+  ) {
     if (target.movementMode === "burrowing") {
       resetTristarPulseState(target, false);
       updateBurrowingEnemy(target, dt);
@@ -10447,7 +11162,7 @@
     target.tristarSearchCooldown -= dt;
     if (target.tristarSearchCooldown <= 0) {
       target.tristarSearchCooldown = TRISTAR_RULES.scanInterval;
-      refreshTristarHunt(target);
+      refreshTristarHunt(target, tristarFrameContext);
     }
 
     let desiredAngle = target.tristarWanderAngle;
@@ -10461,8 +11176,8 @@
       const dx = huntX - target.x;
       const dy = huntTarget.y - target.y;
       if (
-        !targetIsActive(huntTarget) ||
-        !tristarPreyIsAvailable(huntTarget) ||
+        !targetIsActive(huntTarget, tristarFrameContext) ||
+        !tristarPreyIsAvailable(huntTarget, tristarFrameContext) ||
         dx * dx + dy * dy > releaseRadius * releaseRadius
       ) {
         target.tristarHuntTarget = null;
@@ -10504,13 +11219,17 @@
       desiredAngle,
       desiredSpeed,
       dt,
-      tristarShouldSuppressLocomotionForPrey(target),
+      tristarShouldSuppressLocomotionForPrey(
+        target,
+        tristarFrameContext,
+      ),
     );
     updateTristarFreeArms(target, dt);
     const heldCount = updateTristarCapturedPrey(
       target,
       dt,
       devouredTargets,
+      tristarFrameContext,
     );
     projectTristarFreeArmSeparation(target, dt);
     target.movementMode = target.tristarClusterHolding
@@ -10525,7 +11244,7 @@
   function finishTristarDevours(devouredTargets) {
     if (devouredTargets.length === 0) return;
     const removedTargets = new Set();
-    devouredTargets.forEach(({ predator, prey }) => {
+    devouredTargets.forEach(({ predator, prey, emitEffects = true }) => {
       const preyIndex = game.targets.indexOf(prey);
       if (preyIndex < 0 || !prey.tristarDevourQueued) return;
       game.targets.splice(preyIndex, 1);
@@ -10540,13 +11259,15 @@
         prey.roundBudgeted = false;
       }
       removedTargets.add(prey);
-      spawnParticles(
-        predator.x,
-        predator.y,
-        Math.max(4, Math.round(4 * Math.min(3, prey.sizeScale))),
-        prey.kind,
-        prey.sizeScale,
-      );
+      if (emitEffects) {
+        spawnParticles(
+          predator.x,
+          predator.y,
+          Math.max(4, Math.round(4 * Math.min(3, prey.sizeScale))),
+          prey.kind,
+          prey.sizeScale,
+        );
+      }
     });
     if (removedTargets.size > 0) {
       releaseAcidParticlesAttachedToTargets(removedTargets);
@@ -11024,7 +11745,20 @@
     // Snapshot every target before anything moves. Tri-Star arms update prey
     // later in this pass, so acid still receives the prey's true full-frame
     // sweep rather than a partially overwritten starting position.
+    const needsTristarTargetIndex = game.targets.some(
+      (target) =>
+        target.kind === ENEMY_TYPES.TRISTAR ||
+        target.tristarCaptorId !== null,
+    );
+    const targetById = needsTristarTargetIndex
+      ? game.tristarTargetById || new Map()
+      : null;
+    if (targetById) {
+      game.tristarTargetById = targetById;
+      targetById.clear();
+    }
     game.targets.forEach((target) => {
+      targetById?.set(target.id, target);
       keepEnemyInsideWorld(target);
       target.acidPreviousX = target.x;
       target.acidPreviousY = target.y;
@@ -11042,6 +11776,9 @@
       }
     });
 
+    const tristarMinimapBounds = needsTristarTargetIndex
+      ? getMinimapWorldBounds()
+      : null;
     const tristarTargets = [];
     game.targets.forEach((target) => {
       if (
@@ -11049,11 +11786,14 @@
         (target.tongueCaptured || target.paralyzed || target.latched)
       ) {
         releaseAllTristarPrey(target);
+        if (
+          minimapTargetMarkerIsVisible(target, tristarMinimapBounds)
+        ) {
+          leaveTristarOffMinimapSimulation(target);
+        }
       }
       if (target.tristarCaptorId !== null) {
-        const captor = game.targets.find(
-          (candidate) => candidate.id === target.tristarCaptorId,
-        );
+        const captor = targetById?.get(target.tristarCaptorId);
         const arm = captor?.tristarArms?.[target.tristarCaptorArm];
         if (arm?.prey === target) return;
         target.tristarCaptorId = null;
@@ -11065,8 +11805,15 @@
         updateParalyzedEnemy(target, dt);
         if (target.kind === ENEMY_TYPES.TRISTAR) {
           if (!target.tristarArms) initializeTristarTarget(target);
-          updateTristarFreeArms(target, dt);
-          projectTristarFreeArmSeparation(target, dt);
+          if (
+            minimapTargetMarkerIsVisible(target, tristarMinimapBounds)
+          ) {
+            leaveTristarOffMinimapSimulation(target);
+            updateTristarFreeArms(target, dt);
+            projectTristarFreeArmSeparation(target, dt);
+          } else {
+            enterTristarOffMinimapSimulation(target);
+          }
         }
         return;
       }
@@ -11112,10 +11859,28 @@
     });
 
     const devouredTargets = [];
+    const tristarFrameContext = tristarTargets.length > 0
+      ? createTristarFrameContext(targetById)
+      : null;
     tristarTargets.forEach((target) => {
-      if (!targetIsActive(target)) return;
+      if (!targetIsActive(target, tristarFrameContext)) return;
       if (!target.tristarArms) initializeTristarTarget(target);
-      updateTristar(target, dt, devouredTargets);
+      const markerIsVisible = minimapTargetMarkerIsVisible(
+        target,
+        tristarMinimapBounds,
+      );
+      if (markerIsVisible || tristarHasHeldPrey(target)) {
+        leaveTristarOffMinimapSimulation(target);
+        updateTristar(target, dt, devouredTargets, tristarFrameContext);
+        return;
+      }
+      updateTristarOffMinimap(
+        target,
+        dt,
+        devouredTargets,
+        tristarFrameContext,
+        tristarMinimapBounds,
+      );
     });
     finishTristarDevours(devouredTargets);
   }
@@ -13150,7 +13915,10 @@
     return game.targets.find((target) => target.id === tongue.targetId) || null;
   }
 
-  function targetHasActiveTongue(target) {
+  function targetHasActiveTongue(target, tristarFrameContext = null) {
+    if (tristarFrameContext?.tongueTargetIds) {
+      return tristarFrameContext.tongueTargetIds.has(target.id);
+    }
     return game.tongues.some((tongue) => tongue.targetId === target.id);
   }
 
@@ -13923,10 +14691,73 @@
     ];
   }
 
+  function buildRetractingTongueObstacleField() {
+    const obstacles = retractingTongueWormObstacles();
+    const cellSize = Math.max(
+      game.map.cellSize * 4,
+      wormSegmentSpacing() * 4,
+    );
+    const buckets = new Map();
+    obstacles.forEach((obstacle, obstacleIndex) => {
+      obstacle.tongueObstacleIndex = obstacleIndex;
+      obstacle.tongueQueryStamp = 0;
+      const startColumn = Math.floor((obstacle.x - obstacle.radius) / cellSize);
+      const endColumn = Math.floor((obstacle.x + obstacle.radius) / cellSize);
+      const startRow = Math.floor((obstacle.y - obstacle.radius) / cellSize);
+      const endRow = Math.floor((obstacle.y + obstacle.radius) / cellSize);
+      for (let row = startRow; row <= endRow; row += 1) {
+        for (let column = startColumn; column <= endColumn; column += 1) {
+          // World dimensions are far below 65,536 broad-phase columns, so this
+          // packed numeric key is collision-free without allocating strings.
+          const key = row * 65536 + column;
+          let bucket = buckets.get(key);
+          if (!bucket) {
+            bucket = [];
+            buckets.set(key, bucket);
+          }
+          bucket.push(obstacle);
+        }
+      }
+    });
+    return {
+      obstacles,
+      buckets,
+      cellSize,
+      queryStamp: 0,
+      queryCandidates: [],
+    };
+  }
+
+  function tongueObstacleCandidates(start, end, obstacleSource) {
+    if (!obstacleSource?.buckets) return obstacleSource || [];
+    const candidates = obstacleSource.queryCandidates;
+    candidates.length = 0;
+    obstacleSource.queryStamp += 1;
+    const queryStamp = obstacleSource.queryStamp;
+    const cellSize = obstacleSource.cellSize;
+    const startColumn = Math.floor(Math.min(start.x, end.x) / cellSize);
+    const endColumn = Math.floor(Math.max(start.x, end.x) / cellSize);
+    const startRow = Math.floor(Math.min(start.y, end.y) / cellSize);
+    const endRow = Math.floor(Math.max(start.y, end.y) / cellSize);
+    for (let row = startRow; row <= endRow; row += 1) {
+      for (let column = startColumn; column <= endColumn; column += 1) {
+        const bucket = obstacleSource.buckets.get(row * 65536 + column);
+        if (!bucket) continue;
+        for (let index = 0; index < bucket.length; index += 1) {
+          const obstacle = bucket[index];
+          if (obstacle.tongueQueryStamp === queryStamp) continue;
+          obstacle.tongueQueryStamp = queryStamp;
+          candidates.push(obstacle);
+        }
+      }
+    }
+    return candidates;
+  }
+
   function tongueLinkObstacleContact(
     start,
     end,
-    obstacles,
+    obstacleSource,
     avoidanceSide,
   ) {
     const linkX = end.x - start.x;
@@ -13934,7 +14765,7 @@
     const linkLengthSquared = linkX * linkX + linkY * linkY;
     let deepestContact = null;
 
-    obstacles.forEach((obstacle) => {
+    tongueObstacleCandidates(start, end, obstacleSource).forEach((obstacle) => {
       const startOffsetX = start.x - obstacle.x;
       const startOffsetY = start.y - obstacle.y;
       const endOffsetX = end.x - obstacle.x;
@@ -13995,13 +14826,24 @@
 
       const penetration = obstacle.radius - distance;
       const depthRatio = penetration / Math.max(1, obstacle.radius);
-      if (!deepestContact || depthRatio > deepestContact.depthRatio) {
+      const obstacleIndex = Number.isFinite(obstacle.tongueObstacleIndex)
+        ? obstacle.tongueObstacleIndex
+        : Number.MAX_SAFE_INTEGER;
+      if (
+        !deepestContact ||
+        depthRatio > deepestContact.depthRatio ||
+        (
+          depthRatio === deepestContact.depthRatio &&
+          obstacleIndex < deepestContact.obstacleIndex
+        )
+      ) {
         deepestContact = {
           amount,
           normalX,
           normalY,
           penetration,
           depthRatio,
+          obstacleIndex,
         };
       }
     });
@@ -14103,7 +14945,7 @@
     }
   }
 
-  function updateTongueFreefall(tongue, dt) {
+  function updateTongueFreefall(tongue, dt, sharedObstacleField = null) {
     const nodes = tongue.freefallNodes;
     if (!nodes?.length) return;
     const target = activeTongueTarget(tongue);
@@ -14133,7 +14975,7 @@
         : 1;
     const retracting = tongue.phase === "captured-retracting";
     const wormObstacles = retracting
-      ? retractingTongueWormObstacles()
+      ? sharedObstacleField || buildRetractingTongueObstacleField()
       : null;
     if (retracting && !tongue.retractAvoidanceSide) {
       const tip = nodes[nodes.length - 1];
@@ -14365,7 +15207,12 @@
     return true;
   }
 
-  function updateTongue(tongue, dt, passengerCaptureState) {
+  function updateTongue(
+    tongue,
+    dt,
+    passengerCaptureState,
+    sharedObstacleField,
+  ) {
     if (
       tongue.heavyHold &&
       (
@@ -14378,7 +15225,7 @@
     }
 
     if (tongue.phase === "heavy-grappled") {
-      updateTongueFreefall(tongue, dt);
+      updateTongueFreefall(tongue, dt, sharedObstacleField);
       if (tongue.passengers?.length) {
         positionTonguePassengers(
           tongue,
@@ -14414,7 +15261,7 @@
           tongue.progress - TONGUE_RULES.capturedRetractRate * dt,
         );
       }
-      updateTongueFreefall(tongue, dt);
+      updateTongueFreefall(tongue, dt, sharedObstacleField);
       if (tongue.passengers?.length) {
         positionTonguePassengers(
           tongue,
@@ -14523,11 +15370,26 @@
 
   function updateTongues(dt) {
     const passengerCaptureState = prepareTonguePassengerCapture();
+    const needsRetractionObstacles = game.tongues.some(
+      (tongue) =>
+        tongue.freefallNodes?.length > 0 &&
+        (
+          tongue.phase === "captured-retracting" ||
+          (
+            tongue.phase === "captured-holding" &&
+            tongue.holdRemaining <= dt
+          )
+        ),
+    );
+    const sharedObstacleField = needsRetractionObstacles
+      ? buildRetractingTongueObstacleField()
+      : null;
     for (let index = game.tongues.length - 1; index >= 0; index -= 1) {
       updateTongue(
         game.tongues[index],
         dt,
         passengerCaptureState,
+        sharedObstacleField,
       );
     }
     if (passengerCaptureState) clearAcidTargetBroadphase();
@@ -14679,9 +15541,10 @@
       }
     });
     if (game.swarmMode) {
+      const kindCounts = liveEnemyKindCounts();
       consumedTargets
         .filter((target) => target.kind !== ENEMY_TYPES.MEAT)
-        .forEach((target) => spawnSwarmTargets(target));
+        .forEach((target) => spawnSwarmTargets(target, 2, kindCounts));
     }
     awardScore(
       consumedTargets.reduce(
@@ -16194,7 +17057,7 @@
       if (recordHeadPath()) updateSegments();
     }
     updateAcidAbility(dt);
-    refillRoundTargetsImmediately();
+    refillRoundTargetsTimeSliced();
     updateAcidTunnelDecay();
     updateTunnelDecay();
     updateParticles(dt);
@@ -17746,9 +18609,28 @@
     terrainLayerRenderState.drawItems = drawItems;
     terrainLayerRenderState.zoom = zoom;
 
-    TERRAIN_DEPTH_LAYERS.forEach((layer) => {
-      drawTerrainDepthLayer(layer, drawItems, zoom);
-    });
+    // At zoomed-out tiers, the fixed-screen-width depth strokes overlap while
+    // covering several times more chunks. Drop the far band at half-detail,
+    // then retain only the near rim at the camera floor. Closer views keep the
+    // full extrusion, while the most expensive growth view sheds eight of its
+    // twelve typical contour submissions without changing terrain geometry.
+    const firstDepthLayerIndex =
+      zoom <= CAMERA_RULES.minimumZoom + 0.000001
+        ? TERRAIN_DEPTH_LAYERS.length - 1
+        : zoom <= TERRAIN_CHUNK_LOW_DETAIL_ZOOM
+          ? 1
+          : 0;
+    for (
+      let layerIndex = firstDepthLayerIndex;
+      layerIndex < TERRAIN_DEPTH_LAYERS.length;
+      layerIndex += 1
+    ) {
+      drawTerrainDepthLayer(
+        TERRAIN_DEPTH_LAYERS[layerIndex],
+        drawItems,
+        zoom,
+      );
+    }
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
@@ -18038,15 +18920,7 @@
   }
 
   function tristarArmTurnLimit(segmentIndex) {
-    const progress =
-      TRISTAR_RULES.armSegments > 1
-        ? segmentIndex / (TRISTAR_RULES.armSegments - 1)
-        : 1;
-    return lerp(
-      TRISTAR_RULES.firstSegmentTurnLimit,
-      TRISTAR_RULES.lastSegmentTurnLimit,
-      progress,
-    );
+    return TRISTAR_ARM_TURN_LIMITS[segmentIndex];
   }
 
   function tristarArmHeadingsFromPoints(points) {
@@ -18316,11 +19190,46 @@
         buffer.fill(0),
       );
     }
-    return {
-      contactStrength: target.tristarAvoidanceContactStrength,
-      forceX: target.tristarAvoidanceForceX,
-      forceY: target.tristarAvoidanceForceY,
-    };
+    if (
+      target.tristarAvoidanceArmHasContact?.length !==
+      TRISTAR_RULES.armCount
+    ) {
+      target.tristarAvoidanceArmHasContact = new Uint8Array(
+        TRISTAR_RULES.armCount,
+      );
+    }
+    const activeSegmentsAreValid =
+      target.tristarAvoidanceActiveSegments?.length ===
+        TRISTAR_RULES.armCount &&
+      target.tristarAvoidanceActiveSegments.every(
+        (segments) => segments?.length === TRISTAR_RULES.armSegments,
+      );
+    if (!activeSegmentsAreValid) {
+      target.tristarAvoidanceActiveSegments = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => new Uint8Array(TRISTAR_RULES.armSegments),
+      );
+    }
+    if (
+      target.tristarAvoidanceActiveSegmentCounts?.length !==
+      TRISTAR_RULES.armCount
+    ) {
+      target.tristarAvoidanceActiveSegmentCounts = new Uint8Array(
+        TRISTAR_RULES.armCount,
+      );
+    }
+    if (!target.tristarAvoidanceForceResult) {
+      target.tristarAvoidanceForceResult = {};
+    }
+    const result = target.tristarAvoidanceForceResult;
+    result.activeSegmentCounts =
+      target.tristarAvoidanceActiveSegmentCounts;
+    result.activeSegments = target.tristarAvoidanceActiveSegments;
+    result.armHasContact = target.tristarAvoidanceArmHasContact;
+    result.contactStrength = target.tristarAvoidanceContactStrength;
+    result.forceX = target.tristarAvoidanceForceX;
+    result.forceY = target.tristarAvoidanceForceY;
+    return result;
   }
 
   function tristarArmAvoidancePointBuffers(target) {
@@ -18816,6 +19725,7 @@
       target,
       options.clear !== false,
     );
+    buffers.armHasContact.fill(0);
     const contact = {};
     const broadRadii = tristarArmAvoidanceBroadRadii(target);
     const coreRadius =
@@ -18967,6 +19877,8 @@
             const force = 0.28 + smoothPenetration * 0.72;
             const forceX = normalX * force;
             const forceY = normalY * force;
+            buffers.armHasContact[armA] = 1;
+            buffers.armHasContact[armB] = 1;
             buffers.forceX[armA][segmentA] += forceX;
             buffers.forceY[armA][segmentA] += forceY;
             buffers.forceX[armB][segmentB] -= forceX;
@@ -18983,6 +19895,31 @@
         }
       }
     }
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      let activeCount = 0;
+      if (buffers.armHasContact[armIndex]) {
+        for (
+          let segmentIndex = 0;
+          segmentIndex < TRISTAR_RULES.armSegments;
+          segmentIndex += 1
+        ) {
+          if (
+            buffers.forceX[armIndex][segmentIndex] === 0 &&
+            buffers.forceY[armIndex][segmentIndex] === 0 &&
+            buffers.contactStrength[armIndex][segmentIndex] === 0
+          ) {
+            continue;
+          }
+          buffers.activeSegments[armIndex][activeCount] = segmentIndex;
+          activeCount += 1;
+        }
+      }
+      buffers.activeSegmentCounts[armIndex] = activeCount;
+    }
     return buffers;
   }
 
@@ -18993,15 +19930,20 @@
     segmentContactStrength,
     jointIndex,
     result,
+    activeSegments = null,
+    activeSegmentCount = 0,
   ) {
     const joint = points[jointIndex];
     let torque = 0;
     let contactStrength = 0;
-    for (
-      let segmentIndex = jointIndex;
-      segmentIndex < TRISTAR_RULES.armSegments;
-      segmentIndex += 1
-    ) {
+    const scanCount = activeSegments
+      ? activeSegmentCount
+      : TRISTAR_RULES.armSegments - jointIndex;
+    for (let scanIndex = 0; scanIndex < scanCount; scanIndex += 1) {
+      const segmentIndex = activeSegments
+        ? activeSegments[scanIndex]
+        : jointIndex + scanIndex;
+      if (segmentIndex < jointIndex) continue;
       const segmentForceX = forceX[segmentIndex];
       const segmentForceY = forceY[segmentIndex];
       contactStrength = Math.max(
@@ -19198,14 +20140,22 @@
           );
           const relativeAngularVelocity =
             angularVelocity - parentAngularVelocity;
-          const avoidance = tristarArmAvoidanceAtJoint(
-            pointSets[armIndex],
-            avoidanceForces.forceX[armIndex],
-            avoidanceForces.forceY[armIndex],
-            avoidanceForces.contactStrength[armIndex],
-            segmentIndex,
-            jointAvoidance,
-          );
+          let avoidance = jointAvoidance;
+          if (avoidanceForces.armHasContact[armIndex]) {
+            avoidance = tristarArmAvoidanceAtJoint(
+              pointSets[armIndex],
+              avoidanceForces.forceX[armIndex],
+              avoidanceForces.forceY[armIndex],
+              avoidanceForces.contactStrength[armIndex],
+              segmentIndex,
+              jointAvoidance,
+              avoidanceForces.activeSegments[armIndex],
+              avoidanceForces.activeSegmentCounts[armIndex],
+            );
+          } else {
+            jointAvoidance.contactStrength = 0;
+            jointAvoidance.torque = 0;
+          }
           const separationError = clamp(
             Math.atan2(
               Math.sin(rootAngle - heading),
@@ -19530,6 +20480,7 @@
       pass < TRISTAR_RULES.heldArmEndpointPasses;
       pass += 1
     ) {
+      let appliedAnyTurn = false;
       for (
         let segmentIndex = TRISTAR_RULES.armSegments - 1;
         segmentIndex >= 0;
@@ -19550,6 +20501,7 @@
         const nextTurn = clamp(oldTurn + angleDelta, -limit, limit);
         const appliedTurn = nextTurn - oldTurn;
         if (Math.abs(appliedTurn) <= 0.0000001) continue;
+        appliedAnyTurn = true;
         turns[segmentIndex] = nextTurn;
         const cosine = Math.cos(appliedTurn);
         const sine = Math.sin(appliedTurn);
@@ -19578,6 +20530,7 @@
       ) {
         break;
       }
+      if (!appliedAnyTurn) break;
     }
     return magnitude(effectorX - goalX, effectorY - goalY);
   }
@@ -20028,6 +20981,43 @@
     return turns;
   }
 
+  function beginTristarIkScratchSession(target) {
+    target.tristarIkScratchCursor = 0;
+    target.tristarIkScratchSessionActive = true;
+  }
+
+  function endTristarIkScratchSession(target) {
+    target.tristarIkScratchSessionActive = false;
+    target.tristarIkScratchCursor = 0;
+  }
+
+  function acquireTristarIkScratchSolution(target) {
+    if (!target.tristarIkScratchSessionActive) return null;
+    if (!Array.isArray(target.tristarIkScratchPool)) {
+      target.tristarIkScratchPool = [];
+    }
+    const cursor = Math.max(
+      0,
+      Math.floor(Number(target.tristarIkScratchCursor) || 0),
+    );
+    let solution = target.tristarIkScratchPool[cursor];
+    if (!solution) {
+      solution = {
+        turns: new Float64Array(TRISTAR_RULES.armSegments),
+        points: Array.from(
+          { length: TRISTAR_RULES.armSegments + 1 },
+          () => ({ x: 0, y: 0 }),
+        ),
+        goal: { x: 0, y: 0 },
+        effector: { x: 0, y: 0 },
+      };
+      target.tristarIkScratchPool[cursor] = solution;
+    }
+    target.tristarIkScratchCursor = cursor + 1;
+    solution.alternatives = null;
+    return solution;
+  }
+
   function tristarArmTipIkSolution(
     target,
     armIndex,
@@ -20036,35 +21026,49 @@
     options = {},
   ) {
     const root = tristarArmRoot(target, armIndex);
-    const resolvedGoal = {
-      x: nearestPeriodicWorldX(goal.x, root.x),
-      y: goal.y,
-    };
+    const scratchSolution = acquireTristarIkScratchSolution(target);
+    const resolvedGoal = scratchSolution?.goal || {};
+    resolvedGoal.x = nearestPeriodicWorldX(goal.x, root.x);
+    resolvedGoal.y = goal.y;
     const lengthScale = clamp(
       Number(options.lengthScale) || 1,
       1,
       TRISTAR_RULES.preyReachMaximumStretch,
     );
     const turnDirection = Math.sign(Number(options.turnDirection) || 0);
-    const turns = Array.from(
-      { length: TRISTAR_RULES.armSegments },
-      (_, segmentIndex) => {
-        const limit = tristarArmTurnLimit(segmentIndex);
-        const seed = Number(seedTurns?.[segmentIndex]) || 0;
-        return turnDirection > 0
-          ? clamp(seed, 0, limit)
-          : turnDirection < 0
-            ? clamp(seed, -limit, 0)
-            : clamp(seed, -limit, limit);
-      },
+    const turns = scratchSolution?.turns || new Array(
+      TRISTAR_RULES.armSegments,
     );
-    const points = tristarArmPointsFromTurns(
+    for (
+      let segmentIndex = 0;
+      segmentIndex < TRISTAR_RULES.armSegments;
+      segmentIndex += 1
+    ) {
+      const limit = tristarArmTurnLimit(segmentIndex);
+      const seed = Number(seedTurns?.[segmentIndex]) || 0;
+      turns[segmentIndex] = turnDirection > 0
+        ? clamp(seed, 0, limit)
+        : turnDirection < 0
+          ? clamp(seed, -limit, 0)
+          : clamp(seed, -limit, limit);
+    }
+    const points = scratchSolution?.points || tristarArmPointsFromTurns(
       target,
       armIndex,
       turns,
       1,
       lengthScale,
     );
+    if (scratchSolution) {
+      fillTristarArmPointsFromTurns(
+        target,
+        armIndex,
+        turns,
+        points,
+        1,
+        lengthScale,
+      );
+    }
     const endOffsetAngle = Number(options.endOffsetAngle) || 0;
     const endOffsetDistance = Math.max(
       0,
@@ -20086,6 +21090,7 @@
       pass < TRISTAR_RULES.tipIkPasses;
       pass += 1
     ) {
+      let appliedAnyTurn = false;
       for (
         let segmentIndex = TRISTAR_RULES.armSegments - 1;
         segmentIndex >= 0;
@@ -20113,6 +21118,7 @@
             : clamp(oldTurn + angleDelta, -limit, limit);
         const appliedTurn = nextTurn - oldTurn;
         if (Math.abs(appliedTurn) <= 0.0000001) continue;
+        appliedAnyTurn = true;
         turns[segmentIndex] = nextTurn;
         const cosine = Math.cos(appliedTurn);
         const sine = Math.sin(appliedTurn);
@@ -20143,21 +21149,25 @@
       ) {
         break;
       }
+      if (!appliedAnyTurn) break;
     }
 
     const error = magnitude(
       effectorX - resolvedGoal.x,
       effectorY - resolvedGoal.y,
     );
-    return {
+    const solution = scratchSolution || {
       turns,
       points,
       goal: resolvedGoal,
-      effector: { x: effectorX, y: effectorY },
-      error,
-      lengthScale,
-      reached: error <= TRISTAR_RULES.tipIkTolerance,
+      effector: { x: 0, y: 0 },
     };
+    solution.effector.x = effectorX;
+    solution.effector.y = effectorY;
+    solution.error = error;
+    solution.lengthScale = lengthScale;
+    solution.reached = error <= TRISTAR_RULES.tipIkTolerance;
+    return solution;
   }
 
   function tristarArmReachSolution(target, armIndex, prey) {
@@ -20193,17 +21203,9 @@
       const seeds = [
         currentTurns,
         tristarArmGreedyTurns(target, armIndex, goal, lengthScale),
-        Array.from({ length: TRISTAR_RULES.armSegments }, () => 0),
-        Array.from(
-          { length: TRISTAR_RULES.armSegments },
-          (_, segmentIndex) =>
-            tristarArmTurnLimit(segmentIndex) * 0.72,
-        ),
-        Array.from(
-          { length: TRISTAR_RULES.armSegments },
-          (_, segmentIndex) =>
-            -tristarArmTurnLimit(segmentIndex) * 0.72,
-        ),
+        TRISTAR_ARM_ZERO_TURNS,
+        TRISTAR_ARM_POSITIVE_REACH_SEED,
+        TRISTAR_ARM_NEGATIVE_REACH_SEED,
       ];
       for (let seedIndex = 0; seedIndex < seeds.length; seedIndex += 1) {
         const solution = tristarArmTipIkSolution(
@@ -20330,6 +21332,77 @@
     );
   }
 
+  function fillCurrentTristarArmPoints(target, armIndex, points) {
+    const visualScale = target.captureScale ?? 1;
+    const arm = target.tristarArms?.[armIndex];
+    const prey = arm?.prey;
+    const hasLatchedPrey = Boolean(
+      prey &&
+      prey.tristarCaptorId === target.id &&
+      prey.tristarCaptorArm === armIndex,
+    );
+    if (tristarFreeArmStateIsValid(arm)) {
+      return tristarArmPointsFromRootHeadings(
+        tristarArmRoot(target, armIndex, visualScale),
+        arm.freeHeadings,
+        visualScale,
+        points,
+        0,
+        resolvedTristarArmLengthScale(arm),
+      );
+    }
+    if (hasLatchedPrey) {
+      ensureTristarHeldInertiaBuffers(arm);
+      fillTristarArmPlanTurns(
+        arm,
+        arm.heldPlanTurns,
+        arm.latchProgress,
+        arm.pullProgress,
+      );
+      fillTristarArmPointsFromTurns(
+        target,
+        armIndex,
+        arm.heldPlanTurns,
+        points,
+        visualScale,
+        tristarHeldArmLengthScaleAtProgress(
+          arm,
+          arm.latchProgress,
+          arm.pullProgress,
+        ),
+      );
+      return points;
+    }
+    return tristarArmPointsFromRootHeadings(
+      tristarArmRoot(target, armIndex, visualScale),
+      tristarPassiveArmHeadings(target, armIndex),
+      visualScale,
+      points,
+      0,
+      resolvedTristarArmLengthScale(arm),
+    );
+  }
+
+  function tristarArmRenderPointBuffers(target) {
+    const buffersAreValid =
+      target.tristarRenderPointSets?.length === TRISTAR_RULES.armCount &&
+      target.tristarRenderPointSets.every(
+        (points) =>
+          points?.length === TRISTAR_RULES.armSegments + 1 &&
+          points.every((point) => point && typeof point === "object"),
+      );
+    if (!buffersAreValid) {
+      target.tristarRenderPointSets = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => Array.from(
+          { length: TRISTAR_RULES.armSegments + 1 },
+          () => ({ x: 0, y: 0 }),
+        ),
+      );
+    }
+    return target.tristarRenderPointSets;
+  }
+
   function tristarArmNormalAngle(target, armIndex, points, pointIndex) {
     if (pointIndex === 0) {
       return (
@@ -20391,10 +21464,18 @@
 
   function drawTristarArms(target, targetContext = ctx) {
     const visualScale = target.captureScale ?? 1;
-    const armPointSets = Array.from(
-      { length: TRISTAR_RULES.armCount },
-      (_, armIndex) => getTristarArmPoints(target, armIndex),
-    );
+    const armPointSets = tristarArmRenderPointBuffers(target);
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      fillCurrentTristarArmPoints(
+        target,
+        armIndex,
+        armPointSets[armIndex],
+      );
+    }
     targetContext.save();
     const outerBaseWidth = Math.sqrt(3) * target.radius * visualScale;
     const innerBaseWidth = Math.max(0, outerBaseWidth - 5 * visualScale);
@@ -23038,6 +24119,7 @@
     const definition = ENEMY_DEFINITIONS[kind];
     if (!definition || definition.devSpawnable === false) return;
     if (liveEnemyCount() >= enemyPopulationLimit()) return;
+    if (availableEnemyKindSlots(kind) <= 0) return;
 
     updateCamera();
     const visible = getVisibleWorldBounds(0);

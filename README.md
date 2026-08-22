@@ -208,6 +208,9 @@ and reaches a 0.5× multiplier at the final tail segment. A threatened link then
 high-speed overcompensating outward turn before it reaches
 the head or body, with a small capped positional correction to
 prevent visible clipping without replacing the free-fall chain with a fixed route.
+All retracting tongues share one frame-local spatial index of that body silhouette, and
+each link runs the exact contact response only against nearby circles. This prevents tongue
+avoidance from becoming an all-pairs tongue-link × body-segment scan as the worm grows.
 Once it returns to the mouth, the enemy remains paralyzed and enters the normal bite flow.
 From the moment the tongue latches until retraction finishes, the captured enemy rotates
 with the live angle of the tongue's final segment.
@@ -260,17 +263,21 @@ manual tongue targeting and heavy grapples keep their existing behavior and have
 Every playable round contains exactly **10,000,000 points**. Point value is held in a
 rolling reserve rather than eagerly creating millions of enemies. Every round has a fixed
 ceiling of **1,000 non-meat enemies** on the map at once, and Reset restarts that same
-fixed-cap round. Open enemy slots are filled immediately whenever a valid spawn position
-is found; a failed bounded placement search retries after a short backoff while unspawned
-round points remain. Meat uses an independent 500-chunk limit and never consumes or blocks
-an enemy slot.
+fixed-cap round. Every non-meat enemy type also has a hard **500-enemy** quota—half of the
+total capacity—counting both active enemies and enemies currently inside the mouth animation.
+Open enemy slots are refilled in slices of up to four successful spawns per update so a large
+batch of defeated enemies cannot monopolize a frame. A failed bounded placement search retries
+after a short backoff while unspawned round points remain.
+Meat uses an independent 500-chunk limit and never consumes or blocks an enemy slot or type
+quota.
 
 Initial population requests use a deterministic 59/25/8/5/2/1 percent weighting.
-The requested 1,000-enemy mix is 590 beetles, 250 dragonflies, 80 moles, 50 rabbits,
-20 vultures, and 10 Tri-Stars, worth 8,090 points. Replacements use the same weighted chances,
-renormalized near the end of a round when an enemy's point value no longer fits.
+The 59-percent beetle request is capped and its excess is redistributed proportionally, so
+the requested 1,000-enemy mix is 500 beetles, 305 dragonflies, 98 moles, 61 rabbits,
+24 vultures, and 12 Tri-Stars, worth 9,550 points. Replacements use the same weighted chances,
+renormalized whenever a type is at its quota or an enemy's point value no longer fits.
 Hard-prey meat transfers its source enemy's value, so it cannot create extra points,
-and developer-spawned test enemies are scoreless and still obey the fixed enemy cap.
+and developer-spawned test enemies are scoreless and still obey both enemy caps.
 Spawn positions are sampled on demand instead of being collected by a full-world scan
 or retained in a location pool.
 Beetles usually seed close colonies, moles choose the most separated of four random choices,
@@ -335,9 +342,25 @@ independently secure one prey that its constrained tapered tip can physically re
 The reach unfolds from the body toward the tip with a slight timing delay while its links
 stretch, then the extra length relaxes early in the pull. The prey stays attached to that tip
 while all 24 links curl backward, placing the held prey in the exact triangle center for
-devouring without sliding it along the arm or handing it off at the root. The released curl
-and any remaining stretch then relax naturally back into the dangling simulation. They
-ignore rabbits, dragonflies, vultures, meat, other Tri-Stars, and the worm. A devoured prey
+devouring without sliding it along the arm or handing it off at the root. This eating curl
+runs at three times the original pull rate. The released curl and any remaining stretch then
+recover continuously into the dangling physics. Tri-Star sensing shares one frame-local,
+periodic prey index and constant-time ownership lookups, while every predator still rechecks
+live reservations in its original update order. Reach/curl IK reuses private scratch geometry
+but retains the same seeds, passes, candidate order, and winning plan. Empty tentacle-contact
+passes skip their redundant joint walk, and rendering reuses point buffers. These changes keep
+the target choices, captures, pulses, and organic tentacle response intact as the number of
+Tri-Stars rises, while avoiding repeated world scans and short-lived arm allocations.
+Tri-Stars whose marker is outside the local minimap use a lightweight simulation instead:
+empty arms skip all tentacle physics and reach planning, while the body follows the nearest
+available mole, or the nearest beetle when no mole is available, through validated ground at
+up to 600 pixels per second. A cached target and staggered scans keep that search bounded.
+Roughly once every 8–11.5 seconds, an off-map Tri-Star may devour one eligible, also-off-map
+beetle within 18 terrain blocks. The same reservation, point-refund, population-cap, and refill
+pipeline handles that simulated meal. Existing arm captures always finish under full AI before
+the lightweight mode begins. As soon as the Tri-Star marker returns to the minimap, its free
+arms and pulse state are rebased at the live body pose for a smooth return to full simulation.
+They ignore rabbits, dragonflies, vultures, meat, other Tri-Stars, and the worm. A devoured prey
 awards no worm score or boost; its reserved point value is
 returned to the round reserve and an enemy replacement is spawned, preserving both the
 1,000-enemy ceiling and the exact 10,000,000-point round total.
@@ -463,6 +486,11 @@ prioritizing its direction of travel. FPS-limited animation callbacks which inte
 skip rendering perform this prefetch work first; rendered frames use it only when the
 previous frame has enough measured headroom. This keeps jumps and sharp reversals from
 synchronously regenerating a new row and column together.
+The three-layer terrain-depth extrusion also uses camera LOD: half-detail views omit the
+farthest band, and the 40% zoom floor keeps only the near contour. Foreground terrain,
+textures, tunnels, collision geometry, and closer-camera depth remain unchanged, while the
+largest view avoids repeatedly stroking three overlapping contour layers across every
+visible chunk.
 Material-region and edge generation read the typed tile array directly. Decorative soil
 and stone marks come from four reusable pre-rendered pattern variants, so a new chunk
 receives its complete texture with one clipped pattern fill and never schedules a
