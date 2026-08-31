@@ -8,7 +8,7 @@
       content="WORM — a tiny, high-speed underground flight experiment."
     />
     <title>WORM — Dig. Launch. Dive.</title>
-    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260820-tristar-predator" />
+    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260824-sprinter-v8" />
     <link rel="preload" as="image" href="./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-upper.png?v=20260815-shared-current-default" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-lower.png?v=20260815-shared-current-default" />
@@ -32,9 +32,9 @@
       <canvas id="game" aria-label="Worm digging game"></canvas>
 
       <header class="masthead" aria-hidden="true">
-        <section class="minimap" id="minimap" aria-label="Local area map">
-          <canvas id="minimap-canvas" width="184" height="132"></canvas>
-          <span class="minimap-label">Local map</span>
+        <section class="minimap" id="minimap" aria-label="Local radar">
+          <canvas id="minimap-canvas" width="240" height="240"></canvas>
+          <span class="minimap-label">Radar</span>
         </section>
 
         <div class="telemetry">
@@ -43,8 +43,8 @@
             <strong><span id="target-count">00</span> <small>LEFT</small></strong>
           </div>
           <div class="metric growth-metric">
-            <span class="metric-label">Score / Size</span>
-            <strong><span id="score">000</span> <small>LV <span id="size-level">0</span></small></strong>
+            <span class="metric-label">Score / Level</span>
+            <strong><span id="score">000</span> <small class="level-readout">LV <span id="size-level">0</span></small></strong>
             <span class="growth-copy"><span id="growth-progress">0</span>/<span id="growth-cost">5</span> TO GROW</span>
           </div>
           <div class="metric boost-metric" id="boost-metric">
@@ -416,7 +416,7 @@
         </header>
 
         <div class="worm-editor-layout">
-          <aside class="worm-layer-panel" aria-label="Worm sprite layers">
+          <aside class="worm-layer-panel" aria-label="Worm appearance options">
             <div class="worm-panel-heading">
               <span>Sprite layers</span>
               <small>Transparent PNG</small>
@@ -442,12 +442,66 @@
             <button data-worm-layer="segmentOutline" type="button">
               <strong>Outline</strong><small>Body silhouette</small>
             </button>
-            <button data-worm-layer="tongue" type="button">
+            <button
+              data-worm-layer="tongue"
+              data-worm-tongue-layer
+              type="button"
+            >
               <strong>Tongue</strong><small>Repeating tongue segment</small>
             </button>
-            <button data-worm-layer="tongueRing" type="button">
+            <button
+              data-worm-layer="tongueRing"
+              data-worm-tongue-layer
+              type="button"
+            >
               <strong>Tongue rings</strong><small>Repeated joint overlay</small>
             </button>
+            <section
+              class="worm-acid-palette"
+              id="worm-acid-palette"
+              aria-label="Spitter acid gradient colors"
+              hidden
+            >
+              <div class="worm-acid-palette-heading">
+                <strong>Acid gradient</strong>
+                <small>Color 1 → 2 → 3 → 1</small>
+              </div>
+              <div
+                class="worm-acid-gradient-preview"
+                id="worm-acid-gradient-preview"
+                aria-hidden="true"
+              ></div>
+              <label>
+                <span><strong>Color 1</strong><small>First stop</small></span>
+                <input
+                  id="worm-acid-color-1"
+                  data-worm-acid-color="0"
+                  type="color"
+                  value="#260b31"
+                  aria-label="Acid gradient color 1"
+                />
+              </label>
+              <label>
+                <span><strong>Color 2</strong><small>Second stop</small></span>
+                <input
+                  id="worm-acid-color-2"
+                  data-worm-acid-color="1"
+                  type="color"
+                  value="#451653"
+                  aria-label="Acid gradient color 2"
+                />
+              </label>
+              <label>
+                <span><strong>Color 3</strong><small>Third stop</small></span>
+                <input
+                  id="worm-acid-color-3"
+                  data-worm-acid-color="2"
+                  type="color"
+                  value="#5b246c"
+                  aria-label="Acid gradient color 3"
+                />
+              </label>
+            </section>
           </aside>
 
           <main class="worm-paint-panel">
@@ -525,7 +579,7 @@
               <small>Size level 0</small>
             </div>
             <canvas id="worm-preview-canvas" width="720" height="420" aria-label="Custom worm preview"></canvas>
-            <p>The isolated preview randomly accelerates, brakes, turns, breaches, falls, and dives without moving the player worm. When editing Licker, its tongue repeatedly extends, swings in changing directions, and retracts so both the tongue segments and editable ring overlay remain visible in motion.</p>
+            <p>The isolated preview randomly accelerates, brakes, turns, breaches, falls, and dives without moving the player worm. Licker repeatedly demonstrates its editable tongue, Spitter previews the selected three-color acid cycle, and Sprinter uses the locomotion-only preview for its common body and jaw layers.</p>
           </aside>
         </div>
 
@@ -540,6 +594,6 @@
 
     </main>
 
-    <script src="./game.js?v=20260822-off-minimap-tristar"></script>
+    <script src="./game.js?v=20260825-sprinter-hunt-camera-v22"></script>
   </body>
 </html>

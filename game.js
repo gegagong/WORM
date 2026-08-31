@@ -4,18 +4,26 @@
   const canvas = document.querySelector("#game");
   const ctx = canvas.getContext("2d", { alpha: false });
   const gameShell = document.querySelector(".game-shell");
+  const MINIMAP_PIXEL_SIZE = 240;
+  // Terrain is deliberately sampled below display resolution so a radar ping
+  // remains comfortably inside a 180 Hz frame; nearest scaling suits the grid.
+  const MINIMAP_TERRAIN_SAMPLE_SIZE = 120;
 
   function ensureMinimapCanvas() {
     const existingCanvas = document.querySelector("#minimap-canvas");
-    if (existingCanvas) return existingCanvas;
+    if (existingCanvas) {
+      existingCanvas.width = MINIMAP_PIXEL_SIZE;
+      existingCanvas.height = MINIMAP_PIXEL_SIZE;
+      return existingCanvas;
+    }
 
     const minimap = document.createElement("section");
     minimap.className = "minimap";
     minimap.id = "minimap";
-    minimap.setAttribute("aria-label", "Local area map");
+    minimap.setAttribute("aria-label", "Local radar");
     minimap.innerHTML = `
-      <canvas id="minimap-canvas" width="184" height="132"></canvas>
-      <span class="minimap-label">Local map</span>
+      <canvas id="minimap-canvas" width="${MINIMAP_PIXEL_SIZE}" height="${MINIMAP_PIXEL_SIZE}"></canvas>
+      <span class="minimap-label">Radar</span>
     `;
     const legacyBrand = document.querySelector(".brand");
     const masthead = document.querySelector(".masthead");
@@ -38,6 +46,7 @@
   const boostMeterFill = document.querySelector("#boost-meter-fill");
   const boostTimeReadout = document.querySelector("#boost-time");
   const boostCapacityReadout = document.querySelector("#boost-capacity");
+  const boostTouchButton = document.querySelector('[data-control="boost"]');
   const stateReadout = document.querySelector("#state");
   const statePill = document.querySelector("#state-pill");
   const homeScreen = document.querySelector("#home-screen");
@@ -97,6 +106,13 @@
   const wormPreviewCanvas = document.querySelector("#worm-preview-canvas");
   const wormPreviewContext = wormPreviewCanvas.getContext("2d");
   const wormPaintStatus = document.querySelector("#worm-paint-status");
+  const wormAcidPalette = document.querySelector("#worm-acid-palette");
+  const wormAcidGradientPreview = document.querySelector(
+    "#worm-acid-gradient-preview",
+  );
+  const wormAcidColorInputs = Array.from(
+    document.querySelectorAll("[data-worm-acid-color]"),
+  );
   const mainMenuButton = document.querySelector("#main-menu-button");
   const gameMenu = document.querySelector("#game-menu");
   const mainMenuCloseButton = document.querySelector("#main-menu-close");
@@ -111,7 +127,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260820-tristar-predator";
+    const styleUrl = "./styles.css?v=20260824-sprinter-v8";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -421,10 +437,6 @@
     wormDark: "#750000",
     tongue: "#cf020c",
     tongueHighlight: "#ff8b83",
-    acidFluid: "#32103f",
-    acidFluidShadow: "#260b31",
-    acidFluidMid: "#451653",
-    acidFluidHighlight: "#5b246c",
     beetle: "#750000",
     beetleShell: "#ec6f51",
     beetleHighlight: "#fff7ef",
@@ -531,10 +543,31 @@
     scalePerLevel: 0.18,
     segmentsPerLevel: 0.5,
   });
+  const SPRINTER_GROWTH_RULES = Object.freeze({
+    // Sprinter gains only two-thirds of Licker's girth per level, but adds
+    // 50% more body sections. Its total length stays competitive while the
+    // silhouette remains longer and more finely articulated.
+    scalePerLevel: 0.08,
+    segmentsPerLevel: 1.5,
+  });
+  const SPRINTER_RULES = Object.freeze({
+    mouthSensorMultiplier: 1.5,
+    boostSpeedMultiplier: motion.boostMultiplier * 1.5,
+    airAimMaximumPredictionTime: 0.4,
+    // Click-hunt guidance can reverse airborne momentum in one quarter-second.
+    // This is angular steering only; it never adds speed.
+    huntAirTurnRate: TAU * 2,
+    areaCompletionDuration: 0.48,
+    // At Sprinter's higher launch speed this yields roughly twice Licker's
+    // angular response and a meaningfully tighter full-boost turn radius.
+    airTurnForceMultiplier: 3,
+  });
   const CAMERA_RULES = Object.freeze({
     levelsPerZoomStep: 5,
     zoomPerStep: 0.9,
     minimumZoom: 0.4,
+    sprinterAreaFlightDuration: 0.5,
+    sprinterAreaReturnDuration: 0.5,
   });
   const COMBAT_RULES = Object.freeze({
     baseBiteDamage: 2,
@@ -548,10 +581,12 @@
   const WORM_TYPE_IDS = Object.freeze({
     LICKER: "licker",
     SPITTER: "spitter",
+    SPRINTER: "sprinter",
   });
   const WORM_ABILITIES = Object.freeze({
     TONGUE: "tongue",
     ACID: "acid",
+    SPRINT: "sprint",
   });
   const WORM_TYPES = Object.freeze({
     [WORM_TYPE_IDS.LICKER]: Object.freeze({
@@ -575,6 +610,9 @@
         biteDamagePerLevel: COMBAT_RULES.biteDamagePerLevel,
         levelOneBoostDuration: BOOST_RULES.levelOneDuration,
         boostSecondsPerLevel: BOOST_RULES.secondsPerLevel,
+        mouthSensorMultiplier: 1,
+        boostSpeedMultiplier: motion.boostMultiplier,
+        airTurnForceMultiplier: 1,
       }),
     }),
     [WORM_TYPE_IDS.SPITTER]: Object.freeze({
@@ -598,6 +636,38 @@
         biteDamagePerLevel: COMBAT_RULES.biteDamagePerLevel,
         levelOneBoostDuration: BOOST_RULES.levelOneDuration,
         boostSecondsPerLevel: BOOST_RULES.secondsPerLevel,
+        mouthSensorMultiplier: 1,
+        boostSpeedMultiplier: motion.boostMultiplier,
+        airTurnForceMultiplier: 1,
+      }),
+    }),
+    [WORM_TYPE_IDS.SPRINTER]: Object.freeze({
+      id: WORM_TYPE_IDS.SPRINTER,
+      label: "Sprinter",
+      ability: WORM_ABILITIES.SPRINT,
+      abilityLabel: "Click pursuit",
+      description:
+        "Click to mark a mouth-sensor-sized hunting zone and pursue its easy and normal prey one by one with very high aerial turn speed. The camera flies to the zone and stays locked there for the hunt. Boost retains the normal hard-prey latch but does not auto-aim the Sprinter.",
+      scaling: Object.freeze({
+        baseEntityScale: ENTITY_SCALE,
+        scalePerLevel: SPRINTER_GROWTH_RULES.scalePerLevel,
+        baseSegmentCount: WORM_SHAPE.segmentCount,
+        segmentsPerLevel: SPRINTER_GROWTH_RULES.segmentsPerLevel,
+        baseMaximumSpeed: motion.maximumSpeed,
+        maximumSpeedPerLevel: GROWTH_RULES.maximumSpeedPerLevel,
+        // Body girth grows slowly, but terrain locomotion keeps the shared
+        // per-level speed scaling so Sprinter's 50% boost advantage does not
+        // disappear at higher levels.
+        stoneLocomotionScalePerLevel: GROWTH_RULES.scalePerLevel,
+        initialGrowthCost: GROWTH_RULES.initialCost,
+        growthCostMultiplier: GROWTH_RULES.costMultiplier,
+        baseBiteDamage: COMBAT_RULES.baseBiteDamage,
+        biteDamagePerLevel: COMBAT_RULES.biteDamagePerLevel,
+        levelOneBoostDuration: BOOST_RULES.levelOneDuration,
+        boostSecondsPerLevel: BOOST_RULES.secondsPerLevel,
+        mouthSensorMultiplier: SPRINTER_RULES.mouthSensorMultiplier,
+        boostSpeedMultiplier: SPRINTER_RULES.boostSpeedMultiplier,
+        airTurnForceMultiplier: SPRINTER_RULES.airTurnForceMultiplier,
       }),
     }),
   });
@@ -611,6 +681,7 @@
     approachSpeedMultiplier: 1.25,
     approachAccelerationMultiplier: 7,
     approachTurnSpeedMultiplier: 3.25,
+    softPursuitClosingTurnMultiplier: 1.5,
     approachArrivalDistance: 1.5,
     approachSubstep: 1 / 120,
     scurryAnimationMultiplier: 5,
@@ -925,6 +996,13 @@
     offMinimapDevourRadiusBlocks: 18,
     offMinimapMinimumDevourInterval: 8,
     offMinimapMaximumDevourInterval: 11.5,
+    // Preserve the same terrain throughput at the 180 Hz performance target,
+    // then spend proportionally more of the larger frame budget down to the
+    // simulation's 30 Hz delta ceiling.
+    maximumArmTunneledTilesPerFrame: 64,
+    maximumArmTunnelBudgetFrameScale: 6,
+    maximumPendingArmTunnelTiles: 4096,
+    armTunnelSampleInterval: 1 / 60,
     minimumWanderDuration: 0.8,
     maximumWanderDuration: 2.4,
   });
@@ -1091,8 +1169,11 @@
     visualDropletMinimumRadiusScale: 0.68,
     visualDropletMaximumRadiusScale: 0.94,
     visualDropletMaximumOffset: 1.16,
-    visualClusterVariants: 16,
-    visualClusterAtlasColumns: 4,
+    // Twenty-four tiles provide eight evenly spaced colors for each leg of
+    // the editable color 1 -> 2 -> 3 -> 1 gradient. Color and geometry share
+    // the tile index, preserving one atlas draw per visible carrier.
+    visualClusterVariants: 24,
+    visualClusterAtlasColumns: 6,
     visualClusterTileSize: 96,
     visualClusterExtent: 2.62,
     fluidPatternTileSize: 24,
@@ -1158,6 +1239,7 @@
   const WORM_TYPE_DEFAULT_SPRITE_FILES = Object.freeze({
     [WORM_TYPE_IDS.LICKER]: SHARED_WORM_SPRITE_FILES,
     [WORM_TYPE_IDS.SPITTER]: SHARED_WORM_SPRITE_FILES,
+    [WORM_TYPE_IDS.SPRINTER]: SHARED_WORM_SPRITE_FILES,
   });
   function defaultWormSpriteFiles(typeId) {
     return (
@@ -1172,11 +1254,17 @@
     mirroredJawSource: "headUpper",
     mirroredMouthSource: "mouthUpper",
   });
+  const DEFAULT_ACID_COLORS = Object.freeze([
+    "#260b31",
+    "#451653",
+    "#5b246c",
+  ]);
   const WORM_TYPE_APPEARANCE_STORAGE_PREFIX = "worm.type-appearance.v1";
   // Retained as a one-time migration source for existing Licker designs.
   const WORM_APPEARANCE_STORAGE_KEY = "worm.custom-appearance.v6";
   const WORM_PACKAGE_FORMAT = "worm-appearance";
-  const WORM_PACKAGE_VERSION = 1;
+  const WORM_PACKAGE_VERSION = 2;
+  const SUPPORTED_WORM_PACKAGE_VERSIONS = new Set([1, 2]);
   const WORM_PACKAGE_MAX_BYTES = 12 * 1024 * 1024;
   const PREVIOUS_WORM_APPEARANCE_STORAGE_KEY = "worm.custom-appearance.v5";
   const SINGLE_JAW_WORM_APPEARANCE_STORAGE_KEY = "worm.custom-appearance.v4";
@@ -1338,7 +1426,7 @@
     STONE: "stone",
   });
   // Terrain depth is a visual extrusion of solid-to-air boundaries. The
-  // increasingly distant layers contract toward the head-centered vanishing
+  // increasingly distant layers contract toward the camera-centered vanishing
   // point and use wider strokes, leaving three textured bands visible behind
   // the normal terrain without introducing additional simulated tile maps.
   const TERRAIN_DEPTH_LAYERS = Object.freeze([
@@ -1407,7 +1495,19 @@
     dpr: 1,
     groundY: 0,
     viewport: { width: 0, height: 0 },
-    camera: { x: 0, y: 0 },
+    camera: {
+      x: 0,
+      y: 0,
+      centerX: 0,
+      centerY: 0,
+      mode: "follow",
+      sprinterAreaCommand: null,
+      transitionStartX: 0,
+      transitionStartY: 0,
+      transitionTargetX: 0,
+      transitionTargetY: 0,
+      transitionElapsed: 0,
+    },
     selectedWorldId: DEFAULT_WORLD_ID,
     selectedWorldName: DEFAULT_WORLD.name,
     activeRoundPointLimit: ROUND_POINT_LIMIT,
@@ -1443,6 +1543,8 @@
     acidLastEmittedParticle: null,
     spitterAimAngle: null,
     latchAttack: null,
+    sprinterAreaTarget: null,
+    sprinterAreaCompletion: null,
     boostLatchReady: true,
     showGrid: false,
     showVectors: false,
@@ -1460,7 +1562,6 @@
     terrainChunkBuildEstimateMs: 4,
     lastFrameWorkDuration: 0,
     minimapMapRevision: 0,
-    minimapTerrainRevision: 0,
     head: { x: 0, y: 0 },
     previous: { x: 0, y: 0 },
     previousEatHitbox: null,
@@ -1555,44 +1656,159 @@
   let acidTargetBroadphaseRowCount = 1;
   let acidTargetBroadphaseQueryId = 0;
   const acidClusterAtlasCache = new Map();
-  let acidFluidPatternTileCache = null;
+  const acidFluidPatternTileCache = new Map();
   let acidTunnelTilesRemaining = 0;
-  let acidTunnelTilesChanged = 0;
+  const tristarArmTunnelBudget = { remaining: 0 };
+  const pendingTristarArmTunnelTiles = new Map();
+  const tristarArmTunnelTouchedTiles = new Set();
   const tunnelDecayChunkKeys = new Set();
   const tunnelDecayPlaceholderKeys = new Set();
 
   const MINIMAP_RULES = Object.freeze({
-    width: 184,
-    height: 132,
-    refreshInterval: 100,
+    width: MINIMAP_PIXEL_SIZE,
+    height: MINIMAP_PIXEL_SIZE,
+    scanInterval: 2,
+    echoLifetime: 4,
+    maximumEchoes: 2,
+    pulseDuration: 0.85,
     viewPadding: 1.65,
+    // Radar silhouettes are deliberately completed over several rendered
+    // frames. The hard work-unit ceiling also bounds browsers that defer
+    // canvas rasterization until the mask is read or composited.
+    scanSliceBudgetMilliseconds: 1.15,
+    scanSliceMaximumWorkUnits: 128,
+    scanSliceClockCheckInterval: 8,
+    // Building an edited body composite creates and rasterizes an offscreen
+    // sprite. Warm only a few missing stamps per frame after growth or an
+    // appearance revision; uncached stamps still render exactly from layers.
+    maximumBodyCompositeBuildsPerFrame: 3,
   });
   const MINIMAP_COLORS = Object.freeze({
-    outside: Object.freeze([115, 33, 12]),
-    air: Object.freeze([116, 32, 25]),
-    ground: Object.freeze([116, 65, 45]),
-    acidTunneled: Object.freeze([85, 50, 37]),
-    tunneled: Object.freeze([53, 35, 29]),
-    stone: Object.freeze([111, 83, 87]),
+    clear: Object.freeze([0, 0, 0, 0]),
+    ground: Object.freeze([255, 0, 0, 100]),
+    acidTunneled: Object.freeze([255, 0, 0, 42]),
+    tunneled: Object.freeze([255, 0, 0, 28]),
+    stone: Object.freeze([255, 0, 0, 180]),
   });
-  const minimapSceneCanvas = document.createElement("canvas");
-  minimapSceneCanvas.width = MINIMAP_RULES.width;
-  minimapSceneCanvas.height = MINIMAP_RULES.height;
-  const minimapSceneContext = minimapSceneCanvas.getContext("2d", {
-    alpha: false,
-  });
+  const MINIMAP_RADAR_RED = "rgb(255, 0, 0)";
+  const minimapTerrainSampleCanvas = document.createElement("canvas");
+  minimapTerrainSampleCanvas.width = MINIMAP_TERRAIN_SAMPLE_SIZE;
+  minimapTerrainSampleCanvas.height = MINIMAP_TERRAIN_SAMPLE_SIZE;
+  const minimapTerrainSampleContext = minimapTerrainSampleCanvas.getContext(
+    "2d",
+  );
+  minimapTerrainSampleContext.imageSmoothingEnabled = false;
+  const minimapEnemyMaskCanvas = document.createElement("canvas");
+  minimapEnemyMaskCanvas.width = MINIMAP_RULES.width;
+  minimapEnemyMaskCanvas.height = MINIMAP_RULES.height;
+  const minimapEnemyMaskContext = minimapEnemyMaskCanvas.getContext("2d");
+  minimapEnemyMaskContext.imageSmoothingEnabled = true;
+  // The live worm is redrawn every frame, while an enemy echo can remain
+  // partially assembled across several frames. Keeping the masks separate
+  // lets both paths reuse their canvases without corrupting an in-flight ping.
+  const minimapWormMaskCanvas = document.createElement("canvas");
+  minimapWormMaskCanvas.width = MINIMAP_RULES.width;
+  minimapWormMaskCanvas.height = MINIMAP_RULES.height;
+  const minimapWormMaskContext = minimapWormMaskCanvas.getContext("2d");
+  minimapWormMaskContext.imageSmoothingEnabled = true;
+  const minimapRadarEchoes = Array.from(
+    { length: MINIMAP_RULES.maximumEchoes },
+    () => {
+      const echoCanvas = document.createElement("canvas");
+      echoCanvas.width = MINIMAP_RULES.width;
+      echoCanvas.height = MINIMAP_RULES.height;
+      const echoContext = echoCanvas.getContext("2d");
+      echoContext.imageSmoothingEnabled = false;
+      return {
+        canvas: echoCanvas,
+        context: echoContext,
+        ready: false,
+        scannedAt: -Infinity,
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
+      };
+    },
+  );
+  function createMinimapRadarTargetEntry() {
+    return {
+      kind: null,
+      x: 0,
+      y: 0,
+      angle: 0,
+      animationFrame: 0,
+      captureScale: 1,
+      captureElapsed: undefined,
+      tongueCaptured: false,
+      flightDirection: undefined,
+      rabbitDirection: undefined,
+      miniatureReturn: false,
+      dotRadiusPixels: 1.8,
+      radarSpriteReady: false,
+      tristarArmPointOffset: 0,
+      tristarOuterBaseWidth: 0,
+      tristarSilhouetteRadius: 0,
+    };
+  }
   const minimapState = {
-    ready: false,
     mapRevision: -1,
-    terrainRevision: -1,
-    lastRefreshTime: -Infinity,
-    bounds: { x: 0, y: 0, width: 1, height: 1 },
-    imageData: minimapSceneContext.createImageData(
-      MINIMAP_RULES.width,
-      MINIMAP_RULES.height,
+    lastScanTime: -Infinity,
+    imageData: minimapTerrainSampleContext.createImageData(
+      MINIMAP_TERRAIN_SAMPLE_SIZE,
+      MINIMAP_TERRAIN_SAMPLE_SIZE,
     ),
-    sampleColumns: new Int32Array(MINIMAP_RULES.width),
+    sampleColumns: new Int32Array(MINIMAP_TERRAIN_SAMPLE_SIZE),
+    radarTargetEntries: Array.from(
+      {
+        length:
+          ENEMY_SPAWN_RULES.maximumCount + MEAT_SPAWN_RULES.maximumCount,
+      },
+      createMinimapRadarTargetEntry,
+    ),
+    radarTargetEntryCount: 0,
+    radarScanJob: {
+      active: false,
+      echo: null,
+      sampledAt: -Infinity,
+      bounds: { x: 0, y: 0, width: 1, height: 1 },
+      phase: 0,
+      entryIndex: 0,
+    },
+    wormPoints: [],
+    wormFitScale: 1,
   };
+  const minimapTristarArmPointSets = Array.from(
+    { length: TRISTAR_RULES.armCount },
+    () => Array.from(
+      { length: TRISTAR_RULES.armSegments + 1 },
+      () => ({
+        x: 0,
+        y: 0,
+        radarNormalX: 0,
+        radarNormalY: 1,
+        radarHalfWidth: 0,
+      }),
+    ),
+  );
+  const minimapTristarHeldPlanTurnSets = Array.from(
+    { length: TRISTAR_RULES.armCount },
+    () => new Float64Array(TRISTAR_RULES.armSegments),
+  );
+  const minimapTristarArmTapers = Object.freeze(
+    Array.from(
+      { length: TRISTAR_RULES.armSegments + 1 },
+      (_, pointIndex) => Math.pow(
+        Math.max(0, 1 - pointIndex / TRISTAR_RULES.armSegments),
+        TRISTAR_RULES.taperExponent,
+      ),
+    ),
+  );
+  const minimapTristarArmPointValueCount =
+    TRISTAR_RULES.armCount * (TRISTAR_RULES.armSegments + 1) * 2;
+  // One contiguous pool avoids a burst of hundreds of typed-array
+  // allocations on the first dense scan. Points are stored body-relative so
+  // Float32 precision remains stable after arbitrarily many world wraps.
+  const minimapTristarArmSnapshotValues = new Float32Array(
+    ENEMY_SPAWN_RULES.maximumCount * minimapTristarArmPointValueCount,
+  );
 
   const DEV_PROFILER_SAMPLE_DURATION = 500;
   const DEV_PROFILER_DEFAULT_BUDGET = 1000 / 60;
@@ -1934,6 +2150,8 @@
     showMouthJawOverlay: false,
     mirroredJawSource: DEFAULT_WORM_MIRRORING.mirroredJawSource,
     mirroredMouthSource: DEFAULT_WORM_MIRRORING.mirroredMouthSource,
+    acidColors: [...DEFAULT_ACID_COLORS],
+    acidColorLut: null,
     drawing: false,
     pointerId: null,
     lastPoint: null,
@@ -1983,11 +2201,132 @@
   const wormAppearance = {
     mirroredJawSource: DEFAULT_WORM_MIRRORING.mirroredJawSource,
     mirroredMouthSource: DEFAULT_WORM_MIRRORING.mirroredMouthSource,
+    acidColors: [...DEFAULT_ACID_COLORS],
+    acidColorLut: null,
   };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const lerp = (start, end, amount) => start + (end - start) * amount;
   const magnitude = (x, y) => Math.hypot(x, y);
+  function normalizeHexColor(value) {
+    if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) {
+      return null;
+    }
+    return value.toLowerCase();
+  }
+
+  function acidColorsAreValid(colors) {
+    return (
+      Array.isArray(colors) &&
+      colors.length === DEFAULT_ACID_COLORS.length &&
+      colors.every((color) => normalizeHexColor(color) !== null)
+    );
+  }
+
+  function normalizeAcidColors(colors, fallback = DEFAULT_ACID_COLORS) {
+    return DEFAULT_ACID_COLORS.map((defaultColor, index) =>
+      normalizeHexColor(colors?.[index]) ||
+      normalizeHexColor(fallback?.[index]) ||
+      defaultColor,
+    );
+  }
+
+  function hexColorToRgb(color) {
+    const value = Number.parseInt(color.slice(1), 16);
+    return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+  }
+
+  function rgbToHex(red, green, blue) {
+    return `#${[red, green, blue]
+      .map((channel) =>
+        clamp(Math.round(channel), 0, 255)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`;
+  }
+
+  function buildCyclicAcidColorLut(colors) {
+    const stops = normalizeAcidColors(colors).map(hexColorToRgb);
+    const sampleCount = ACID_RULES.visualClusterVariants;
+    return Array.from({ length: sampleCount }, (_, index) => {
+      const gradientPosition = (index / sampleCount) * stops.length;
+      const startIndex = Math.floor(gradientPosition) % stops.length;
+      const endIndex = (startIndex + 1) % stops.length;
+      const amount = gradientPosition - Math.floor(gradientPosition);
+      return rgbToHex(
+        lerp(stops[startIndex][0], stops[endIndex][0], amount),
+        lerp(stops[startIndex][1], stops[endIndex][1], amount),
+        lerp(stops[startIndex][2], stops[endIndex][2], amount),
+      );
+    });
+  }
+
+  function acidColorArraysMatch(first, second) {
+    return DEFAULT_ACID_COLORS.every(
+      (_color, index) => first?.[index] === second?.[index],
+    );
+  }
+
+  function invalidateAcidRenderCaches() {
+    acidClusterAtlasCache.forEach((atlas) => atlas.close?.());
+    acidClusterAtlasCache.clear();
+    acidFluidPatternTileCache.clear();
+  }
+
+  function applyAcidColors(colors) {
+    const normalized = normalizeAcidColors(colors);
+    const colorsChanged = !acidColorArraysMatch(
+      normalized,
+      wormAppearance.acidColors,
+    );
+    const shouldRewarm =
+      colorsChanged && wormHasAbility(WORM_ABILITIES.ACID);
+    wormAppearance.acidColors = normalized;
+    wormAppearance.acidColorLut = buildCyclicAcidColorLut(normalized);
+    if (!colorsChanged) return;
+    // A carrier's selected hue is immutable. Removing any paused, old-palette
+    // spray avoids recoloring survivors when the shared atlas is replaced.
+    if (game.acidParticles.length > 0) clearAcidParticles();
+    invalidateAcidRenderCaches();
+    // Appearance changes happen while a menu is open. Rebuilding here keeps
+    // the first live spray from compiling atlases inside a gameplay frame.
+    if (shouldRewarm) prewarmAcidClusterAtlases();
+  }
+
+  function syncWormAcidColorInputs() {
+    wormAcidColorInputs.forEach((input) => {
+      const index = Number(input.dataset.wormAcidColor);
+      input.value = wormPainter.acidColors[index];
+    });
+    wormPainter.acidColors.forEach((color, index) => {
+      wormAcidGradientPreview?.style.setProperty(
+        `--acid-color-${index + 1}`,
+        color,
+      );
+    });
+  }
+
+  function setWormPainterAcidColors(colors) {
+    wormPainter.acidColors = normalizeAcidColors(
+      colors,
+      wormPainter.acidColors,
+    );
+    wormPainter.acidColorLut = buildCyclicAcidColorLut(
+      wormPainter.acidColors,
+    );
+    syncWormAcidColorInputs();
+  }
+
+  function activeAcidColorLut() {
+    if (!wormAppearance.acidColorLut) {
+      wormAppearance.acidColorLut = buildCyclicAcidColorLut(
+        wormAppearance.acidColors,
+      );
+    }
+    return wormAppearance.acidColorLut;
+  }
+
   const positiveModulo = (value, modulus) =>
     modulus > 0 ? ((value % modulus) + modulus) % modulus : value;
   const wrapWorldX = (x) => positiveModulo(x, game.width);
@@ -2031,6 +2370,22 @@
   const boostCapacity = () =>
     activeWormScaling().levelOneBoostDuration +
     (game.growthLevel - 1) * activeWormScaling().boostSecondsPerLevel;
+  const wormBoostSpeedMultiplier = () =>
+    activeWormScaling().boostSpeedMultiplier || motion.boostMultiplier;
+  const wormAirTurnForce = () =>
+    motion.airTurnForce *
+    (activeWormScaling().airTurnForceMultiplier || 1);
+  const mouthSensorRadius = () =>
+    MOUTH_BEHAVIOR.proximityRadius *
+    wormScale() *
+    (activeWormScaling().mouthSensorMultiplier || 1);
+
+  function formatSpeedMultiplier(multiplier) {
+    return Number(multiplier)
+      .toFixed(2)
+      .replace(/\.00$/, "")
+      .replace(/0$/, "");
+  }
 
   function seededRandom(seed) {
     let value = seed >>> 0;
@@ -3234,7 +3589,6 @@
     game.spawn.heading = -0.48;
     game.groundY = WORLD_GROUND_ROW * BLOCK_SIZE;
     game.minimapMapRevision += 1;
-    game.minimapTerrainRevision += 1;
   }
 
   function getBlockAtGrid(column, row) {
@@ -3945,12 +4299,124 @@
     );
   }
 
-  function updateCamera() {
+  function applyCameraViewportOrigin() {
     const zoom = cameraZoom();
     game.camera.x =
-      game.head.x - game.viewport.width / zoom * 0.5;
+      game.camera.centerX - game.viewport.width / zoom * 0.5;
     game.camera.y =
-      game.head.y - game.viewport.height / zoom * 0.5;
+      game.camera.centerY - game.viewport.height / zoom * 0.5;
+  }
+
+  function beginCameraTransition(mode, targetX, targetY) {
+    game.camera.mode = mode;
+    game.camera.transitionStartX = game.camera.centerX;
+    game.camera.transitionStartY = game.camera.centerY;
+    game.camera.transitionTargetX = targetX;
+    game.camera.transitionTargetY = targetY;
+    game.camera.transitionElapsed = 0;
+  }
+
+  function snapCameraToWorm() {
+    game.camera.centerX = game.head.x;
+    game.camera.centerY = game.head.y;
+    game.camera.mode = "follow";
+    game.camera.sprinterAreaCommand = null;
+    game.camera.transitionStartX = game.head.x;
+    game.camera.transitionStartY = game.head.y;
+    game.camera.transitionTargetX = game.head.x;
+    game.camera.transitionTargetY = game.head.y;
+    game.camera.transitionElapsed = 0;
+    applyCameraViewportOrigin();
+  }
+
+  function updateCamera(dt = 0) {
+    const step = Math.max(0, Number(dt) || 0);
+    const command = activeSprinterAreaTarget();
+
+    if (command) {
+      if (
+        game.camera.sprinterAreaCommand !== command ||
+        game.camera.mode !== "area"
+      ) {
+        game.camera.sprinterAreaCommand = command;
+        beginCameraTransition(
+          "area",
+          nearestPeriodicWorldX(command.x, game.camera.centerX),
+          command.y,
+        );
+      }
+
+      const duration = CAMERA_RULES.sprinterAreaFlightDuration;
+      game.camera.transitionElapsed = Math.min(
+        duration,
+        game.camera.transitionElapsed + step,
+      );
+      const progress = duration > 0
+        ? game.camera.transitionElapsed / duration
+        : 1;
+      const easedProgress = progress * progress * (3 - 2 * progress);
+      game.camera.centerX = lerp(
+        game.camera.transitionStartX,
+        game.camera.transitionTargetX,
+        easedProgress,
+      );
+      game.camera.centerY = lerp(
+        game.camera.transitionStartY,
+        game.camera.transitionTargetY,
+        easedProgress,
+      );
+    } else {
+      if (
+        game.camera.sprinterAreaCommand !== null ||
+        game.camera.mode === "area"
+      ) {
+        game.camera.sprinterAreaCommand = null;
+        beginCameraTransition(
+          "return",
+          game.head.x,
+          game.head.y,
+        );
+      }
+
+      if (game.camera.mode === "return") {
+        const duration = CAMERA_RULES.sprinterAreaReturnDuration;
+        game.camera.transitionElapsed = Math.min(
+          duration,
+          game.camera.transitionElapsed + step,
+        );
+        const progress = duration > 0
+          ? game.camera.transitionElapsed / duration
+          : 1;
+        const easedProgress = progress * progress * (3 - 2 * progress);
+        // The worm keeps moving during the return, so its live center is the
+        // destination while the starting camera pose remains fixed.
+        game.camera.transitionTargetX = game.head.x;
+        game.camera.transitionTargetY = game.head.y;
+        game.camera.centerX = lerp(
+          game.camera.transitionStartX,
+          game.camera.transitionTargetX,
+          easedProgress,
+        );
+        game.camera.centerY = lerp(
+          game.camera.transitionStartY,
+          game.camera.transitionTargetY,
+          easedProgress,
+        );
+        if (progress >= 1) {
+          game.camera.mode = "follow";
+          game.camera.centerX = game.head.x;
+          game.camera.centerY = game.head.y;
+        }
+      } else {
+        // Preserve the original exact head-centered camera outside the
+        // temporary Sprinter-area cinematic.
+        game.camera.mode = "follow";
+        game.camera.centerX = game.head.x;
+        game.camera.centerY = game.head.y;
+      }
+    }
+
+    applyCameraViewportOrigin();
   }
 
   function getMinimapWorldBounds() {
@@ -3972,22 +4438,15 @@
     };
   }
 
-  function minimapTargetMarkerPosition(target, bounds) {
-    const boundsCenterX = bounds.x + bounds.width * 0.5;
-    const targetX = nearestPeriodicWorldX(target.x, boundsCenterX);
-    return {
-      x: ((targetX - bounds.x) / bounds.width) * MINIMAP_RULES.width,
-      y: ((target.y - bounds.y) / bounds.height) * MINIMAP_RULES.height,
-    };
-  }
-
   function minimapMarkerCoordinatesAreVisible(x, y) {
-    return Boolean(
-      x >= -4 &&
-      x <= MINIMAP_RULES.width + 4 &&
-      y >= -4 &&
-      y <= MINIMAP_RULES.height + 4
-    );
+    // Visibility is deliberately center-based: this same boundary switches
+    // Tri-Stars between reduced off-radar movement and their full AI. Returns
+    // that cross the rim are clipped, but an off-radar center stays off-radar.
+    const offsetX = x - MINIMAP_RULES.width * 0.5;
+    const offsetY = y - MINIMAP_RULES.height * 0.5;
+    const radius =
+      Math.min(MINIMAP_RULES.width, MINIMAP_RULES.height) * 0.5 + 4;
+    return offsetX * offsetX + offsetY * offsetY <= radius * radius;
   }
 
   function minimapTargetMarkerIsVisible(target, bounds) {
@@ -3998,54 +4457,472 @@
     return minimapMarkerCoordinatesAreVisible(x, y);
   }
 
-  function drawMinimapTarget(target, bounds) {
-    const { x, y } = minimapTargetMarkerPosition(target, bounds);
-    if (!minimapMarkerCoordinatesAreVisible(x, y)) return;
-
-    const radius =
-      target.kind === ENEMY_TYPES.VULTURE
-        ? 2.7
-        : target.kind === ENEMY_TYPES.TRISTAR
-          ? 2.5
-        : target.kind === ENEMY_TYPES.MEAT
-          ? 1.3
-          : 1.8;
-    minimapSceneContext.beginPath();
-    minimapSceneContext.arc(x, y, radius, 0, TAU);
-    minimapSceneContext.fillStyle = target.kind === ENEMY_TYPES.MEAT
-      ? palette.cream
-      : target.kind === ENEMY_TYPES.TRISTAR
-        ? palette.tristarHighlight
-        : palette.sun;
-    minimapSceneContext.fill();
-    minimapSceneContext.strokeStyle = palette.ink;
-    minimapSceneContext.lineWidth = 0.8;
-    minimapSceneContext.stroke();
+  function minimapRadarDotRadiusPixels(kind) {
+    if (kind === ENEMY_TYPES.VULTURE) return 2.7;
+    if (kind === ENEMY_TYPES.TRISTAR) return 2.5;
+    if (kind === ENEMY_TYPES.MEAT) return 1.3;
+    return 1.8;
   }
 
-  function refreshMinimapScene(time, bounds) {
+  function fillMinimapRadarTargetEntries(bounds) {
+    const entries = minimapState.radarTargetEntries;
+    const boundsCenterX = bounds.x + bounds.width * 0.5;
+    // Freeze the classification along with the target pose. A scan is painted
+    // over several frames, so later growth must not turn half of one return
+    // from a silhouette into a dot.
+    const biteDamageSnapshot = wormBiteDamage();
+    let entryCount = 0;
+    let tristarSnapshotCount = 0;
+    for (let groupIndex = 0; groupIndex < 2; groupIndex += 1) {
+      const targets =
+        groupIndex === 0 ? game.targets : game.capturedTargets;
+      for (const target of targets) {
+        const targetX = nearestPeriodicWorldX(target.x, boundsCenterX);
+        const x =
+          ((targetX - bounds.x) / bounds.width) * MINIMAP_RULES.width;
+        const y =
+          ((target.y - bounds.y) / bounds.height) * MINIMAP_RULES.height;
+        if (!minimapMarkerCoordinatesAreVisible(x, y)) continue;
+        while (entries.length <= entryCount) {
+          entries.push(createMinimapRadarTargetEntry());
+        }
+        const entry = entries[entryCount];
+        const definition = ENEMY_DEFINITIONS[target.kind];
+        const miniatureReturn =
+          target.kind !== ENEMY_TYPES.MEAT &&
+          enemyPreyClass(target, biteDamageSnapshot) !== PREY_CLASSES.EASY;
+        entry.kind = target.kind;
+        entry.x = targetX - bounds.x;
+        entry.y = target.y - bounds.y;
+        entry.angle = target.angle;
+        entry.animationFrame = target.animationFrame;
+        entry.captureScale = target.captureScale ?? 1;
+        entry.captureElapsed = Number.isFinite(target.captureElapsed)
+          ? target.captureElapsed
+          : undefined;
+        entry.tongueCaptured = Boolean(target.tongueCaptured);
+        entry.flightDirection = target.flightDirection;
+        entry.rabbitDirection = target.rabbitDirection;
+        entry.miniatureReturn = miniatureReturn;
+        entry.dotRadiusPixels = minimapRadarDotRadiusPixels(target.kind);
+        if (target.kind === ENEMY_TYPES.TRISTAR && entry.miniatureReturn) {
+          entry.tristarArmPointOffset =
+            tristarSnapshotCount * minimapTristarArmPointValueCount;
+          let pointValueIndex = entry.tristarArmPointOffset;
+          const screenPointSets =
+            target.tristarRenderedArmPoseAt === game.elapsed
+              ? target.tristarRenderPointSets
+              : null;
+          for (
+            let armIndex = 0;
+            armIndex < TRISTAR_RULES.armCount;
+            armIndex += 1
+          ) {
+            const points =
+              screenPointSets?.[armIndex] ||
+              minimapTristarArmPointSets[armIndex];
+            if (!screenPointSets) {
+              fillCurrentTristarArmPoints(
+                target,
+                armIndex,
+                points,
+                minimapTristarHeldPlanTurnSets[armIndex],
+              );
+            }
+            for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+              minimapTristarArmSnapshotValues[pointValueIndex] =
+                points[pointIndex].x - target.x;
+              minimapTristarArmSnapshotValues[pointValueIndex + 1] =
+                points[pointIndex].y - target.y;
+              pointValueIndex += 2;
+            }
+          }
+          tristarSnapshotCount += 1;
+          const visualScale = entry.captureScale;
+          entry.tristarOuterBaseWidth =
+            Math.sqrt(3) * target.radius * visualScale;
+          entry.tristarSilhouetteRadius =
+            target.radius * visualScale * tristarCorePulseScale(target) +
+            5 * visualScale;
+          entry.radarSpriteReady = false;
+        } else if (entry.miniatureReturn) {
+          const frameName =
+            definition.spriteFrames[
+              target.animationFrame % definition.spriteFrames.length
+            ];
+          const sprite = enemySprites[frameName];
+          entry.radarSpriteReady = Boolean(
+            sprite?.complete && sprite.naturalWidth > 0,
+          );
+        } else {
+          entry.radarSpriteReady = false;
+        }
+        entryCount += 1;
+      }
+    }
+    minimapState.radarTargetEntryCount = entryCount;
+    return entryCount;
+  }
+
+  function appendMinimapRadarTristarArmRibbon(
+    targetContext,
+    target,
+    armIndex,
+    points,
+    baseWidth,
+  ) {
+    const rootAngle =
+      target.angle + armIndex * TAU / TRISTAR_RULES.armCount;
+    for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+      const point = points[pointIndex];
+      if (pointIndex === 0) {
+        point.radarNormalX = -Math.sin(rootAngle);
+        point.radarNormalY = Math.cos(rootAngle);
+      } else {
+        const previous = points[pointIndex - 1];
+        const next = points[Math.min(points.length - 1, pointIndex + 1)];
+        const tangentX = next.x - previous.x;
+        const tangentY = next.y - previous.y;
+        const tangentLength = magnitude(tangentX, tangentY);
+        if (tangentLength > 0.0001) {
+          point.radarNormalX = -tangentY / tangentLength;
+          point.radarNormalY = tangentX / tangentLength;
+        } else {
+          point.radarNormalX = 0;
+          point.radarNormalY = 1;
+        }
+      }
+      point.radarHalfWidth =
+        baseWidth * minimapTristarArmTapers[pointIndex] * 0.5;
+      const x = point.x + point.radarNormalX * point.radarHalfWidth;
+      const y = point.y + point.radarNormalY * point.radarHalfWidth;
+      if (pointIndex === 0) targetContext.moveTo(x, y);
+      else targetContext.lineTo(x, y);
+    }
+    for (let pointIndex = points.length - 1; pointIndex >= 0; pointIndex -= 1) {
+      const point = points[pointIndex];
+      targetContext.lineTo(
+        point.x - point.radarNormalX * point.radarHalfWidth,
+        point.y - point.radarNormalY * point.radarHalfWidth,
+      );
+    }
+    targetContext.closePath();
+  }
+
+  function drawMinimapRadarTristarArms(target, targetContext) {
+    let pointValueIndex = target.tristarArmPointOffset;
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      const points = minimapTristarArmPointSets[armIndex];
+      for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+        points[pointIndex].x =
+          target.x + minimapTristarArmSnapshotValues[pointValueIndex];
+        points[pointIndex].y =
+          target.y + minimapTristarArmSnapshotValues[pointValueIndex + 1];
+        pointValueIndex += 2;
+      }
+    }
+    targetContext.beginPath();
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      appendMinimapRadarTristarArmRibbon(
+        targetContext,
+        target,
+        armIndex,
+        minimapTristarArmPointSets[armIndex],
+        target.tristarOuterBaseWidth,
+      );
+    }
+    targetContext.fillStyle = MINIMAP_RADAR_RED;
+    targetContext.fill();
+  }
+
+  function drawMinimapRadarTristarCore(target, targetContext) {
+    targetContext.save();
+    targetContext.translate(target.x, target.y);
+    targetContext.rotate(target.angle);
+    targetContext.beginPath();
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      const angle =
+        TRISTAR_RULES.bodyFirstVertexOffset + vertex * TAU / 3;
+      const x = Math.cos(angle) * target.tristarSilhouetteRadius;
+      const y = Math.sin(angle) * target.tristarSilhouetteRadius;
+      if (vertex === 0) targetContext.moveTo(x, y);
+      else targetContext.lineTo(x, y);
+    }
+    targetContext.closePath();
+    targetContext.fillStyle = MINIMAP_RADAR_RED;
+    targetContext.fill();
+    targetContext.restore();
+  }
+
+  function drawMinimapRadarEnemyAtPeriodicOffset(
+    entry,
+    targetContext,
+    layer,
+  ) {
+    if (layer === "arms") {
+      drawMinimapRadarTristarArms(entry, targetContext);
+    } else if (layer === "core") {
+      drawMinimapRadarTristarCore(entry, targetContext);
+    } else {
+      drawEnemy(entry, targetContext);
+    }
+  }
+
+  function appendMinimapRadarDot(entry, targetContext, worldUnitsPerPixel) {
+    const radius = entry.dotRadiusPixels * worldUnitsPerPixel;
+    // Moving to the circle edge prevents Canvas from joining successive arcs
+    // with filled chords when a whole scan slice is submitted as one path.
+    targetContext.moveTo(entry.x + radius, entry.y);
+    targetContext.arc(
+      entry.x,
+      entry.y,
+      radius,
+      0,
+      TAU,
+    );
+  }
+
+  function advanceMinimapRadarEnemyScan() {
+    const job = minimapState.radarScanJob;
+    if (!job.active) return false;
+    const targetContext = minimapEnemyMaskContext;
     const width = MINIMAP_RULES.width;
     const height = MINIMAP_RULES.height;
+    targetContext.setTransform(1, 0, 0, 1, 0, 0);
+    targetContext.globalAlpha = 1;
+    targetContext.globalCompositeOperation = "source-over";
+    targetContext.save();
+    targetContext.beginPath();
+    targetContext.arc(width * 0.5, height * 0.5, width * 0.5, 0, TAU);
+    targetContext.clip();
+    const scaleX = width / job.bounds.width;
+    const scaleY = height / job.bounds.height;
+    const worldUnitsPerPixel = 1 / scaleX;
+    targetContext.transform(
+      scaleX,
+      0,
+      0,
+      scaleY,
+      0,
+      0,
+    );
+    const entries = minimapState.radarTargetEntries;
+    const entryCount = minimapState.radarTargetEntryCount;
+    const deadline =
+      performance.now() + MINIMAP_RULES.scanSliceBudgetMilliseconds;
+    let workUnits = 0;
+    let clockCheckCount = 0;
+    let drewReturn = false;
+    let dotPathOpen = false;
+    scanWork:
+    while (job.phase < 3) {
+      if (job.entryIndex >= entryCount) {
+        if (dotPathOpen) {
+          targetContext.fillStyle = MINIMAP_RADAR_RED;
+          targetContext.fill();
+          dotPathOpen = false;
+        }
+        job.phase += 1;
+        job.entryIndex = 0;
+        continue;
+      }
+      const entry = entries[job.entryIndex];
+      job.entryIndex += 1;
+      if (
+        job.phase === 0 &&
+        entry.miniatureReturn &&
+        entry.kind === ENEMY_TYPES.TRISTAR
+      ) {
+        drawMinimapRadarEnemyAtPeriodicOffset(
+          entry,
+          targetContext,
+          "arms",
+        );
+        workUnits += 16;
+        drewReturn = true;
+      } else if (
+        job.phase === 1 &&
+        (
+          !entry.miniatureReturn ||
+          (
+            entry.kind !== ENEMY_TYPES.TRISTAR &&
+            !entry.radarSpriteReady
+          )
+        )
+      ) {
+        if (!dotPathOpen) {
+          targetContext.beginPath();
+          dotPathOpen = true;
+        }
+        appendMinimapRadarDot(entry, targetContext, worldUnitsPerPixel);
+        workUnits += 1;
+        drewReturn = true;
+      } else if (
+        job.phase === 1 &&
+        entry.miniatureReturn &&
+        entry.kind !== ENEMY_TYPES.TRISTAR &&
+        entry.radarSpriteReady
+      ) {
+        drawMinimapRadarEnemyAtPeriodicOffset(
+          entry,
+          targetContext,
+          "sprite",
+        );
+        workUnits += 4;
+        drewReturn = true;
+      } else if (
+        job.phase === 2 &&
+        entry.miniatureReturn &&
+        entry.kind === ENEMY_TYPES.TRISTAR
+      ) {
+        drawMinimapRadarEnemyAtPeriodicOffset(
+          entry,
+          targetContext,
+          "core",
+        );
+        workUnits += 2;
+        drewReturn = true;
+      }
+      clockCheckCount += 1;
+      if (
+        workUnits >= MINIMAP_RULES.scanSliceMaximumWorkUnits ||
+        (
+          clockCheckCount >= MINIMAP_RULES.scanSliceClockCheckInterval &&
+          performance.now() >= deadline
+        )
+      ) {
+        break scanWork;
+      }
+      if (clockCheckCount >= MINIMAP_RULES.scanSliceClockCheckInterval) {
+        clockCheckCount = 0;
+      }
+    }
+    if (dotPathOpen) {
+      targetContext.fillStyle = MINIMAP_RADAR_RED;
+      targetContext.fill();
+    }
+    targetContext.restore();
+
+    // Force deferred canvas commands to rasterize inside this bounded slice,
+    // rather than accumulating into one large hitch at final composition.
+    if (drewReturn) flushMinimapRadarCanvas(targetContext);
+    if (job.phase < 3) return false;
+
+    targetContext.save();
+    targetContext.globalCompositeOperation = "source-in";
+    targetContext.fillStyle = MINIMAP_RADAR_RED;
+    targetContext.fillRect(0, 0, width, height);
+    targetContext.restore();
+    flushMinimapRadarCanvas(targetContext);
+
+    const echo = job.echo;
+    const echoContext = echo.context;
+    echoContext.setTransform(1, 0, 0, 1, 0, 0);
+    echoContext.save();
+    echoContext.beginPath();
+    echoContext.arc(width * 0.5, height * 0.5, width * 0.5, 0, TAU);
+    echoContext.clip();
+    echoContext.drawImage(minimapEnemyMaskCanvas, 0, 0);
+    echoContext.restore();
+    flushMinimapRadarCanvas(echoContext);
+
+    echo.ready = true;
+    echo.scannedAt = job.sampledAt;
+    echo.bounds.x = job.bounds.x;
+    echo.bounds.y = job.bounds.y;
+    echo.bounds.width = job.bounds.width;
+    echo.bounds.height = job.bounds.height;
+    job.active = false;
+    job.echo = null;
+    job.phase = 0;
+    job.entryIndex = 0;
+    minimapState.radarTargetEntryCount = 0;
+    return true;
+  }
+
+  function flushMinimapRadarCanvas(targetContext) {
+    try {
+      targetContext.getImageData(0, 0, 1, 1);
+    } catch {
+      // A file:// launch may assign each local asset a unique origin. The
+      // radar still renders correctly there; only the explicit raster flush
+      // used to enforce the slice budget becomes unavailable.
+    }
+  }
+
+  function resetMinimapRadar() {
+    minimapRadarEchoes.forEach((echo) => {
+      echo.ready = false;
+      echo.scannedAt = -Infinity;
+    });
+    const scanJob = minimapState.radarScanJob;
+    scanJob.active = false;
+    scanJob.echo = null;
+    scanJob.sampledAt = -Infinity;
+    scanJob.phase = 0;
+    scanJob.entryIndex = 0;
+    minimapState.radarTargetEntryCount = 0;
+    minimapState.mapRevision = -1;
+    minimapState.lastScanTime = -Infinity;
+    minimapEnemyMaskContext.setTransform(1, 0, 0, 1, 0, 0);
+    minimapEnemyMaskContext.clearRect(
+      0,
+      0,
+      MINIMAP_RULES.width,
+      MINIMAP_RULES.height,
+    );
+    minimapContext.setTransform(1, 0, 0, 1, 0, 0);
+    minimapContext.fillStyle = "#000";
+    minimapContext.fillRect(
+      0,
+      0,
+      MINIMAP_RULES.width,
+      MINIMAP_RULES.height,
+    );
+  }
+
+  function beginMinimapRadarEcho(scanTime, bounds) {
+    const scanJob = minimapState.radarScanJob;
+    if (scanJob.active) return false;
+    const width = MINIMAP_RULES.width;
+    const height = MINIMAP_RULES.height;
+    const sampleWidth = MINIMAP_TERRAIN_SAMPLE_SIZE;
+    const sampleHeight = MINIMAP_TERRAIN_SAMPLE_SIZE;
     const data = minimapState.imageData.data;
     const size = game.map.cellSize;
-    const xStep = bounds.width / width;
-    const yStep = bounds.height / height;
+    const xStep = bounds.width / sampleWidth;
+    const yStep = bounds.height / sampleHeight;
+    const radarRadiusSquared =
+      Math.min(sampleWidth, sampleHeight) ** 2 * 0.25;
 
-    for (let x = 0; x < width; x += 1) {
+    for (let x = 0; x < sampleWidth; x += 1) {
       minimapState.sampleColumns[x] = positiveModulo(
         Math.floor((bounds.x + (x + 0.5) * xStep) / size),
         game.map.columns,
       );
     }
 
-    for (let y = 0; y < height; y += 1) {
+    for (let y = 0; y < sampleHeight; y += 1) {
       const row = Math.floor((bounds.y + (y + 0.5) * yStep) / size);
       const validRow = row >= 0 && row < game.map.rows;
       const rowOffset = validRow ? row * game.map.columns : 0;
-      for (let x = 0; x < width; x += 1) {
+      for (let x = 0; x < sampleWidth; x += 1) {
         const column = minimapState.sampleColumns[x];
-        let color = MINIMAP_COLORS.outside;
-        if (validRow) {
+        let color = MINIMAP_COLORS.clear;
+        const offsetX = x + 0.5 - sampleWidth * 0.5;
+        const offsetY = y + 0.5 - sampleHeight * 0.5;
+        if (
+          validRow &&
+          offsetX * offsetX + offsetY * offsetY <= radarRadiusSquared
+        ) {
           const tileValue = game.map.tiles[rowOffset + column];
           color =
             tileValue === MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND]
@@ -4056,112 +4933,690 @@
                   ? game.map.acidTunnelDecayRecords.has(rowOffset + column)
                     ? MINIMAP_COLORS.acidTunneled
                     : MINIMAP_COLORS.tunneled
-                  : MINIMAP_COLORS.air;
+                  : MINIMAP_COLORS.clear;
         }
-        const pixel = (y * width + x) * 4;
+        const pixel = (y * sampleWidth + x) * 4;
         data[pixel] = color[0];
         data[pixel + 1] = color[1];
         data[pixel + 2] = color[2];
-        data[pixel + 3] = 255;
+        data[pixel + 3] = color[3];
       }
     }
 
-    minimapSceneContext.putImageData(minimapState.imageData, 0, 0);
+    fillMinimapRadarTargetEntries(bounds);
+    minimapEnemyMaskContext.setTransform(1, 0, 0, 1, 0, 0);
+    minimapEnemyMaskContext.globalAlpha = 1;
+    minimapEnemyMaskContext.globalCompositeOperation = "source-over";
+    minimapEnemyMaskContext.clearRect(0, 0, width, height);
+
+    const echo = minimapRadarEchoes.shift();
+    minimapRadarEchoes.push(echo);
+    echo.ready = false;
+    const echoContext = echo.context;
+    echoContext.setTransform(1, 0, 0, 1, 0, 0);
+    echoContext.globalAlpha = 1;
+    echoContext.globalCompositeOperation = "source-over";
+    minimapTerrainSampleContext.putImageData(minimapState.imageData, 0, 0);
+    echoContext.clearRect(0, 0, width, height);
+    echoContext.drawImage(
+      minimapTerrainSampleCanvas,
+      0,
+      0,
+      width,
+      height,
+    );
+    echoContext.save();
+    echoContext.beginPath();
+    echoContext.arc(width * 0.5, height * 0.5, width * 0.5, 0, TAU);
+    echoContext.clip();
     const scaleX = width / bounds.width;
     const scaleY = height / bounds.height;
     const worldTop = (0 - bounds.y) * scaleY;
-    minimapSceneContext.strokeStyle = palette.ink;
-    minimapSceneContext.lineWidth = 1.5;
-    minimapSceneContext.beginPath();
-    minimapSceneContext.moveTo(0, worldTop);
-    minimapSceneContext.lineTo(width, worldTop);
-    minimapSceneContext.moveTo(0, worldTop + game.height * scaleY);
-    minimapSceneContext.lineTo(width, worldTop + game.height * scaleY);
-    minimapSceneContext.stroke();
-    game.targets.forEach((target) => drawMinimapTarget(target, bounds));
-    game.capturedTargets.forEach((target) =>
-      drawMinimapTarget(target, bounds),
-    );
+    echoContext.strokeStyle = "rgba(255, 0, 0, 0.78)";
+    echoContext.lineWidth = 1.25;
+    echoContext.beginPath();
+    echoContext.moveTo(0, worldTop);
+    echoContext.lineTo(width, worldTop);
+    echoContext.moveTo(0, worldTop + game.height * scaleY);
+    echoContext.lineTo(width, worldTop + game.height * scaleY);
+    echoContext.stroke();
+    echoContext.restore();
 
-    minimapState.ready = true;
+    scanJob.active = true;
+    scanJob.echo = echo;
+    scanJob.sampledAt = scanTime;
+    scanJob.bounds.x = bounds.x;
+    scanJob.bounds.y = bounds.y;
+    scanJob.bounds.width = bounds.width;
+    scanJob.bounds.height = bounds.height;
+    scanJob.phase = 0;
+    scanJob.entryIndex = 0;
     minimapState.mapRevision = game.minimapMapRevision;
-    minimapState.terrainRevision = game.minimapTerrainRevision;
-    minimapState.lastRefreshTime = time;
-    minimapState.bounds = bounds;
+    minimapState.lastScanTime = scanTime;
+    return true;
   }
 
-  function drawMinimap(time = performance.now()) {
+  function drawMinimapRadarEcho(echo, bounds, scanTime) {
+    if (!echo.ready) return;
+    const age = scanTime - echo.scannedAt;
+    if (age < 0 || age >= MINIMAP_RULES.echoLifetime) return;
+    const fade = 1 - age / MINIMAP_RULES.echoLifetime;
+    const currentCenterX = bounds.x + bounds.width * 0.5;
+    const echoCenterX = nearestPeriodicWorldX(
+      echo.bounds.x + echo.bounds.width * 0.5,
+      currentCenterX,
+    );
+    const echoLeft = echoCenterX - echo.bounds.width * 0.5;
+    const destinationX =
+      ((echoLeft - bounds.x) / bounds.width) * MINIMAP_RULES.width;
+    const destinationY =
+      ((echo.bounds.y - bounds.y) / bounds.height) * MINIMAP_RULES.height;
+    const destinationWidth =
+      (echo.bounds.width / bounds.width) * MINIMAP_RULES.width;
+    const destinationHeight =
+      (echo.bounds.height / bounds.height) * MINIMAP_RULES.height;
+    minimapContext.save();
+    minimapContext.globalAlpha = fade;
+    minimapContext.drawImage(
+      echo.canvas,
+      destinationX,
+      destinationY,
+      destinationWidth,
+      destinationHeight,
+    );
+    minimapContext.restore();
+  }
+
+  function minimapHalfSpriteMaximumRadius(
+    width,
+    height,
+    hingeX,
+    sourceSide,
+    rotation,
+    flipVertically,
+  ) {
+    const seamOverlap =
+      HALF_SPRITE_SEAM_OVERLAP *
+      (height / WORM_SPRITE_METRICS.headHeight);
+    const top = sourceSide === "upper" ? -height * 0.5 : -seamOverlap;
+    const bottom = top + height * 0.5 + seamOverlap;
+    const cosine = Math.cos(rotation);
+    const sine = Math.sin(rotation);
+    let maximumRadius = 0;
+    for (let xIndex = 0; xIndex < 2; xIndex += 1) {
+      const x = xIndex === 0 ? -width * 0.5 : width * 0.5;
+      for (let yIndex = 0; yIndex < 2; yIndex += 1) {
+        const sourceY = yIndex === 0 ? top : bottom;
+        const y = flipVertically ? -sourceY : sourceY;
+        const offsetX = x - hingeX;
+        const transformedX =
+          hingeX + offsetX * cosine - y * sine;
+        const transformedY = offsetX * sine + y * cosine;
+        maximumRadius = Math.max(
+          maximumRadius,
+          magnitude(transformedX, transformedY),
+        );
+      }
+    }
+    return maximumRadius;
+  }
+
+  function minimapJawSpriteMaximumRadius(scale, jawAngleMultiplier) {
+    const width = WORM_SPRITE_METRICS.headWidth * scale;
+    const height = WORM_SPRITE_METRICS.headHeight * scale;
+    const hingeX = WORM_SPRITE_METRICS.jawHingeX * scale;
+    const jawAngle =
+      MOUTH_BEHAVIOR.maxJawAngle *
+      clamp(game.mouthOpen, 0, 1) *
+      Math.max(0, jawAngleMultiplier);
+    const mouthClosingAngle = MOUTH_BEHAVIOR.maxJawAngle - jawAngle;
+    const mirroredJawUpper =
+      wormAppearance.mirroredJawSource === "headLower";
+    const mirroredJawLower =
+      wormAppearance.mirroredJawSource === "headUpper";
+    const mirroredMouthUpper =
+      wormAppearance.mirroredMouthSource === "mouthLower";
+    const mirroredMouthLower =
+      wormAppearance.mirroredMouthSource === "mouthUpper";
+    return Math.max(
+      minimapHalfSpriteMaximumRadius(
+        width,
+        height,
+        hingeX,
+        mirroredJawUpper ? "lower" : "upper",
+        -jawAngle,
+        mirroredJawUpper,
+      ),
+      minimapHalfSpriteMaximumRadius(
+        width,
+        height,
+        hingeX,
+        mirroredJawLower ? "upper" : "lower",
+        jawAngle,
+        mirroredJawLower,
+      ),
+      minimapHalfSpriteMaximumRadius(
+        width,
+        height,
+        hingeX,
+        mirroredMouthUpper ? "lower" : "upper",
+        mouthClosingAngle,
+        mirroredMouthUpper,
+      ),
+      minimapHalfSpriteMaximumRadius(
+        width,
+        height,
+        hingeX,
+        mirroredMouthLower ? "upper" : "lower",
+        -mouthClosingAngle,
+        mirroredMouthLower,
+      ),
+    );
+  }
+
+  function fillMinimapWormPoints(renderState, bounds, bodyLayout) {
+    const sourceSegments = renderState?.outputSegments || game.segments;
+    while (minimapState.wormPoints.length < sourceSegments.length) {
+      minimapState.wormPoints.push({
+        x: 0,
+        y: 0,
+        worldX: 0,
+        radius: 1,
+        leftX: 0,
+        leftY: 0,
+        rightX: 0,
+        rightY: 0,
+      });
+    }
+    minimapState.wormPoints.length = sourceSegments.length;
+    const scaleX = MINIMAP_RULES.width / bounds.width;
+    const scaleY = MINIMAP_RULES.height / bounds.height;
+    const radiusScale = Math.min(scaleX, scaleY);
+    const currentWormScale = wormScale();
+    const centerX = MINIMAP_RULES.width * 0.5;
+    const centerY = MINIMAP_RULES.height * 0.5;
+    let maximumExtent = 0;
+    let referenceX = bounds.x + bounds.width * 0.5;
+    for (let index = 0; index < sourceSegments.length; index += 1) {
+      const source = sourceSegments[index];
+      const point = minimapState.wormPoints[index];
+      point.worldX = nearestPeriodicWorldX(source.x, referenceX);
+      referenceX = point.worldX;
+      point.x = (point.worldX - bounds.x) * scaleX;
+      point.y = (source.y - bounds.y) * scaleY;
+      point.radius = bodyLayout.fillRadii[index] * radiusScale;
+    }
+    const bodySourceScale =
+      WORM_SPRITE_METRICS.segmentCanvasSize /
+      (WORM_SPRITE_METRICS.segmentOutlineRadius * 2);
+    for (
+      let renderIndex = 0;
+      renderIndex < bodyLayout.renderIndices.length;
+      renderIndex += 1
+    ) {
+      const index = bodyLayout.renderIndices[renderIndex];
+      const point = minimapState.wormPoints[index];
+      const radius = bodyLayout.outlineRadii[index];
+      const width = Math.max(
+        radius * 2 * bodySourceScale,
+        bodyLayout.minimumRenderedWidths[index],
+      ) * radiusScale;
+      const height = radius * 2 * bodySourceScale * radiusScale;
+      maximumExtent = Math.max(
+        maximumExtent,
+        magnitude(point.x - centerX, point.y - centerY) +
+          Math.hypot(width, height) * 0.5,
+      );
+    }
+    for (let index = 2; index < sourceSegments.length - 1; index += 2) {
+      const point = minimapState.wormPoints[index];
+      const radius = bodyLayout.fillRadii[index];
+      const width =
+        WORM_SPRITE_METRICS.segmentCanvasSize *
+        currentWormScale *
+        radiusScale;
+      const height =
+        WORM_SPRITE_METRICS.segmentCanvasSize *
+        (radius / WORM_SPRITE_METRICS.segmentFillRadius) *
+        radiusScale;
+      maximumExtent = Math.max(
+        maximumExtent,
+        magnitude(point.x - centerX, point.y - centerY) +
+          Math.hypot(width, height) * 0.5,
+      );
+    }
+    const headPose = renderState?.headPose || getEatHitboxPose();
+    const headReferenceX = minimapState.wormPoints[0]?.worldX ?? game.head.x;
+    const headX = nearestPeriodicWorldX(headPose.x, headReferenceX);
+    const headPixelX = (headX - bounds.x) * scaleX;
+    const headPixelY = (headPose.y - bounds.y) * scaleY;
+    const jawAngleMultiplier = spitterHeadPoseShouldRemainActive()
+      ? ACID_RULES.sprayJawAngleMultiplier
+      : 1;
+    const headRadius = minimapJawSpriteMaximumRadius(
+      currentWormScale * radiusScale,
+      jawAngleMultiplier,
+    );
+    maximumExtent = Math.max(
+      maximumExtent,
+      magnitude(headPixelX - centerX, headPixelY - centerY) +
+        headRadius,
+    );
+    const usableRadius =
+      Math.min(MINIMAP_RULES.width, MINIMAP_RULES.height) * 0.5 - 8;
+    minimapState.wormFitScale =
+      maximumExtent > usableRadius ? usableRadius / maximumExtent : 1;
+    if (minimapState.wormFitScale < 1) {
+      for (const point of minimapState.wormPoints) {
+        point.x =
+          centerX + (point.x - centerX) * minimapState.wormFitScale;
+        point.y =
+          centerY + (point.y - centerY) * minimapState.wormFitScale;
+        point.radius *= minimapState.wormFitScale;
+      }
+    }
+    return minimapState.wormPoints;
+  }
+
+  function traceMinimapWormBody(points, radiusPadding = 0) {
+    if (points.length === 0) return false;
+    minimapContext.beginPath();
+    if (points.length === 1) {
+      minimapContext.arc(
+        points[0].x,
+        points[0].y,
+        points[0].radius + radiusPadding,
+        0,
+        TAU,
+      );
+      return true;
+    }
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index];
+      const previous = points[Math.max(0, index - 1)];
+      const next = points[Math.min(points.length - 1, index + 1)];
+      let tangentX = previous.x - next.x;
+      let tangentY = previous.y - next.y;
+      const tangentLength = magnitude(tangentX, tangentY);
+      if (tangentLength < 0.0001) {
+        tangentX = Math.cos(game.heading);
+        tangentY = Math.sin(game.heading);
+      } else {
+        tangentX /= tangentLength;
+        tangentY /= tangentLength;
+      }
+      const radius = point.radius + radiusPadding;
+      const normalX = -tangentY;
+      const normalY = tangentX;
+      point.leftX = point.x + normalX * radius;
+      point.leftY = point.y + normalY * radius;
+      point.rightX = point.x - normalX * radius;
+      point.rightY = point.y - normalY * radius;
+    }
+
+    minimapContext.moveTo(points[0].leftX, points[0].leftY);
+    for (let index = 1; index < points.length - 1; index += 1) {
+      const point = points[index];
+      const next = points[index + 1];
+      minimapContext.quadraticCurveTo(
+        point.leftX,
+        point.leftY,
+        (point.leftX + next.leftX) * 0.5,
+        (point.leftY + next.leftY) * 0.5,
+      );
+    }
+    const tail = points[points.length - 1];
+    const beforeTail = points[points.length - 2];
+    minimapContext.lineTo(tail.leftX, tail.leftY);
+    const tailAngle = Math.atan2(
+      beforeTail.y - tail.y,
+      beforeTail.x - tail.x,
+    );
+    minimapContext.arc(
+      tail.x,
+      tail.y,
+      tail.radius + radiusPadding,
+      tailAngle + Math.PI / 2,
+      tailAngle + Math.PI * 1.5,
+    );
+    for (let index = points.length - 2; index > 0; index -= 1) {
+      const point = points[index];
+      const next = points[index - 1];
+      minimapContext.quadraticCurveTo(
+        point.rightX,
+        point.rightY,
+        (point.rightX + next.rightX) * 0.5,
+        (point.rightY + next.rightY) * 0.5,
+      );
+    }
+    minimapContext.lineTo(points[0].rightX, points[0].rightY);
+    minimapContext.closePath();
+    return true;
+  }
+
+  function drawMinimapProceduralWorm(renderState, bounds, points) {
+    if (traceMinimapWormBody(points, 1.15)) {
+      minimapContext.fillStyle = "#000";
+      minimapContext.fill();
+    }
+    if (traceMinimapWormBody(points)) {
+      minimapContext.fillStyle = MINIMAP_RADAR_RED;
+      minimapContext.fill();
+    }
+
+    const scaleX = MINIMAP_RULES.width / bounds.width;
+    const scaleY = MINIMAP_RULES.height / bounds.height;
+    const headPose = renderState?.headPose || getEatHitboxPose();
+    const referenceX = points[0]?.worldX ?? game.head.x;
+    const headX = nearestPeriodicWorldX(headPose.x, referenceX);
+    const centerX = MINIMAP_RULES.width * 0.5;
+    const centerY = MINIMAP_RULES.height * 0.5;
+    const pixelX =
+      centerX +
+      ((headX - bounds.x) * scaleX - centerX) *
+        minimapState.wormFitScale;
+    const pixelY =
+      centerY +
+      ((headPose.y - bounds.y) * scaleY - centerY) *
+        minimapState.wormFitScale;
+    const headLength =
+      wormDimension("headLength") * scaleX * minimapState.wormFitScale;
+    const headRadius =
+      wormDimension("headRadius") * scaleY * minimapState.wormFitScale;
+    minimapContext.save();
+    minimapContext.translate(pixelX, pixelY);
+    minimapContext.rotate(headPose.angle);
+    minimapContext.beginPath();
+    minimapContext.ellipse(
+      0,
+      0,
+      headLength + 1.15,
+      headRadius + 1.15,
+      0,
+      0,
+      TAU,
+    );
+    minimapContext.fillStyle = "#000";
+    minimapContext.fill();
+    minimapContext.beginPath();
+    minimapContext.ellipse(0, 0, headLength, headRadius, 0, 0, TAU);
+    minimapContext.fillStyle = MINIMAP_RADAR_RED;
+    minimapContext.fill();
+    minimapContext.restore();
+  }
+
+  function drawMinimapWormSprite(
+    targetContext,
+    sprite,
+    x,
+    y,
+    angle,
+    width,
+    height,
+  ) {
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    targetContext.setTransform(cosine, sine, -sine, cosine, x, y);
+    targetContext.drawImage(
+      sprite,
+      -width * 0.5,
+      -height * 0.5,
+      width,
+      height,
+    );
+  }
+
+  function drawMinimapUncachedWormBodySprite(
+    targetContext,
+    x,
+    y,
+    angle,
+    width,
+    height,
+    fillScale,
+  ) {
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    targetContext.setTransform(cosine, sine, -sine, cosine, x, y);
+    targetContext.drawImage(
+      wormSprites.segmentOutline,
+      -width * 0.5,
+      -height * 0.5,
+      width,
+      height,
+    );
+    const fillWidth = width * fillScale;
+    const fillHeight = height * fillScale;
+    targetContext.drawImage(
+      wormSprites.segment,
+      -fillWidth * 0.5,
+      -fillHeight * 0.5,
+      fillWidth,
+      fillHeight,
+    );
+  }
+
+  function drawMinimapCustomWorm(renderState, bounds, points, bodyLayout) {
+    if (!wormSpritesAreReady()) return false;
+    const sourceSegments = renderState?.outputSegments || game.segments;
+    const targetContext = minimapWormMaskContext;
+    const width = MINIMAP_RULES.width;
+    const height = MINIMAP_RULES.height;
+    const scaleX = width / bounds.width;
+    const scaleY = height / bounds.height;
+    const pixelScale =
+      Math.min(scaleX, scaleY) * minimapState.wormFitScale;
+    const currentWormScale = wormScale();
+    targetContext.setTransform(1, 0, 0, 1, 0, 0);
+    targetContext.globalAlpha = 1;
+    targetContext.globalCompositeOperation = "source-over";
+    targetContext.clearRect(0, 0, width, height);
+    targetContext.save();
+    targetContext.beginPath();
+    targetContext.arc(width * 0.5, height * 0.5, width * 0.5, 0, TAU);
+    targetContext.clip();
+
+    const bodySourceScale =
+      WORM_SPRITE_METRICS.segmentCanvasSize /
+      (WORM_SPRITE_METRICS.segmentOutlineRadius * 2);
+    let bodyCompositeBuildsRemaining =
+      MINIMAP_RULES.maximumBodyCompositeBuildsPerFrame;
+    for (
+      let renderIndex = bodyLayout.renderIndices.length - 1;
+      renderIndex >= 0;
+      renderIndex -= 1
+    ) {
+      const index = bodyLayout.renderIndices[renderIndex];
+      const point = points[index];
+      const radius = bodyLayout.outlineRadii[index];
+      const spriteWidth = Math.max(
+        radius * 2 * bodySourceScale,
+        bodyLayout.minimumRenderedWidths[index],
+      ) * pixelScale;
+      const spriteHeight = radius * 2 * bodySourceScale * pixelScale;
+      let compositeSprite =
+        wormBodyCompositeCache.revision === wormBodySpriteRevision &&
+        wormBodyCompositeCache.segmentCount === sourceSegments.length
+          ? wormBodyCompositeCache.sprites[index]
+          : null;
+      if (!compositeSprite && bodyCompositeBuildsRemaining > 0) {
+        compositeSprite = gameplayBodyCompositeSprite(
+          index,
+          sourceSegments.length,
+        );
+        bodyCompositeBuildsRemaining -= 1;
+      }
+      if (compositeSprite) {
+        drawMinimapWormSprite(
+          targetContext,
+          compositeSprite,
+          point.x,
+          point.y,
+          bodyLayout.segmentAngles[index],
+          spriteWidth,
+          spriteHeight,
+        );
+      } else {
+        const normalizedFillRadius =
+          bodyLayout.fillRadii[index] /
+          WORM_SPRITE_METRICS.segmentFillRadius;
+        const normalizedOutlineRadius =
+          radius / WORM_SPRITE_METRICS.segmentOutlineRadius;
+        const fillScale = clamp(
+          normalizedFillRadius /
+            Math.max(0.0001, normalizedOutlineRadius),
+          0,
+          1,
+        );
+        drawMinimapUncachedWormBodySprite(
+          targetContext,
+          point.x,
+          point.y,
+          bodyLayout.segmentAngles[index],
+          spriteWidth,
+          spriteHeight,
+          fillScale,
+        );
+      }
+    }
+
+    for (let index = 2; index < sourceSegments.length - 1; index += 2) {
+      const point = points[index];
+      const radius = bodyLayout.fillRadii[index];
+      drawMinimapWormSprite(
+        targetContext,
+        wormSprites.segmentBand,
+        point.x,
+        point.y,
+        bodyLayout.segmentAngles[index],
+        WORM_SPRITE_METRICS.segmentCanvasSize *
+          currentWormScale *
+          pixelScale,
+        WORM_SPRITE_METRICS.segmentCanvasSize *
+          (radius / WORM_SPRITE_METRICS.segmentFillRadius) *
+          pixelScale,
+      );
+    }
+
+    const headPose = renderState?.headPose || getEatHitboxPose();
+    const referenceX = points[0]?.worldX ?? game.head.x;
+    const headX = nearestPeriodicWorldX(headPose.x, referenceX);
+    const centerX = width * 0.5;
+    const centerY = height * 0.5;
+    const headPixelX =
+      centerX +
+      ((headX - bounds.x) * scaleX - centerX) *
+        minimapState.wormFitScale;
+    const headPixelY =
+      centerY +
+      ((headPose.y - bounds.y) * scaleY - centerY) *
+        minimapState.wormFitScale;
+    targetContext.setTransform(1, 0, 0, 1, 0, 0);
+    drawJawSpriteSet(
+      targetContext,
+      wormSprites,
+      headPixelX,
+      headPixelY,
+      headPose.angle,
+      game.mouthOpen,
+      currentWormScale * pixelScale,
+      wormAppearance.mirroredJawSource,
+      wormAppearance.mirroredMouthSource,
+      spitterHeadPoseShouldRemainActive()
+        ? ACID_RULES.sprayJawAngleMultiplier
+        : 1,
+    );
+
+    targetContext.globalCompositeOperation = "source-in";
+    targetContext.fillStyle = MINIMAP_RADAR_RED;
+    targetContext.fillRect(0, 0, width, height);
+    targetContext.restore();
+    targetContext.globalCompositeOperation = "source-over";
+    minimapContext.drawImage(minimapWormMaskCanvas, 0, 0);
+    return true;
+  }
+
+  function drawMinimapLiveWorm(renderState, bounds) {
+    const sourceSegments = renderState?.outputSegments || game.segments;
+    if (sourceSegments.length === 0) return;
+    const currentWormScale = wormScale();
+    const bodyLayout =
+      gameplayBodyLayoutCache.segmentCount === sourceSegments.length &&
+      gameplayBodyLayoutCache.scale === currentWormScale
+        ? gameplayBodyLayoutCache
+        : createBodySpriteLayout(sourceSegments);
+    const points = fillMinimapWormPoints(renderState, bounds, bodyLayout);
+    if (!drawMinimapCustomWorm(renderState, bounds, points, bodyLayout)) {
+      drawMinimapProceduralWorm(renderState, bounds, points);
+    }
+  }
+
+  function drawMinimapRadarPulse(scanTime) {
+    const pulseAge = scanTime - minimapState.lastScanTime;
+    if (pulseAge < 0 || pulseAge >= MINIMAP_RULES.pulseDuration) return;
+    const progress = pulseAge / MINIMAP_RULES.pulseDuration;
+    const radius =
+      Math.min(MINIMAP_RULES.width, MINIMAP_RULES.height) * 0.5 * progress;
+    minimapContext.save();
+    minimapContext.globalAlpha = (1 - progress) * 0.72;
+    minimapContext.strokeStyle = MINIMAP_RADAR_RED;
+    minimapContext.lineWidth = 1.5;
+    minimapContext.beginPath();
+    minimapContext.arc(
+      MINIMAP_RULES.width * 0.5,
+      MINIMAP_RULES.height * 0.5,
+      radius,
+      0,
+      TAU,
+    );
+    minimapContext.stroke();
+    minimapContext.restore();
+  }
+
+  function drawMinimap(renderState = buildSpitterCraneRenderState()) {
     if (game.map.columns === 0 || game.map.rows === 0) return;
     const bounds = getMinimapWorldBounds();
-    const previousBounds = minimapState.bounds;
-    const movedBy = Math.max(
-      Math.abs(bounds.x - previousBounds.x),
-      Math.abs(bounds.y - previousBounds.y),
-    );
-    const scaleChanged =
-      Math.abs(bounds.width - previousBounds.width) > bounds.width * 0.001 ||
-      Math.abs(bounds.height - previousBounds.height) > bounds.height * 0.001;
+    const scanTime = game.elapsed;
+    const clockReset = scanTime + 0.000001 < minimapState.lastScanTime;
     const mapChanged = minimapState.mapRevision !== game.minimapMapRevision;
-    const refreshAvailable =
-      time - minimapState.lastRefreshTime >= MINIMAP_RULES.refreshInterval;
-    const sceneIsMoving = game.started && !game.paused && !game.menuOpen;
-    const refreshNeeded =
-      !minimapState.ready ||
-      mapChanged ||
-      (refreshAvailable &&
-        (sceneIsMoving ||
-          scaleChanged ||
-          minimapState.terrainRevision !== game.minimapTerrainRevision ||
-          movedBy > bounds.width / MINIMAP_RULES.width));
-    if (refreshNeeded) refreshMinimapScene(time, bounds);
-    if (!minimapState.ready) return;
-
-    const activeBounds = minimapState.bounds;
-    const scaleX = MINIMAP_RULES.width / activeBounds.width;
-    const scaleY = MINIMAP_RULES.height / activeBounds.height;
-    const zoom = cameraZoom();
-    const viewportX = (game.camera.x - activeBounds.x) * scaleX;
-    const viewportY = (game.camera.y - activeBounds.y) * scaleY;
-    const viewportWidth = (game.viewport.width / zoom) * scaleX;
-    const viewportHeight = (game.viewport.height / zoom) * scaleY;
-    const wormX = (game.head.x - activeBounds.x) * scaleX;
-    const wormY = (game.head.y - activeBounds.y) * scaleY;
+    if (clockReset || mapChanged) resetMinimapRadar();
+    let hasEcho = false;
+    for (const echo of minimapRadarEchoes) {
+      if (echo.ready) {
+        hasEcho = true;
+        break;
+      }
+    }
+    const scanJob = minimapState.radarScanJob;
+    if (
+      !scanJob.active &&
+      (
+        !hasEcho ||
+        scanTime - minimapState.lastScanTime >=
+          MINIMAP_RULES.scanInterval - 0.000001
+      )
+    ) {
+      beginMinimapRadarEcho(scanTime, bounds);
+    }
+    if (
+      scanJob.active &&
+      game.started &&
+      !game.paused &&
+      !game.menuOpen
+    ) {
+      advanceMinimapRadarEnemyScan();
+    }
 
     minimapContext.setTransform(1, 0, 0, 1, 0, 0);
     minimapContext.imageSmoothingEnabled = false;
-    minimapContext.drawImage(minimapSceneCanvas, 0, 0);
-    minimapContext.strokeStyle = palette.ink;
-    minimapContext.lineWidth = 3;
-    minimapContext.strokeRect(
-      viewportX,
-      viewportY,
-      viewportWidth,
-      viewportHeight,
-    );
-    minimapContext.strokeStyle = palette.cream;
-    minimapContext.lineWidth = 1;
-    minimapContext.strokeRect(
-      viewportX,
-      viewportY,
-      viewportWidth,
-      viewportHeight,
-    );
-
-    minimapContext.save();
-    minimapContext.translate(wormX, wormY);
-    minimapContext.rotate(game.heading);
-    minimapContext.beginPath();
-    minimapContext.moveTo(7, 0);
-    minimapContext.lineTo(-5, -4.5);
-    minimapContext.lineTo(-2.5, 0);
-    minimapContext.lineTo(-5, 4.5);
-    minimapContext.closePath();
-    minimapContext.fillStyle = palette.acid;
-    minimapContext.fill();
-    minimapContext.strokeStyle = palette.ink;
-    minimapContext.lineWidth = 1.5;
-    minimapContext.stroke();
-    minimapContext.restore();
+    minimapContext.globalAlpha = 1;
+    minimapContext.fillStyle = "#000";
+    minimapContext.fillRect(0, 0, MINIMAP_RULES.width, MINIMAP_RULES.height);
+    for (const echo of minimapRadarEchoes) {
+      drawMinimapRadarEcho(echo, bounds, scanTime);
+    }
+    drawMinimapRadarPulse(scanTime);
+    drawMinimapLiveWorm(renderState, bounds);
   }
 
   function getVisibleWorldBounds(padding = 0) {
@@ -4194,13 +5649,14 @@
     canvas.style.width = `${game.viewport.width}px`;
     canvas.style.height = `${game.viewport.height}px`;
     ctx.setTransform(game.dpr, 0, 0, game.dpr, 0, 0);
-    if (game.levelLoaded) updateCamera();
+    if (game.levelLoaded) updateCamera(0);
     if (editor.open) resizeEditorCanvas(false);
   }
 
   function reset() {
     cancelHeldTonguePointer();
     cancelSpitterPointer();
+    clearSprinterAreaTarget(true);
     clearAcidParticles();
     game.head.x = game.spawn.x;
     game.head.y = game.spawn.y;
@@ -4234,6 +5690,7 @@
     game.particles = [];
     game.elapsed = 0;
     buildTargets();
+    resetMinimapRadar();
     game.shake = 0;
     game.transitionEffectCooldown = 0;
     game.mouthOpen = 0;
@@ -4251,7 +5708,7 @@
     }));
     initializeBodyPath();
     game.previousEatHitbox = getEatHitboxPose();
-    updateCamera();
+    snapCameraToWorm();
     syncDevWormLevelControl();
 
     updateHud();
@@ -4263,6 +5720,7 @@
     keys.up = false;
     keys.down = false;
     keys.boost = false;
+    clearSprinterAreaTarget();
     cancelHeldTonguePointer();
     cancelSpitterPointer();
   }
@@ -4274,6 +5732,19 @@
     wormEditorTypeName.textContent = label;
     gameShell.dataset.wormType = type.id;
     gameShell.dataset.wormAbility = type.ability || "none";
+    if (boostTouchButton) {
+      const multiplier = formatSpeedMultiplier(wormBoostSpeedMultiplier());
+      boostTouchButton.textContent = `${multiplier}×`;
+      const actionDescription = wormHasAbility(WORM_ABILITIES.SPRINT)
+        ? " or latch onto nearby hard prey"
+        : wormHasAbility(WORM_ABILITIES.TONGUE)
+          ? ", pursue hard prey, or amplify grapple pull"
+          : "";
+      boostTouchButton.setAttribute(
+        "aria-label",
+        `Boost to ${multiplier} times speed${actionDescription}`,
+      );
+    }
   }
 
   function persistActiveWormType() {
@@ -4349,11 +5820,16 @@
     if (typeId === game.activeWormTypeId) {
       updateActiveWormTypeLabels();
       await loadSavedWormAppearance();
+      if (wormHasAbility(WORM_ABILITIES.ACID)) {
+        prewarmAcidClusterAtlases();
+      }
       return true;
     }
 
     const previousBoostCapacity = Math.max(0.001, boostCapacity());
     const boostRatio = clamp(game.boostCharge / previousBoostCapacity, 0, 1);
+    clearSprinterAreaTarget(true);
+    if (game.latchAttack) releaseBoostLatchAttack(true, false);
     discardActiveTongues();
     cancelSpitterPointer();
     clearAcidParticles();
@@ -4367,6 +5843,9 @@
     persistActiveWormType();
     updateActiveWormTypeLabels();
     await loadSavedWormAppearance();
+    if (wormHasAbility(WORM_ABILITIES.ACID)) {
+      prewarmAcidClusterAtlases();
+    }
     updateHud();
     return true;
   }
@@ -4396,11 +5875,14 @@
     const segmentGrowthLabel =
       type.scaling.segmentsPerLevel === 0.5
         ? "+1 segment / 2 levels"
-        : `+${type.scaling.segmentsPerLevel} segment / level`;
+        : type.scaling.segmentsPerLevel === 1.5
+          ? "+3 segments / 2 levels"
+          : `+${type.scaling.segmentsPerLevel} segment / level`;
     scaling.textContent =
       `+${Math.round(type.scaling.scalePerLevel * 100)}% size / level · ` +
       `${segmentGrowthLabel} · ` +
-      `+${type.scaling.maximumSpeedPerLevel} speed / level`;
+      `+${type.scaling.maximumSpeedPerLevel} speed / level · ` +
+      `${formatSpeedMultiplier(type.scaling.boostSpeedMultiplier)}× boost`;
     const button = document.createElement("button");
     button.type = "button";
     button.disabled = selected;
@@ -5150,6 +6632,7 @@
     );
     wormPainter.mirroredJawSource = wormAppearance.mirroredJawSource;
     wormPainter.mirroredMouthSource = wormAppearance.mirroredMouthSource;
+    setWormPainterAcidColors(wormAppearance.acidColors);
   }
 
   async function loadDefaultWormIntoEditor() {
@@ -5166,6 +6649,7 @@
       DEFAULT_WORM_MIRRORING.mirroredJawSource;
     wormPainter.mirroredMouthSource =
       DEFAULT_WORM_MIRRORING.mirroredMouthSource;
+    setWormPainterAcidColors(DEFAULT_ACID_COLORS);
     syncWormEditorGuideControls();
     renderWormPaintCanvas();
     drawWormEditorPreview();
@@ -5183,6 +6667,7 @@
     sources,
     mirroredJawSource = null,
     mirroredMouthSource = null,
+    acidColors = DEFAULT_ACID_COLORS,
   ) {
     wormBodySpriteRevision += 1;
     const defaultSources = activeDefaultWormSpriteFiles();
@@ -5195,6 +6680,7 @@
     wormAppearance.mirroredMouthSource = normalizeMirroredMouthSource(
       mirroredMouthSource,
     );
+    applyAcidColors(acidColors);
   }
 
   function savedSpriteSetIsValid(sources, layerNames) {
@@ -5408,11 +6894,12 @@
     window.localStorage.setItem(
       storageKey,
       JSON.stringify({
-        version: 1,
+        version: 2,
         wormTypeId: game.activeWormTypeId,
         updatedAt: Date.now(),
         mirroredJawSource: normalizeMirroredJawSource(mirroredJawSource),
         mirroredMouthSource: normalizeMirroredMouthSource(mirroredMouthSource),
+        acidColors: [...DEFAULT_ACID_COLORS],
         sprites,
       }),
     );
@@ -5434,6 +6921,7 @@
           withTongueSpriteFallbacks(typedAppearance.sprites),
           typedAppearance.mirroredJawSource,
           typedAppearance.mirroredMouthSource,
+          normalizeAcidColors(typedAppearance.acidColors),
         );
         return true;
       }
@@ -5666,6 +7154,16 @@
   }
 
   function syncWormEditorGuideControls() {
+    const usesTongue = wormHasAbility(WORM_ABILITIES.TONGUE);
+    const usesAcid = wormHasAbility(WORM_ABILITIES.ACID);
+    if (
+      !usesTongue &&
+      (wormPainter.activeLayer === "tongue" ||
+        wormPainter.activeLayer === "tongueRing")
+    ) {
+      wormPainter.activeLayer =
+        wormPainter.mirroredJawSource || "headUpper";
+    }
     const halfLayerIsActive = Boolean(
       HALF_WORM_LAYER_SIDES[wormPainter.activeLayer],
     );
@@ -5692,14 +7190,22 @@
     );
     document.querySelectorAll("[data-worm-layer]").forEach((button) => {
       const layerName = button.dataset.wormLayer;
+      const tongueLayer =
+        layerName === "tongue" || layerName === "tongueRing";
       const abilityLocked =
-        (layerName === "tongue" || layerName === "tongueRing") &&
-        !wormHasAbility(WORM_ABILITIES.TONGUE);
+        tongueLayer && !usesTongue;
+      button.hidden = abilityLocked;
       button.disabled = wormLayerIsMirrorLocked(layerName) || abilityLocked;
+      button.classList.toggle(
+        "active",
+        button.dataset.wormLayer === wormPainter.activeLayer,
+      );
       button.title = abilityLocked
         ? `${activeWormType().label} does not use tongue layers`
         : "";
     });
+    if (wormAcidPalette) wormAcidPalette.hidden = !usesAcid;
+    if (usesAcid) syncWormAcidColorInputs();
   }
 
   function renderWormPaintCanvas() {
@@ -6777,6 +8283,67 @@
     );
   }
 
+  function drawWormEditorPreviewAcid(
+    simulation,
+    headX,
+    headY,
+    headAngle,
+  ) {
+    if (!wormHasAbility(WORM_ABILITIES.ACID)) return;
+    const colors =
+      wormPainter.acidColorLut ||
+      buildCyclicAcidColorLut(wormPainter.acidColors);
+    const forwardX = Math.cos(headAngle);
+    const forwardY = Math.sin(headAngle);
+    const normalX = -forwardY;
+    const normalY = forwardX;
+    const startDistance = WORM_SPRITE_METRICS.headWidth * 0.42;
+    const streamLength = 132;
+    const dropletCount = 16;
+
+    wormPreviewContext.save();
+    wormPreviewContext.lineCap = "round";
+    wormPreviewContext.strokeStyle = "#171217";
+    wormPreviewContext.lineWidth = 3;
+    wormPreviewContext.beginPath();
+    wormPreviewContext.moveTo(
+      headX + forwardX * startDistance,
+      headY + forwardY * startDistance,
+    );
+    wormPreviewContext.lineTo(
+      headX + forwardX * (startDistance + streamLength),
+      headY + forwardY * (startDistance + streamLength),
+    );
+    wormPreviewContext.stroke();
+
+    for (let index = 0; index < dropletCount; index += 1) {
+      const progress = positiveModulo(
+        index / dropletCount + simulation.time * 0.72,
+        1,
+      );
+      const distance = startDistance + progress * streamLength;
+      const wobble =
+        Math.sin(simulation.time * 8.5 + index * 1.73) *
+        (1.5 + progress * 4.5);
+      const colorIndex = positiveModulo(
+        index * 2 + Math.floor(simulation.time * 6),
+        colors.length,
+      );
+      wormPreviewContext.globalAlpha = 0.92 - progress * 0.22;
+      wormPreviewContext.fillStyle = colors[colorIndex];
+      wormPreviewContext.beginPath();
+      wormPreviewContext.arc(
+        headX + forwardX * distance + normalX * wobble,
+        headY + forwardY * distance + normalY * wobble,
+        2.5 + (1 - progress) * 2.2,
+        0,
+        TAU,
+      );
+      wormPreviewContext.fill();
+    }
+    wormPreviewContext.restore();
+  }
+
   function drawWormEditorPreview() {
     if (!wormPreviewSimulation.initialized) {
       initializeWormPreviewSimulation();
@@ -6796,6 +8363,12 @@
     const previewHeadY =
       head.y + Math.sin(previewHeadAngle) * WORM_SHAPE.headOffset;
     drawWormEditorPreviewTongue(
+      simulation,
+      previewHeadX,
+      previewHeadY,
+      previewHeadAngle,
+    );
+    drawWormEditorPreviewAcid(
       simulation,
       previewHeadX,
       previewHeadY,
@@ -7067,6 +8640,8 @@
     initializeWormPreviewSimulation();
     wormPainter.drawing = false;
     wormPainter.pointerId = null;
+    setWormPainterAcidColors(wormAppearance.acidColors);
+    syncWormEditorGuideControls();
     wormEditorElement.classList.add("visible");
     wormEditorElement.setAttribute("aria-hidden", "false");
     updateWormPaintStatus("Loading active PNG layers…");
@@ -7110,6 +8685,9 @@
       exportedAt: new Date().toISOString(),
       mirroredJawSource: wormPainter.mirroredJawSource,
       mirroredMouthSource: wormPainter.mirroredMouthSource,
+      ...(wormHasAbility(WORM_ABILITIES.ACID)
+        ? { acidColors: [...wormPainter.acidColors] }
+        : {}),
       sprites: collectWormPainterSprites(),
     };
   }
@@ -7138,11 +8716,16 @@
     const packageData = JSON.parse(await file.text());
     if (
       packageData?.format !== WORM_PACKAGE_FORMAT ||
-      packageData?.version !== WORM_PACKAGE_VERSION ||
+      !SUPPORTED_WORM_PACKAGE_VERSIONS.has(packageData?.version) ||
       !savedSpriteSetIsValid(
         packageData?.sprites,
         CORE_WORM_LAYER_NAMES,
-      )
+      ) ||
+      (packageData.version === 2 &&
+        packageData.wormTypeId === WORM_TYPE_IDS.SPITTER &&
+        !acidColorsAreValid(packageData.acidColors)) ||
+      (packageData.acidColors !== undefined &&
+        !acidColorsAreValid(packageData.acidColors))
     ) {
       throw new Error("Not a compatible WORM appearance package");
     }
@@ -7163,6 +8746,17 @@
     wormPainter.mirroredMouthSource = normalizeMirroredMouthSource(
       packageData.mirroredMouthSource,
     );
+    if (
+      wormHasAbility(WORM_ABILITIES.ACID) &&
+      acidColorsAreValid(packageData.acidColors)
+    ) {
+      setWormPainterAcidColors(packageData.acidColors);
+    } else if (
+      wormHasAbility(WORM_ABILITIES.ACID) &&
+      packageData.version === 1
+    ) {
+      setWormPainterAcidColors(DEFAULT_ACID_COLORS);
+    }
 
     const editableLayer =
       wormPainter.mirroredJawSource ||
@@ -7181,11 +8775,12 @@
       window.localStorage.setItem(
         wormAppearanceStorageKey(),
         JSON.stringify({
-          version: 1,
+          version: 2,
           wormTypeId: game.activeWormTypeId,
           updatedAt: Date.now(),
           mirroredJawSource: wormPainter.mirroredJawSource,
           mirroredMouthSource: wormPainter.mirroredMouthSource,
+          acidColors: [...wormPainter.acidColors],
           sprites,
         }),
       );
@@ -7197,6 +8792,7 @@
       sprites,
       wormPainter.mirroredJawSource,
       wormPainter.mirroredMouthSource,
+      wormPainter.acidColors,
     );
     closeWormAppearanceEditor();
   }
@@ -8137,7 +9733,8 @@
     const sine = Math.sin(pose.angle);
     const pivotX = pose.x + cosine * cone.pivotOffset;
     const pivotY = pose.y + sine * cone.pivotOffset;
-    const dx = target.x - pivotX;
+    const targetX = nearestPeriodicWorldX(target.x, pivotX);
+    const dx = targetX - pivotX;
     const dy = target.y - pivotY;
     const localX = dx * cosine + dy * sine;
     const localY = -dx * sine + dy * cosine;
@@ -8931,6 +10528,8 @@
     target.tristarOffMinimapDevourCooldown =
       positiveModulo(target.id * 0.754877666, 1) *
       TRISTAR_RULES.offMinimapMaximumDevourInterval;
+    target.tristarArmTunnelWasVisible = false;
+    target.tristarArmTunnelNextSampleAt = null;
     target.tristarAvoidanceForceX = Array.from(
       { length: TRISTAR_RULES.armCount },
       () => new Float64Array(TRISTAR_RULES.armSegments),
@@ -11741,6 +13340,26 @@
     target.regionType = BLOCK_TYPES.AIR;
   }
 
+  function tunnelTristarBodyAlongMovement(target, startX, startY) {
+    if (
+      target.regionType !== BLOCK_TYPES.GROUND ||
+      game.map.columns <= 0
+    ) {
+      return;
+    }
+    const endX = nearestPeriodicWorldX(target.x, startX);
+    const dx = endX - startX;
+    const dy = target.y - startY;
+    if (dx * dx + dy * dy <= 0.00000001) return;
+    tunnelGroundBlocksAlongRadiusPath(
+      startX,
+      startY,
+      endX,
+      target.y,
+      target.radius,
+    );
+  }
+
   function updateTargets(dt) {
     // Snapshot every target before anything moves. Tri-Star arms update prey
     // later in this pass, so acid still receives the prey's true full-frame
@@ -11865,6 +13484,8 @@
     tristarTargets.forEach((target) => {
       if (!targetIsActive(target, tristarFrameContext)) return;
       if (!target.tristarArms) initializeTristarTarget(target);
+      const startX = target.x;
+      const startY = target.y;
       const markerIsVisible = minimapTargetMarkerIsVisible(
         target,
         tristarMinimapBounds,
@@ -11872,15 +13493,26 @@
       if (markerIsVisible || tristarHasHeldPrey(target)) {
         leaveTristarOffMinimapSimulation(target);
         updateTristar(target, dt, devouredTargets, tristarFrameContext);
-        return;
+      } else {
+        updateTristarOffMinimap(
+          target,
+          dt,
+          devouredTargets,
+          tristarFrameContext,
+          tristarMinimapBounds,
+        );
       }
-      updateTristarOffMinimap(
+      const endingMarkerIsVisible = minimapTargetMarkerIsVisible(
         target,
-        dt,
-        devouredTargets,
-        tristarFrameContext,
         tristarMinimapBounds,
       );
+      // The remote ecological tier may contain hundreds of Tri-Stars. Keep
+      // its direct pursuit/feeding simulation active, but begin and end the
+      // observable body trail at the circular minimap boundary so remote
+      // terrain writes cannot outrun the tunnel-expiry queue.
+      if (markerIsVisible || endingMarkerIsVisible) {
+        tunnelTristarBodyAlongMovement(target, startX, startY);
+      }
     });
     finishTristarDevours(devouredTargets);
   }
@@ -12068,8 +13700,10 @@
     );
     particle.maximumLife = particle.life;
     particle.visualDropletCount = acidVisualDropletCount();
-    particle.visualVariant =
-      particle.generation % ACID_RULES.visualClusterVariants;
+    particle.acidColorIndex = Math.floor(
+      Math.random() * ACID_RULES.visualClusterVariants,
+    );
+    particle.visualVariant = particle.acidColorIndex;
     particle.collisionEpoch = 0;
     particle.latchedTarget = null;
     particle.latchNormalX = 0;
@@ -12119,13 +13753,16 @@
     );
   }
 
-  function tunnelGroundTilesTouchedByAcid(
+  function tunnelGroundTilesTemporarily(
     startX,
     startY,
     endX,
     endY,
     radius,
     remainingLife,
+    tileBudget = null,
+    deferSkippedTristarTiles = false,
+    touchedTiles = null,
   ) {
     if (remainingLife <= 0 || game.map.columns <= 0) return;
     const size = game.map.cellSize;
@@ -12161,7 +13798,14 @@
           tileValue === TUNNELED_GROUND_TILE_VALUE &&
           game.map.acidTunnelDecayRecords.has(blockIndex);
         if (tileValue !== groundValue && !acidOwnedTunnel) continue;
-        if (tileValue === groundValue && acidTunnelTilesRemaining <= 0) {
+        const remainingNewTiles = tileBudget
+          ? tileBudget.remaining
+          : acidTunnelTilesRemaining;
+        if (
+          tileValue === groundValue &&
+          remainingNewTiles <= 0 &&
+          !deferSkippedTristarTiles
+        ) {
           continue;
         }
         if (
@@ -12178,6 +13822,12 @@
         ) {
           continue;
         }
+        if (touchedTiles?.has(blockIndex)) continue;
+        touchedTiles?.add(blockIndex);
+        if (tileValue === groundValue && remainingNewTiles <= 0) {
+          queuePendingTristarArmTunnelTile(blockIndex, remainingLife);
+          continue;
+        }
         if (
           tunnelGroundTileWithAcid(
             wrappedColumn,
@@ -12186,8 +13836,11 @@
             remainingLife,
           )
         ) {
-          acidTunnelTilesRemaining -= 1;
-          acidTunnelTilesChanged += 1;
+          if (tileBudget) {
+            tileBudget.remaining -= 1;
+          } else {
+            acidTunnelTilesRemaining -= 1;
+          }
         }
       }
     }
@@ -12367,7 +14020,7 @@
           particle.radius,
         );
         if (!collision) {
-          tunnelGroundTilesTouchedByAcid(
+          tunnelGroundTilesTemporarily(
             startX,
             startY,
             endX,
@@ -12385,7 +14038,7 @@
         const collisionTime = clamp(collision.time, 0, 1);
         particle.x = lerp(startX, endX, collisionTime);
         particle.y = lerp(startY, endY, collisionTime);
-        tunnelGroundTilesTouchedByAcid(
+        tunnelGroundTilesTemporarily(
           startX,
           startY,
           particle.x,
@@ -13077,7 +14730,6 @@
       acidActiveTargets.add(game.targets[index]);
     }
     acidTunnelTilesRemaining = ACID_RULES.maximumTunneledTilesPerFrame;
-    acidTunnelTilesChanged = 0;
     const sprayActive = spitterSprayIsActive();
     const guidedAcidIsActive = spitterHasHeadGuidedAcid();
     const guidePose =
@@ -13215,9 +14867,6 @@
       }
     }
     applyLatchedAcidDamage();
-    if (acidTunnelTilesChanged > 0) {
-      game.minimapTerrainRevision += 1;
-    }
   }
 
   function meatPieceCountForScore(scoreValue) {
@@ -13377,44 +15026,417 @@
     );
   }
 
-  function nearestBoostLatchTarget() {
-    const maximumDistance = MOUTH_BEHAVIOR.proximityRadius * wormScale();
+  function preferredBoostLatchTarget() {
+    const maximumDistance = mouthSensorRadius();
+    const biteDamage = wormBiteDamage();
     let nearestTarget = null;
     let nearestDistanceSquared = Infinity;
 
     game.targets.forEach((target) => {
       if (
         target.kind === ENEMY_TYPES.MEAT ||
+        target.health <= 0 ||
         target.latched ||
         target.tristarCaptorId !== null ||
         target.tongueCaptured ||
         targetHasActiveTongue(target) ||
         target.paralyzed ||
-        target.boostLatchHitboxDisabled ||
-        !enemyIsHardPrey(target)
+        target.boostLatchHitboxDisabled
       ) {
         return;
       }
-      const dx = target.x - game.head.x;
+      if (!enemyIsHardPrey(target, biteDamage)) return;
+      const targetX = nearestPeriodicWorldX(target.x, game.head.x);
+      const dx = targetX - game.head.x;
       const dy = target.y - game.head.y;
       const distanceSquared = dx * dx + dy * dy;
       const targetMaximumDistance = maximumDistance + target.radius;
-      if (
-        distanceSquared > targetMaximumDistance * targetMaximumDistance ||
-        distanceSquared >= nearestDistanceSquared
-      ) {
+      if (distanceSquared > targetMaximumDistance * targetMaximumDistance) {
         return;
       }
+      const preferred =
+        distanceSquared < nearestDistanceSquared ||
+        (
+          distanceSquared === nearestDistanceSquared &&
+          (!nearestTarget || target.id < nearestTarget.id)
+        );
+      if (!preferred) return;
       nearestTarget = target;
       nearestDistanceSquared = distanceSquared;
     });
     return nearestTarget;
   }
 
+  function airborneInterceptTime(
+    dx,
+    dy,
+    targetVelocityX,
+    targetVelocityY,
+    pursuerSpeed,
+  ) {
+    const quadraticA =
+      targetVelocityX * targetVelocityX +
+      targetVelocityY * targetVelocityY -
+      pursuerSpeed * pursuerSpeed;
+    const quadraticB =
+      2 * (dx * targetVelocityX + dy * targetVelocityY);
+    const quadraticC = dx * dx + dy * dy;
+    if (Math.abs(quadraticA) <= 0.000001) {
+      if (Math.abs(quadraticB) <= 0.000001) return null;
+      const linearTime = -quadraticC / quadraticB;
+      return linearTime > 0 ? linearTime : null;
+    }
+
+    const discriminant =
+      quadraticB * quadraticB - 4 * quadraticA * quadraticC;
+    if (discriminant < 0) return null;
+    const squareRoot = Math.sqrt(discriminant);
+    const denominator = 2 * quadraticA;
+    const firstTime = (-quadraticB - squareRoot) / denominator;
+    const secondTime = (-quadraticB + squareRoot) / denominator;
+    let interceptTime = Infinity;
+    if (firstTime > 0) interceptTime = firstTime;
+    if (secondTime > 0) interceptTime = Math.min(interceptTime, secondTime);
+    return Number.isFinite(interceptTime) ? interceptTime : null;
+  }
+
+  function steerAirborneVelocityTowardPoint(
+    targetX,
+    targetY,
+    dt,
+    maximumTurnRate = null,
+  ) {
+    const currentSpeed = magnitude(game.velocity.x, game.velocity.y);
+    if (currentSpeed <= 0.5) return false;
+
+    const mouthPose = getEatHitboxPose();
+    const periodicTargetX = nearestPeriodicWorldX(targetX, mouthPose.x);
+    const dx = periodicTargetX - mouthPose.x;
+    const dy = targetY - mouthPose.y;
+    if (dx * dx + dy * dy <= 0.0001) return true;
+
+    const currentAngle = Math.atan2(game.velocity.y, game.velocity.x);
+    const targetAngle = Math.atan2(dy, dx);
+    const angleDifference = Math.atan2(
+      Math.sin(targetAngle - currentAngle),
+      Math.cos(targetAngle - currentAngle),
+    );
+    // A supplied guidance rate rotates existing velocity without changing its
+    // magnitude. The force-based fallback preserves ordinary air-turn
+    // semantics for any non-hunt caller.
+    const maximumTurn = Number.isFinite(maximumTurnRate)
+      ? Math.max(0, maximumTurnRate) * dt
+      : Math.atan2(wormAirTurnForce() * dt, currentSpeed);
+    const nextAngle =
+      currentAngle +
+      clamp(angleDifference, -maximumTurn, maximumTurn);
+    game.velocity.x = Math.cos(nextAngle) * currentSpeed;
+    game.velocity.y = Math.sin(nextAngle) * currentSpeed;
+    return true;
+  }
+
+  function steerAirborneVelocityTowardTarget(
+    target,
+    dt,
+    maximumTurnRate = null,
+  ) {
+    const currentSpeed = magnitude(game.velocity.x, game.velocity.y);
+    if (!target || currentSpeed <= 0.5) return false;
+
+    const mouthPose = getEatHitboxPose();
+    const targetX = nearestPeriodicWorldX(target.x, mouthPose.x);
+    let dx = targetX - mouthPose.x;
+    let dy = target.y - mouthPose.y;
+    if (dx * dx + dy * dy <= 0.0001) return true;
+
+    const targetVelocityX = Number.isFinite(target.vx) ? target.vx : 0;
+    const targetVelocityY = Number.isFinite(target.vy) ? target.vy : 0;
+    const interceptTime = airborneInterceptTime(
+      dx,
+      dy,
+      targetVelocityX,
+      targetVelocityY,
+      currentSpeed,
+    );
+    if (interceptTime !== null) {
+      // Enemy velocity is instantaneous (some prey orbit or panic), so lead
+      // only through the shorter of a sensor crossing and a small fixed
+      // horizon. Re-evaluating every frame follows curved motion without
+      // committing the Sprinter to a stale distant point.
+      const maximumLeadTime = Math.min(
+        SPRINTER_RULES.airAimMaximumPredictionTime,
+        (mouthSensorRadius() + target.radius) / currentSpeed,
+      );
+      const leadTime = Math.min(interceptTime, maximumLeadTime);
+      dx += targetVelocityX * leadTime;
+      dy += targetVelocityY * leadTime;
+    }
+    return steerAirborneVelocityTowardPoint(
+      mouthPose.x + dx,
+      mouthPose.y + dy,
+      dt,
+      maximumTurnRate,
+    );
+  }
+
+  function sprinterAreaEffectRadius() {
+    return mouthSensorRadius();
+  }
+
+  function clampSprinterAreaTargetY(y) {
+    return clamp(y, 0, game.height);
+  }
+
+  function activeSprinterAreaTarget() {
+    return wormHasAbility(WORM_ABILITIES.SPRINT)
+      ? game.sprinterAreaTarget
+      : null;
+  }
+
+  function clearSprinterAreaTarget(clearCompletion = false) {
+    const hadTarget = Boolean(game.sprinterAreaTarget);
+    const latch = game.latchAttack;
+    if (latch?.areaHunt) {
+      if (latch.phase === "approach") {
+        // The command has not touched its prey yet, so cancellation must keep
+        // the Sprinter's current momentum instead of using the stationary
+        // release path of a committed bite.
+        game.latchAttack = null;
+      } else {
+        releaseBoostLatchAttack(true, latch.phase === "biting");
+      }
+    }
+    game.sprinterAreaTarget = null;
+    if (clearCompletion) game.sprinterAreaCompletion = null;
+    return hadTarget;
+  }
+
+  function targetTouchesSprinterArea(target, command) {
+    if (!target || !command) return false;
+    const targetX = nearestPeriodicWorldX(target.x, command.x);
+    const dx = targetX - command.x;
+    const dy = target.y - command.y;
+    const overlapRadius = command.radius + target.radius;
+    return dx * dx + dy * dy <= overlapRadius * overlapRadius;
+  }
+
+  function sprinterAreaZoneMember(
+    target,
+    command,
+    assumeActive = false,
+  ) {
+    return Boolean(
+      target &&
+      target.kind !== ENEMY_TYPES.MEAT &&
+      target.health > 0 &&
+      !enemyIsHardPrey(target) &&
+      (assumeActive || targetIsActive(target)) &&
+      targetTouchesSprinterArea(target, command)
+    );
+  }
+
+  function sprinterAreaTargetClaimedElsewhere(target) {
+    const ownedLatch =
+      game.latchAttack?.areaHunt && game.latchAttack.target === target;
+    return Boolean(
+      (!ownedLatch && target.latched) ||
+      target.tristarDevourQueued ||
+      target.tristarCaptorId !== null ||
+      target.tongueCaptured ||
+      targetHasActiveTongue(target) ||
+      target.paralyzed ||
+      (!ownedLatch && targetHasBoostLatchReservation(target))
+    );
+  }
+
+  function sprinterAreaTargetIsAvailable(
+    target,
+    command,
+    assumeActive = false,
+  ) {
+    return Boolean(
+      sprinterAreaZoneMember(target, command, assumeActive) &&
+      !sprinterAreaTargetClaimedElsewhere(target) &&
+      !target.boostLatchHitboxDisabled &&
+      target.biteBounceCooldown <= 0
+    );
+  }
+
+  function preferredSprinterAreaTarget(command) {
+    const mouthPose = getEatHitboxPose();
+    let preferredTarget = null;
+    let preferredPointValue = -Infinity;
+    let preferredDistanceSquared = Infinity;
+    let hasZoneMember = false;
+
+    for (let index = 0; index < game.targets.length; index += 1) {
+      const target = game.targets[index];
+      if (!sprinterAreaZoneMember(target, command, true)) continue;
+      hasZoneMember = true;
+      if (!sprinterAreaTargetIsAvailable(target, command, true)) continue;
+
+      const pointValue = Math.max(0, Number(target.scoreValue) || 0);
+      const targetX = nearestPeriodicWorldX(target.x, mouthPose.x);
+      const dx = targetX - mouthPose.x;
+      const dy = target.y - mouthPose.y;
+      const distanceSquared = dx * dx + dy * dy;
+      let preferred = pointValue > preferredPointValue;
+      if (pointValue === preferredPointValue) {
+        if (distanceSquared !== preferredDistanceSquared) {
+          preferred = distanceSquared < preferredDistanceSquared;
+        } else {
+          preferred =
+            !preferredTarget || target.id < preferredTarget.id;
+        }
+      }
+      if (!preferred) continue;
+      preferredTarget = target;
+      preferredPointValue = pointValue;
+      preferredDistanceSquared = distanceSquared;
+    }
+    return { target: preferredTarget, hasZoneMember };
+  }
+
+  function releaseInvalidSprinterAreaApproach(command, target) {
+    const latch = game.latchAttack;
+    if (!latch?.areaHunt || latch.target !== target) return;
+    if (latch.phase === "captured-prey" && latch.releasePending) {
+      // The prey has already left `game.targets` because it entered the mouth.
+      // Let the normal end-of-frame handoff clear this reservation so the
+      // arrival velocity carries directly into the next selected victim.
+      return;
+    }
+    if (latch.phase === "approach") {
+      game.latchAttack = null;
+      return;
+    }
+    // A committed target is normally stationary, but another system can
+    // remove it. Release defensively so no frozen/latched state is stranded.
+    releaseBoostLatchAttack(true, latch.phase === "biting");
+  }
+
+  function completeSprinterAreaHunt(command) {
+    if (activeSprinterAreaTarget() !== command) return false;
+    game.sprinterAreaTarget = null;
+    game.sprinterAreaCompletion = {
+      x: command.x,
+      y: command.y,
+      radius: command.radius,
+      startedAt: game.elapsed,
+    };
+    return true;
+  }
+
+  function refreshSprinterAreaHuntTarget(
+    command,
+    allowCompletion = false,
+  ) {
+    if (!command || activeSprinterAreaTarget() !== command) return null;
+
+    const currentTarget = command.huntTarget;
+    if (
+      currentTarget &&
+      (
+        !sprinterAreaZoneMember(currentTarget, command) ||
+        sprinterAreaTargetClaimedElsewhere(currentTarget)
+      )
+    ) {
+      releaseInvalidSprinterAreaApproach(command, currentTarget);
+      command.huntTarget = null;
+    }
+
+    if (command.huntTarget) {
+      command.emptyPending = false;
+      return command.huntTarget;
+    }
+
+    const selection = preferredSprinterAreaTarget(command);
+    if (selection.target) {
+      command.huntTarget = selection.target;
+      command.emptyPending = false;
+      return selection.target;
+    }
+    if (selection.hasZoneMember) {
+      // A prey item can be temporarily owned by a tongue/Tri-Star or be inside
+      // the released-latch exclusion sweep. Keep the live zone open without
+      // moving or spending boost until an individual target is available.
+      command.emptyPending = false;
+      return null;
+    }
+
+    if (allowCompletion && command.emptyPending) {
+      completeSprinterAreaHunt(command);
+      return null;
+    }
+    // Confirm an empty zone after enemies take their movement step. This
+    // gives prey entering on this frame the same eligibility as prey already
+    // inside when the click was issued.
+    command.emptyPending = true;
+    return null;
+  }
+
+  function sprinterAreaPursuitTarget(command) {
+    const target = command?.huntTarget;
+    if (
+      !target ||
+      !sprinterAreaZoneMember(target, command) ||
+      sprinterAreaTargetClaimedElsewhere(target) ||
+      target.boostLatchHitboxDisabled ||
+      target.biteBounceCooldown > 0 ||
+      keys.down ||
+      game.boostCharge <= 0
+    ) {
+      return null;
+    }
+    return target;
+  }
+
+  function beginSprinterAreaTarget(x, y) {
+    if (
+      !wormHasAbility(WORM_ABILITIES.SPRINT) ||
+      !game.levelLoaded ||
+      !game.started ||
+      game.paused ||
+      game.menuOpen ||
+      game.boostCharge <= 0
+    ) {
+      clearSprinterAreaTarget();
+      return false;
+    }
+
+    clearSprinterAreaTarget(true);
+    if (game.latchAttack) {
+      if (game.latchAttack.phase === "approach") {
+        // A click supersedes an uncommitted prey approach without erasing its
+        // momentum. Re-arm a hard attempt because it never reached contact.
+        if (game.latchAttack.hardPursuitCommitted) {
+          game.boostLatchReady = true;
+        }
+        game.latchAttack = null;
+      } else {
+        // An explicit area order also interrupts a committed bite instead of
+        // leaving the new marker queued behind a stationary four-bite cycle.
+        // The enemy is unfrozen and the command begins from the released pose.
+        releaseBoostLatchAttack(true, false);
+      }
+    }
+    game.sprinterAreaTarget = {
+      x: wrapWorldX(x),
+      y: clampSprinterAreaTargetY(y),
+      radius: sprinterAreaEffectRadius(),
+      huntTarget: null,
+      emptyPending: false,
+      issuedAt: game.elapsed,
+    };
+    game.sprinterAreaCompletion = null;
+    return true;
+  }
+
   function beginBoostLatchAttack(
     target,
     lockImmediately = false,
     forcedLockAngle = null,
+    areaHunt = false,
   ) {
     // A latch is single-owner state. Replacing it would strand the previous
     // target with `latched = true` and make that enemy frozen/untargetable.
@@ -13422,6 +15444,11 @@
     game.heading = Number.isFinite(forcedLockAngle)
       ? forcedLockAngle
       : getWormHeadAngle();
+    const captureOnArrival = Boolean(
+      areaHunt &&
+      wormHasAbility(WORM_ABILITIES.SPRINT) &&
+      !enemyIsHardPrey(target),
+    );
     game.latchAttack = {
       target,
       phase: "approach",
@@ -13431,14 +15458,23 @@
       biteDamage: wormBiteDamage(),
       releasePending: false,
       targetDefeated: false,
+      captureOnArrival,
+      hardPursuitCommitted: !captureOnArrival,
+      areaHunt,
     };
-    game.boostLatchReady = false;
+    // A click-owned soft pursuit does not consume the hard-latch
+    // release/repress edge. Ordinary Boost acquisition is hard-only.
+    if (!captureOnArrival && !areaHunt) game.boostLatchReady = false;
     game.boosting = true;
-    if (lockImmediately) lockBoostLatchOnTarget(game.latchAttack);
+    if (lockImmediately) {
+      endStoneSurfaceContact();
+      lockBoostLatchOnTarget(game.latchAttack);
+    }
     return true;
   }
 
   function airborneBoostLatchCollisionTarget(eatHitboxSweep, eatCone) {
+    if (activeSprinterAreaTarget()) return null;
     if (
       game.inGround ||
       game.onStoneSurface ||
@@ -13540,7 +15576,10 @@
       game.velocity.x = 0;
       game.velocity.y = 0;
     }
-    if (cancelBiteAnimation) {
+    // A click hunt can hand off while the preceding soft prey is still being
+    // chewed. Cancelling its uncommitted approach must not erase that unrelated
+    // mouth animation while the captured target is still being consumed.
+    if (cancelBiteAnimation && game.capturedTargets.length === 0) {
       game.mouthChewTimer = 0;
       game.mouthBitePhase = "idle";
       game.mouthBiteHoldTimer = 0;
@@ -13549,6 +15588,21 @@
   }
 
   function lockBoostLatchOnTarget(latch) {
+    if (latch.captureOnArrival) {
+      // Stage the soft-prey contact at its exact visual-head position. Stone
+      // and world-boundary resolution still run before capture is committed,
+      // so a wall cannot rewind the worm after it has already eaten through
+      // that wall.
+      latch.phase = "capture-pending";
+      latch.lockAngle = game.heading;
+      const headOffset = wormDimension("headOffset");
+      const targetX = nearestPeriodicWorldX(latch.target.x, game.head.x);
+      game.head.x =
+        targetX - Math.cos(latch.lockAngle) * headOffset;
+      game.head.y =
+        latch.target.y - Math.sin(latch.lockAngle) * headOffset;
+      return;
+    }
     clearTristarRelationships(latch.target);
     latch.target.latched = true;
     latch.target.boostLatchHitboxDisabled = false;
@@ -13581,6 +15635,44 @@
     triggerMouthBite(BOOST_LATCH_RULES.bitesPerAttack);
   }
 
+  function finalizePendingSprinterCapture() {
+    const latch = game.latchAttack;
+    if (!latch || latch.phase !== "capture-pending") return false;
+    const targetIndex = game.targets.indexOf(latch.target);
+    if (targetIndex < 0 || latch.target.health <= 0) {
+      releaseBoostLatchAttack(true, false);
+      return false;
+    }
+
+    const headOffset = wormDimension("headOffset");
+    const visualHeadX =
+      game.head.x + Math.cos(game.heading) * headOffset;
+    const visualHeadY =
+      game.head.y + Math.sin(game.heading) * headOffset;
+    const targetX = nearestPeriodicWorldX(latch.target.x, visualHeadX);
+    const dx = targetX - visualHeadX;
+    const dy = latch.target.y - visualHeadY;
+    const contactDistance = BOOST_LATCH_RULES.approachArrivalDistance;
+    if (dx * dx + dy * dy > contactDistance * contactDistance) {
+      // A world-edge correction can move the visual head away without a
+      // stone collision. Continue pursuit from the corrected pose rather
+      // than consuming prey that the mouth no longer touches.
+      latch.phase = "approach";
+      return false;
+    }
+
+    game.targets.splice(targetIndex, 1);
+    const animationBiteCount = Math.max(
+      1,
+      requiredBitesForTarget(latch.target),
+    );
+    captureTargetForBite(latch.target, animationBiteCount);
+    triggerMouthBite(animationBiteCount);
+    latch.phase = "captured-prey";
+    latch.releasePending = true;
+    return true;
+  }
+
   function updateBoostLatchApproach(latch, dt) {
     const substeps = Math.max(
       1,
@@ -13588,8 +15680,10 @@
     );
     const stepTime = dt / substeps;
     const headOffset = wormDimension("headOffset");
-    const maximumSpeed =
-      wormMaximumSpeed() * BOOST_LATCH_RULES.approachSpeedMultiplier;
+    const approachSpeedMultiplier = wormHasAbility(WORM_ABILITIES.SPRINT)
+      ? wormBoostSpeedMultiplier()
+      : BOOST_LATCH_RULES.approachSpeedMultiplier;
+    const maximumSpeed = wormMaximumSpeed() * approachSpeedMultiplier;
     const acceleration =
       motion.acceleration * BOOST_LATCH_RULES.approachAccelerationMultiplier;
     const turnSpeed =
@@ -13612,21 +15706,53 @@
         Math.sin(desiredAngle - game.heading),
         Math.cos(desiredAngle - game.heading),
       );
+      // Soft prey no longer provide an artificial braking zone. Tighten the
+      // steering radius as the remaining intercept distance shrinks instead,
+      // so a fast Sprinter can flow through an off-axis group without
+      // orbiting a nearby target or shedding its accumulated momentum. The
+      // head offset bounds point-blank angular steps around the body pivot.
+      const activeTurnSpeed = latch.captureOnArrival
+        ? Math.max(
+            turnSpeed,
+            (game.speed *
+              BOOST_LATCH_RULES.softPursuitClosingTurnMultiplier) /
+              Math.max(
+                distance,
+                headOffset,
+                BOOST_LATCH_RULES.approachArrivalDistance,
+              ),
+          )
+        : turnSpeed;
       game.heading += clamp(
         angleDifference,
-        -turnSpeed * stepTime,
-        turnSpeed * stepTime,
+        -activeTurnSpeed * stepTime,
+        activeTurnSpeed * stepTime,
       );
 
-      const targetSpeed = Math.min(
-        maximumSpeed,
-        Math.max(150 * wormScale(), distance * 8),
-      );
-      game.speed = moveToward(
-        game.speed,
-        targetSpeed,
-        acceleration * stepTime,
-      );
+      if (latch.captureOnArrival) {
+        // A soft-prey intercept may add speed up to the normal Sprinter boost
+        // cap, but it never removes existing momentum. This also preserves
+        // exceptional collision/launch velocity above the cap until another
+        // movement system legitimately changes it.
+        if (game.speed < maximumSpeed) {
+          game.speed = Math.min(
+            maximumSpeed,
+            game.speed + acceleration * stepTime,
+          );
+        }
+      } else {
+        // Hard prey still need the controlled final approach used by their
+        // stationary multi-bite latch.
+        const targetSpeed = Math.min(
+          maximumSpeed,
+          Math.max(150 * wormScale(), distance * 8),
+        );
+        game.speed = moveToward(
+          game.speed,
+          targetSpeed,
+          acceleration * stepTime,
+        );
+      }
       game.velocity.x = Math.cos(game.heading) * game.speed;
       game.velocity.y = Math.sin(game.heading) * game.speed;
       game.head.x += game.velocity.x * stepTime;
@@ -13643,10 +15769,18 @@
       const nextDx = nextTargetX - nextVisualHeadX;
       const nextDy = latch.target.y - nextVisualHeadY;
       const nextDistance = magnitude(nextDx, nextDy);
+      const visualHeadStepDistance = magnitude(
+        nextVisualHeadX - visualHeadX,
+        nextVisualHeadY - visualHeadY,
+      );
+      const crossingAllowance = latch.captureOnArrival
+        ? visualHeadStepDistance
+        : game.speed * stepTime;
       const crossedTarget = dx * nextDx + dy * nextDy <= 0;
       if (
         nextDistance <= BOOST_LATCH_RULES.approachArrivalDistance ||
-        (crossedTarget && nextDistance <= game.speed * stepTime * 1.25)
+        (crossedTarget &&
+          nextDistance <= crossingAllowance * 1.25)
       ) {
         lockBoostLatchOnTarget(latch);
         return;
@@ -13807,7 +15941,7 @@
   }
 
   function enemyIsNearHead() {
-    const proximityRadius = MOUTH_BEHAVIOR.proximityRadius * wormScale();
+    const proximityRadius = mouthSensorRadius();
     return game.targets.some((target) => {
       const dx = target.x - game.head.x;
       const dy = target.y - game.head.y;
@@ -15599,11 +17733,21 @@
     return true;
   }
 
-  function eatTargetsAlongHeadPath() {
+  function eatTargetsAlongHeadPath(useResolvedPoseOnly = false) {
     if (game.latchAttack) return;
     let longestBiteCount = 0;
     let bouncedThisFrame = false;
-    const eatHitboxSweep = getEatHitboxSweep();
+    const eatHitboxSweep = useResolvedPoseOnly
+      ? (() => {
+          const current = getEatHitboxPose();
+          return {
+            previous: current,
+            current,
+            angleDelta: 0,
+            steps: 1,
+          };
+        })()
+      : getEatHitboxSweep();
     const eatCone = getEatConeGeometry();
     const airborneLatchTarget = airborneBoostLatchCollisionTarget(
       eatHitboxSweep,
@@ -15613,8 +17757,22 @@
       beginBoostLatchAttack(airborneLatchTarget, true);
       return;
     }
+    const areaCommand = activeSprinterAreaTarget();
     for (let index = game.targets.length - 1; index >= 0; index -= 1) {
       const target = game.targets[index];
+      if (areaCommand && target !== areaCommand.huntTarget) {
+        // A command can begin while a previous hard-latch release still owns
+        // the mouth exclusion flag. Let that safety sweep clear even before
+        // the prey becomes selectable, without allowing any unselected enemy
+        // to be bitten or captured.
+        if (
+          target.boostLatchHitboxDisabled &&
+          sprinterAreaZoneMember(target, areaCommand, true)
+        ) {
+          suppressReleasedLatchHitbox(target, eatHitboxSweep, eatCone);
+        }
+        continue;
+      }
       if (
         target.tristarCaptorId !== null ||
         target.tongueCaptured ||
@@ -15644,6 +17802,12 @@
         delete target.boostDropMovementArmed;
       }
       if (suppressReleasedLatchHitbox(target, eatHitboxSweep, eatCone)) continue;
+      if (
+        areaCommand &&
+        target !== sprinterAreaPursuitTarget(areaCommand)
+      ) {
+        continue;
+      }
       if (!targetTouchesEatCone(target, eatHitboxSweep, eatCone)) continue;
       if (target.biteBounceCooldown > 0) continue;
       if (enemyRepelsBite(target)) {
@@ -16289,7 +18453,13 @@
     return beginStoneSurfaceContact(surface, endPose, radius);
   }
 
-  function updateStoneSurfaceContact(dt, steer, contact) {
+  function updateStoneSurfaceContact(
+    dt,
+    steer,
+    contact,
+    areaTarget = null,
+    suppressManualInput = false,
+  ) {
     const releaseRadius =
       contact.radius * STONE_RULES.surfaceReleaseRadiusMultiplier;
     let surface = nearestStoneSurfacePoint(
@@ -16306,18 +18476,30 @@
 
     contact.path = surface.path;
     contact.clusterId = surface.path.clusterId;
-    if (steer !== 0) game.stoneSurfaceDirection = steer;
+    let activeSteer = suppressManualInput ? 0 : steer;
+    if (areaTarget) {
+      const targetX = nearestPeriodicWorldX(
+        areaTarget.x,
+        contact.wheelX,
+      );
+      const tangentOffset =
+        (targetX - contact.wheelX) * surface.unitX +
+        (areaTarget.y - contact.wheelY) * surface.unitY;
+      if (Math.abs(tangentOffset) > 1) activeSteer = Math.sign(tangentOffset);
+    }
+    if (activeSteer !== 0) game.stoneSurfaceDirection = activeSteer;
 
     contact.velocityY += motion.airGravity * dt;
     let tangentSpeed =
       contact.velocityX * surface.unitX +
       contact.velocityY * surface.unitY;
-    const accelerating = keys.up && !keys.down;
+    const accelerating =
+      Boolean(areaTarget || (!suppressManualInput && keys.up)) && !keys.down;
     const levelTurnScale =
       1 +
       game.growthLevel *
         activeWormScaling().stoneLocomotionScalePerLevel;
-    const boostTurnScale = game.boosting ? motion.boostMultiplier : 1;
+    const boostTurnScale = game.boosting ? wormBoostSpeedMultiplier() : 1;
     const activeTurnScale = levelTurnScale * boostTurnScale;
     const targetSpeed = keys.down
       ? 0
@@ -16807,10 +18989,48 @@
     const stoneSurfaceContact = activeStoneSurfaceContact();
     const heavyTongueGrapple = activeHeavyTongueGrapple();
     let stoneSurfaceActive = false;
+    let stoneCollisionResolved = false;
+    let worldBoundaryResolved = false;
 
     if (!keys.boost) game.boostLatchReady = true;
+    const sprinterMovement = wormHasAbility(WORM_ABILITIES.SPRINT);
+    if (keys.down) clearSprinterAreaTarget();
+    let sprinterAreaTarget = activeSprinterAreaTarget();
+    refreshSprinterAreaHuntTarget(
+      sprinterAreaTarget,
+      false,
+    );
+    let sprinterAreaPursuit = sprinterAreaPursuitTarget(
+      sprinterAreaTarget,
+    );
+    if (
+      sprinterMovement &&
+      !game.inGround &&
+      game.latchAttack?.phase === "approach"
+    ) {
+      // An underground reservation can survive the frame in which the worm
+      // breaches. Drop only that uncommitted state so open-air control keeps
+      // the arrival velocity and resumes through the non-accelerating path.
+      // A hard approach consumed the latch edge before making contact; restore
+      // it so this same held input can complete that attempt in the air.
+      if (
+        game.latchAttack.hardPursuitCommitted &&
+        !game.latchAttack.areaHunt
+      ) {
+        game.boostLatchReady = true;
+      }
+      game.latchAttack = null;
+    }
+    const areaLatchControlHeld = Boolean(
+      game.latchAttack?.areaHunt &&
+      sprinterAreaTarget &&
+      !keys.down &&
+      game.boostCharge > 0,
+    );
     const latchControlHeld =
-      keys.boost && !keys.down && game.boostCharge > 0;
+      (keys.boost || areaLatchControlHeld) &&
+      !keys.down &&
+      game.boostCharge > 0;
     if (game.latchAttack && !latchControlHeld) {
       releaseBoostLatchAttack(
         true,
@@ -16820,22 +19040,38 @@
     if (
       !game.latchAttack &&
       !heavyTongueGrapple &&
-      game.boostLatchReady &&
+      sprinterAreaPursuit &&
+      game.inGround
+    ) {
+      beginBoostLatchAttack(
+        sprinterAreaPursuit,
+        false,
+        null,
+        true,
+      );
+    }
+    if (
+      !game.latchAttack &&
+      !heavyTongueGrapple &&
+      !sprinterAreaTarget &&
       latchControlHeld &&
       game.inGround &&
+      game.boostLatchReady &&
       game.capturedTargets.length === 0
     ) {
-      const latchTarget = nearestBoostLatchTarget();
+      const latchTarget = preferredBoostLatchTarget();
       if (latchTarget) beginBoostLatchAttack(latchTarget);
     }
 
     const movementBoosting =
+      !sprinterAreaTarget &&
       game.inGround &&
       keys.up &&
       keys.boost &&
       !keys.down &&
       game.boostCharge > 0;
     const surfaceRollingBoosting =
+      !sprinterAreaTarget &&
       Boolean(stoneSurfaceContact) &&
       keys.up &&
       keys.boost &&
@@ -16847,11 +19083,17 @@
       keys.boost &&
       !keys.down &&
       game.boostCharge > 0;
+    const areaTargetBoosting =
+      Boolean(sprinterAreaPursuit) &&
+      Boolean(game.inGround || stoneSurfaceContact) &&
+      !keys.down &&
+      game.boostCharge > 0;
     game.boosting =
       Boolean(game.latchAttack) ||
       movementBoosting ||
       surfaceRollingBoosting ||
-      grapplePullBoosting;
+      grapplePullBoosting ||
+      areaTargetBoosting;
     const boostDrainRate =
       (game.boosting ? BOOST_RULES.drainRate : 0) +
       (game.acidSpraying
@@ -16867,6 +19109,12 @@
         boostCapacity(),
         game.boostCharge + BOOST_RULES.rechargeRate * dt,
       );
+    }
+    if (sprinterAreaTarget && game.boostCharge <= 0) {
+      clearSprinterAreaTarget();
+      sprinterAreaTarget = null;
+      sprinterAreaPursuit = null;
+      game.boosting = false;
     }
     if (game.latchAttack && game.boostCharge <= 0) {
       releaseBoostLatchAttack(
@@ -16886,24 +19134,33 @@
       );
     } else if (game.inGround) {
       const canTurn = game.speed > 0.5;
-      const speedTurnFactor = lerp(1, 0.58, clamp((game.speed - 230) / 540, 0, 1));
+      const speedTurnFactor = lerp(
+        1,
+        0.58,
+        clamp((game.speed - 230) / 540, 0, 1),
+      );
       if (canTurn) {
-        game.heading += steer * motion.groundTurnSpeed * speedTurnFactor * dt;
+        const activeSteer = sprinterAreaTarget ? 0 : steer;
+        game.heading +=
+          activeSteer * motion.groundTurnSpeed * speedTurnFactor * dt;
       }
 
       const activeMaximumSpeed =
-        wormMaximumSpeed() * (game.boosting ? motion.boostMultiplier : 1);
+        wormMaximumSpeed() *
+        (game.boosting ? wormBoostSpeedMultiplier() : 1);
       const activeAcceleration =
-        motion.acceleration * (game.boosting ? motion.boostMultiplier : 1);
+        motion.acceleration *
+        (game.boosting ? wormBoostSpeedMultiplier() : 1);
 
+      const forwardHeld = !sprinterAreaTarget && keys.up;
       if (keys.down) {
         game.speed = Math.max(0, game.speed - motion.brakeDeceleration * dt);
-      } else if (keys.up && game.speed < activeMaximumSpeed) {
+      } else if (forwardHeld && game.speed < activeMaximumSpeed) {
         game.speed = Math.min(
           activeMaximumSpeed,
           game.speed + activeAcceleration * dt,
         );
-      } else if (keys.up && game.speed > activeMaximumSpeed) {
+      } else if (forwardHeld && game.speed > activeMaximumSpeed) {
         game.speed = Math.max(
           activeMaximumSpeed,
           game.speed - motion.coastDeceleration * dt,
@@ -16913,7 +19170,7 @@
       }
       game.speed = Math.min(
         game.speed,
-        wormMaximumSpeed() * motion.boostMultiplier,
+        wormMaximumSpeed() * wormBoostSpeedMultiplier(),
       );
 
       game.velocity.x = Math.cos(game.heading) * game.speed;
@@ -16923,15 +19180,30 @@
         dt,
         steer,
         stoneSurfaceContact,
+        sprinterAreaPursuit,
+        Boolean(sprinterAreaTarget),
       );
     } else {
       const currentSpeed = magnitude(game.velocity.x, game.velocity.y);
-      if (steer !== 0 && currentSpeed > 0.5) {
+      const automaticallySteered = Boolean(
+        sprinterAreaTarget &&
+        steerAirborneVelocityTowardTarget(
+          sprinterAreaPursuit,
+          dt,
+          SPRINTER_RULES.huntAirTurnRate,
+        ),
+      );
+      if (
+        !automaticallySteered &&
+        !sprinterAreaTarget &&
+        steer !== 0 &&
+        currentSpeed > 0.5
+      ) {
         const turnForce = getLocalTurnVector(steer);
-        game.velocity.x += turnForce.x * motion.airTurnForce * dt;
-        game.velocity.y += turnForce.y * motion.airTurnForce * dt;
+        game.velocity.x += turnForce.x * wormAirTurnForce() * dt;
+        game.velocity.y += turnForce.y * wormAirTurnForce() * dt;
       }
-      game.velocity.y += motion.airGravity * dt;
+      game.velocity.y += worldGravityAcceleration() * dt;
       game.speed = magnitude(game.velocity.x, game.velocity.y);
       if (game.speed > 0.5) {
         game.heading = Math.atan2(game.velocity.y, game.velocity.x);
@@ -16952,7 +19224,7 @@
     // Surface contact is a dynamic wheel rather than a positional rail lock.
     // Ordinary stone collision remains active whenever that wheel has released.
     if (!activeStoneSurfaceContact()) {
-      resolveStoneCollision();
+      stoneCollisionResolved = resolveStoneCollision();
     }
     clearStoneSurfacePathExclusionWhenClear();
 
@@ -16960,11 +19232,13 @@
     const maxY = game.height - 22 - radius;
 
     if (game.head.y < minY) {
+      worldBoundaryResolved = true;
       game.head.y = minY;
       game.velocity.y = Math.abs(game.velocity.y) * 0.74;
       game.heading = Math.atan2(game.velocity.y, game.velocity.x);
       game.shake = Math.max(game.shake, 4);
     } else if (game.head.y > maxY) {
+      worldBoundaryResolved = true;
       game.head.y = maxY;
       game.velocity.y = -Math.abs(game.velocity.y) * 0.72;
       game.heading = Math.atan2(game.velocity.y, game.velocity.x);
@@ -16973,7 +19247,14 @@
       spawnParticles(game.head.x, game.head.y, 9, "dirt");
     }
 
+    finalizePendingSprinterCapture();
+
     updateTargets(dt);
+    sprinterAreaTarget = activeSprinterAreaTarget();
+    refreshSprinterAreaHuntTarget(
+      sprinterAreaTarget,
+      true,
+    );
     if (
       heavyTongueGrapple?.phase === "heavy-grappled" &&
       !game.latchAttack
@@ -16995,16 +19276,33 @@
     if (game.inGround) {
       endStoneSurfaceContact();
     }
-    eatTargetsAlongHeadPath();
+    eatTargetsAlongHeadPath(
+      stoneCollisionResolved || worldBoundaryResolved,
+    );
     updateAutomaticBoostTongueTargeting(dt);
     updateTongues(dt);
     updateMouthAnimation(dt);
     if (game.latchAttack?.releasePending) {
-      releaseBoostLatchAttack(
-        true,
-        !game.latchAttack.targetDefeated,
-      );
-      game.boosting = false;
+      if (game.latchAttack.phase === "captured-prey") {
+        // Keep the ordinary capture chew and pursuit momentum. The latch
+        // reservation lasts through this frame so the shared movement path
+        // cannot advance the head a second time after its substepped pursuit.
+        // Keep the boost presentation live while Sprinter hands off to its
+        // next target at the start of the next collision-safe physics frame.
+        game.latchAttack = null;
+        game.boosting =
+          game.inGround &&
+          keys.boost &&
+          !keys.down &&
+          game.boostCharge > 0 &&
+          (keys.up || wormHasAbility(WORM_ABILITIES.SPRINT));
+      } else {
+        releaseBoostLatchAttack(
+          true,
+          !game.latchAttack.targetDefeated,
+        );
+        game.boosting = false;
+      }
     }
     updateCapturedTargets(dt);
     game.transitionEffectCooldown = Math.max(0, game.transitionEffectCooldown - dt);
@@ -17019,7 +19317,7 @@
       game.speed = clamp(
         magnitude(game.velocity.x, game.velocity.y),
         0,
-        wormMaximumSpeed() * motion.boostMultiplier,
+        wormMaximumSpeed() * wormBoostSpeedMultiplier(),
       );
       if (game.speed > 0.5) game.heading = Math.atan2(game.velocity.y, game.velocity.x);
       if (game.transitionEffectCooldown === 0) {
@@ -17061,6 +19359,13 @@
     updateAcidTunnelDecay();
     updateTunnelDecay();
     updateParticles(dt);
+    if (
+      game.sprinterAreaCompletion &&
+      game.elapsed - game.sprinterAreaCompletion.startedAt >=
+        SPRINTER_RULES.areaCompletionDuration
+    ) {
+      game.sprinterAreaCompletion = null;
+    }
     game.shake *= Math.pow(0.0002, dt);
   }
 
@@ -17299,7 +19604,6 @@
 
     if (restoredTiles > 0) {
       flushRestoredTunnelCacheInvalidations();
-      game.minimapTerrainRevision += 1;
     }
   }
 
@@ -17349,7 +19653,6 @@
       remainingRestorationBudget -= 1;
       restoredTiles += 1;
     }
-    if (restoredTiles > 0) game.minimapTerrainRevision += 1;
   }
 
   function tunnelGroundTileWithAcid(
@@ -17383,7 +19686,6 @@
       // record also removes it from the insertion-ordered recovery queue.
       game.map.acidTunnelDecayRecords.delete(blockIndex);
       scheduleTunnelExpiry(blockIndex);
-      game.minimapTerrainRevision += 1;
       patchCachedTunneledGroundTile(column, row);
       return true;
     }
@@ -17396,7 +19698,6 @@
 
     game.map.tiles[blockIndex] = TUNNELED_GROUND_TILE_VALUE;
     scheduleTunnelExpiry(blockIndex);
-    game.minimapTerrainRevision += 1;
     patchCachedTunneledGroundTile(column, row);
     return true;
   }
@@ -17421,9 +19722,14 @@
     return offsetX * offsetX + offsetY * offsetY;
   }
 
-  function tunnelGroundBlocksAlongPath(startX, startY, endX, endY) {
+  function tunnelGroundBlocksAlongRadiusPath(
+    startX,
+    startY,
+    endX,
+    endY,
+    tunnelRadius,
+  ) {
     const size = game.map.cellSize;
-    const tunnelRadius = wormDimension("headRadius");
     const tunnelRadiusSquared = tunnelRadius * tunnelRadius;
     const minColumn = Math.floor(
       (Math.min(startX, endX) - tunnelRadius) / size,
@@ -17477,7 +19783,18 @@
     }
   }
 
+  function tunnelGroundBlocksAlongPath(startX, startY, endX, endY) {
+    tunnelGroundBlocksAlongRadiusPath(
+      startX,
+      startY,
+      endX,
+      endY,
+      wormDimension("headRadius"),
+    );
+  }
+
   function resetTunneledGroundBlocks() {
+    pendingTristarArmTunnelTiles.clear();
     const buckets = game.map.tunnelExpiryBuckets;
     const acidRecords = game.map.acidTunnelDecayRecords;
     if (buckets.size === 0 && acidRecords.size === 0) {
@@ -17509,7 +19826,6 @@
     game.map.nextTunnelExpiryTick = Infinity;
     acidRecords.clear();
     if (restoredTiles === 0) return;
-    game.minimapTerrainRevision += 1;
     // Cached chunks contain the one-time dark paint. Reset is infrequent, so
     // rebuilding them lazily is cheaper and simpler than repainting every
     // restored tile individually.
@@ -18175,8 +20491,11 @@
 
   function unloadLevel() {
     clearControlKeys();
+    clearSprinterAreaTarget(true);
+    snapCameraToWorm();
     cancelSpitterPointer();
     clearAcidParticles();
+    pendingTristarArmTunnelTiles.clear();
     releaseTerrainChunks();
     game.levelLoaded = false;
     gameShell.dataset.levelLoaded = "false";
@@ -18225,15 +20544,7 @@
       hasSpawnableGround: false,
       hasSpawnableAir: false,
     };
-    minimapState.ready = false;
-    minimapState.lastRefreshTime = 0;
-    minimapContext.fillStyle = palette.ink;
-    minimapContext.fillRect(
-      0,
-      0,
-      MINIMAP_RULES.width,
-      MINIMAP_RULES.height,
-    );
+    resetMinimapRadar();
   }
 
   function showHomeScreen() {
@@ -18338,9 +20649,11 @@
   }
 
   function patchCachedTunneledGroundTile(column, row) {
-    game.terrainPlaceholderChunks.delete(
-      terrainPlaceholderKeyForTile(column, row),
-    );
+    if (game.terrainPlaceholderChunks.size > 0) {
+      game.terrainPlaceholderChunks.delete(
+        terrainPlaceholderKeyForTile(column, row),
+      );
+    }
     if (game.terrainChunks.size === 0) return;
     const blockIndex = row * game.map.columns + column;
     const paintTunnel = game.map.acidTunnelDecayRecords.has(blockIndex)
@@ -18417,9 +20730,9 @@
       (layer.visibleDepthPixels * 2) / Math.max(0.001, zoom * scale);
 
     ctx.save();
-    ctx.translate(game.head.x, game.head.y);
+    ctx.translate(game.camera.centerX, game.camera.centerY);
     ctx.scale(scale, scale);
-    ctx.translate(-game.head.x, -game.head.y);
+    ctx.translate(-game.camera.centerX, -game.camera.centerY);
     ctx.lineWidth = lineWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -21332,7 +23645,12 @@
     );
   }
 
-  function fillCurrentTristarArmPoints(target, armIndex, points) {
+  function fillCurrentTristarArmPoints(
+    target,
+    armIndex,
+    points,
+    heldPlanTurnBuffer = null,
+  ) {
     const visualScale = target.captureScale ?? 1;
     const arm = target.tristarArms?.[armIndex];
     const prey = arm?.prey;
@@ -21352,17 +23670,21 @@
       );
     }
     if (hasLatchedPrey) {
-      ensureTristarHeldInertiaBuffers(arm);
+      let planTurns = heldPlanTurnBuffer;
+      if (!planTurns) {
+        ensureTristarHeldInertiaBuffers(arm);
+        planTurns = arm.heldPlanTurns;
+      }
       fillTristarArmPlanTurns(
         arm,
-        arm.heldPlanTurns,
+        planTurns,
         arm.latchProgress,
         arm.pullProgress,
       );
       fillTristarArmPointsFromTurns(
         target,
         armIndex,
-        arm.heldPlanTurns,
+        planTurns,
         points,
         visualScale,
         tristarHeldArmLengthScaleAtProgress(
@@ -21401,6 +23723,312 @@
       );
     }
     return target.tristarRenderPointSets;
+  }
+
+  function tristarArmTunnelPreviousPointBuffers(target) {
+    const buffersAreValid =
+      target.tristarArmTunnelPreviousPointSets?.length ===
+        TRISTAR_RULES.armCount &&
+      target.tristarArmTunnelPreviousPointSets.every(
+        (points) =>
+          points?.length === TRISTAR_RULES.armSegments + 1 &&
+          points.every((point) => point && typeof point === "object"),
+      );
+    if (!buffersAreValid) {
+      target.tristarArmTunnelPreviousPointSets = Array.from(
+        { length: TRISTAR_RULES.armCount },
+        () => Array.from(
+          { length: TRISTAR_RULES.armSegments + 1 },
+          () => ({ x: 0, y: 0 }),
+        ),
+      );
+    }
+    return target.tristarArmTunnelPreviousPointSets;
+  }
+
+  function tristarArmTunnelRadius(target, pointProgress) {
+    const visualScale = target.captureScale ?? 1;
+    const taper = Math.pow(
+      Math.max(0, 1 - clamp(pointProgress, 0, 1)),
+      TRISTAR_RULES.taperExponent,
+    );
+    const renderedHalfWidth =
+      Math.sqrt(3) * target.radius * visualScale * taper * 0.5;
+    return Math.max(ACID_RULES.particleRadius, renderedHalfWidth);
+  }
+
+  function queuePendingTristarArmTunnelTile(blockIndex, remainingLife) {
+    const expiresAt = game.elapsed + Math.max(0, remainingLife);
+    const currentExpiry = pendingTristarArmTunnelTiles.get(blockIndex);
+    if (currentExpiry !== undefined) {
+      pendingTristarArmTunnelTiles.set(
+        blockIndex,
+        Math.max(currentExpiry, expiresAt),
+      );
+      return;
+    }
+    if (
+      pendingTristarArmTunnelTiles.size >=
+      TRISTAR_RULES.maximumPendingArmTunnelTiles
+    ) {
+      return;
+    }
+    pendingTristarArmTunnelTiles.set(blockIndex, expiresAt);
+  }
+
+  function drainPendingTristarArmTunnelTiles() {
+    const groundValue = MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND];
+    for (const [blockIndex, expiresAt] of pendingTristarArmTunnelTiles) {
+      if (expiresAt <= game.elapsed + 0.000001) {
+        pendingTristarArmTunnelTiles.delete(blockIndex);
+        continue;
+      }
+      const tileValue = game.map.tiles[blockIndex];
+      const acidOwnedTunnel =
+        tileValue === TUNNELED_GROUND_TILE_VALUE &&
+        game.map.acidTunnelDecayRecords.has(blockIndex);
+      if (
+        tileValue === groundValue &&
+        tristarArmTunnelBudget.remaining <= 0
+      ) {
+        break;
+      }
+      pendingTristarArmTunnelTiles.delete(blockIndex);
+      tristarArmTunnelTouchedTiles.add(blockIndex);
+      if (tileValue !== groundValue && !acidOwnedTunnel) continue;
+      const row = Math.floor(blockIndex / game.map.columns);
+      const column = blockIndex - row * game.map.columns;
+      if (
+        tunnelGroundTileWithAcid(
+          column,
+          row,
+          blockIndex,
+          expiresAt - game.elapsed,
+        )
+      ) {
+        tristarArmTunnelBudget.remaining -= 1;
+      }
+    }
+  }
+
+  function tristarArmTunnelTileBudget(dt) {
+    const frameScale = clamp(
+      Math.max(0, Number(dt) || 0) * 180,
+      1,
+      TRISTAR_RULES.maximumArmTunnelBudgetFrameScale,
+    );
+    return Math.ceil(
+      TRISTAR_RULES.maximumArmTunneledTilesPerFrame * frameScale,
+    );
+  }
+
+  function tristarArmSweepTouchesViewport(
+    startX,
+    startY,
+    endX,
+    endY,
+    radius,
+    bounds,
+  ) {
+    return Boolean(
+      sweepPointAgainstAabb(
+        startX,
+        startY,
+        endX,
+        endY,
+        bounds.x - radius,
+        bounds.y - radius,
+        bounds.x + bounds.width + radius,
+        bounds.y + bounds.height + radius,
+      ),
+    );
+  }
+
+  function tristarCouldHaveArmInViewport(target, bounds) {
+    const visualScale = target.captureScale ?? 1;
+    const boundsCenterX = bounds.x + bounds.width * 0.5;
+    const targetX = nearestPeriodicWorldX(target.x, boundsCenterX);
+    const maximumArmExtent =
+      target.radius * visualScale * 0.5 +
+      TRISTAR_RULES.armLength *
+        visualScale *
+        TRISTAR_RULES.preyReachMaximumStretch +
+      Math.sqrt(3) * target.radius * visualScale * 0.5;
+    const closestX = clamp(targetX, bounds.x, bounds.x + bounds.width);
+    const closestY = clamp(target.y, bounds.y, bounds.y + bounds.height);
+    const dx = targetX - closestX;
+    const dy = target.y - closestY;
+    return dx * dx + dy * dy <= maximumArmExtent * maximumArmExtent;
+  }
+
+  function updateTristarArmTunnelsForTarget(target, visibleBounds) {
+    if (
+      !target?.tristarArms ||
+      target.tristarOffMinimap ||
+      !tristarCouldHaveArmInViewport(target, visibleBounds)
+    ) {
+      if (target) {
+        target.tristarArmTunnelWasVisible = false;
+        target.tristarArmTunnelNextSampleAt = null;
+      }
+      return;
+    }
+
+    if (!Number.isFinite(target.tristarArmTunnelNextSampleAt)) {
+      const samplePhase = positiveModulo(
+        target.id * 0.61803398875,
+        1,
+      );
+      target.tristarArmTunnelNextSampleAt =
+        game.elapsed + samplePhase * TRISTAR_RULES.armTunnelSampleInterval;
+    }
+    if (game.elapsed + 0.000001 < target.tristarArmTunnelNextSampleAt) {
+      return;
+    }
+    target.tristarArmTunnelNextSampleAt =
+      game.elapsed + TRISTAR_RULES.armTunnelSampleInterval;
+
+    const currentPointSets = tristarArmRenderPointBuffers(target);
+    const previousPointSets = tristarArmTunnelPreviousPointBuffers(target);
+    const boundsCenterX = visibleBounds.x + visibleBounds.width * 0.5;
+    const targetDisplayX = nearestPeriodicWorldX(target.x, boundsCenterX);
+    const displayOffsetX = targetDisplayX - target.x;
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      const currentPoints = currentPointSets[armIndex];
+      fillCurrentTristarArmPoints(target, armIndex, currentPoints);
+      for (let pointIndex = 0; pointIndex < currentPoints.length; pointIndex += 1) {
+        currentPoints[pointIndex].x += displayOffsetX;
+      }
+    }
+
+    const hadPreviousVisiblePose = Boolean(
+      target.tristarArmTunnelWasVisible,
+    );
+    let previousOffsetX = 0;
+    if (hadPreviousVisiblePose) {
+      const previousRootX = previousPointSets[0][0].x;
+      const currentRootX = currentPointSets[0][0].x;
+      previousOffsetX =
+        nearestPeriodicWorldX(previousRootX, currentRootX) - previousRootX;
+    }
+
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      const currentPoints = currentPointSets[armIndex];
+      const previousPoints = previousPointSets[armIndex];
+      if (hadPreviousVisiblePose) {
+        for (
+          let pointIndex = 0;
+          pointIndex <= TRISTAR_RULES.armSegments;
+          pointIndex += 1
+        ) {
+          const previous = previousPoints[pointIndex];
+          const current = currentPoints[pointIndex];
+          const previousX = previous.x + previousOffsetX;
+          const sweepX = current.x - previousX;
+          const sweepY = current.y - previous.y;
+          if (sweepX * sweepX + sweepY * sweepY <= 0.00000001) {
+            continue;
+          }
+          const radius = tristarArmTunnelRadius(
+            target,
+            pointIndex / TRISTAR_RULES.armSegments,
+          );
+          if (
+            tristarArmSweepTouchesViewport(
+              previousX,
+              previous.y,
+              current.x,
+              current.y,
+              radius,
+              visibleBounds,
+            )
+          ) {
+            tunnelGroundTilesTemporarily(
+              previousX,
+              previous.y,
+              current.x,
+              current.y,
+              radius,
+              ACID_RULES.maximumLife,
+              tristarArmTunnelBudget,
+              true,
+              tristarArmTunnelTouchedTiles,
+            );
+          }
+        }
+      }
+
+      for (
+        let segmentIndex = 0;
+        segmentIndex < TRISTAR_RULES.armSegments;
+        segmentIndex += 1
+      ) {
+        const start = currentPoints[segmentIndex];
+        const end = currentPoints[segmentIndex + 1];
+        const radius = tristarArmTunnelRadius(
+          target,
+          (segmentIndex + 0.5) / TRISTAR_RULES.armSegments,
+        );
+        if (
+          tristarArmSweepTouchesViewport(
+            start.x,
+            start.y,
+            end.x,
+            end.y,
+            radius,
+            visibleBounds,
+          )
+        ) {
+          tunnelGroundTilesTemporarily(
+            start.x,
+            start.y,
+            end.x,
+            end.y,
+            radius,
+            ACID_RULES.maximumLife,
+            tristarArmTunnelBudget,
+            true,
+            tristarArmTunnelTouchedTiles,
+          );
+        }
+      }
+
+      for (
+        let pointIndex = 0;
+        pointIndex <= TRISTAR_RULES.armSegments;
+        pointIndex += 1
+      ) {
+        previousPoints[pointIndex].x = currentPoints[pointIndex].x;
+        previousPoints[pointIndex].y = currentPoints[pointIndex].y;
+      }
+    }
+    target.tristarArmTunnelWasVisible = true;
+  }
+
+  function updateVisibleTristarArmTunnels(dt) {
+    if (game.map.columns <= 0) return;
+    const visibleBounds = getVisibleWorldBounds(0);
+    tristarArmTunnelBudget.remaining = tristarArmTunnelTileBudget(dt);
+    tristarArmTunnelTouchedTiles.clear();
+    drainPendingTristarArmTunnelTiles();
+    game.targets.forEach((target) => {
+      if (target.kind === ENEMY_TYPES.TRISTAR) {
+        updateTristarArmTunnelsForTarget(target, visibleBounds);
+      }
+    });
+    game.capturedTargets.forEach((target) => {
+      if (target.kind === ENEMY_TYPES.TRISTAR) {
+        updateTristarArmTunnelsForTarget(target, visibleBounds);
+      }
+    });
   }
 
   function tristarArmNormalAngle(target, armIndex, points, pointIndex) {
@@ -21476,6 +24104,7 @@
         armPointSets[armIndex],
       );
     }
+    target.tristarRenderedArmPoseAt = game.elapsed;
     targetContext.save();
     const outerBaseWidth = Math.sqrt(3) * target.radius * visualScale;
     const innerBaseWidth = Math.max(0, outerBaseWidth - 5 * visualScale);
@@ -21642,10 +24271,14 @@
     drawTristarCore(previewTarget, previewContext);
   }
 
-  function drawEnemy(target) {
+  function drawEnemy(
+    target,
+    targetContext = ctx,
+    spriteScaleMultiplier = 1,
+  ) {
     const definition = ENEMY_DEFINITIONS[target.kind];
     if (definition.procedural === "tristar") {
-      drawTristarCore(target);
+      drawTristarCore(target, targetContext);
       return;
     }
     const frameName =
@@ -21654,16 +24287,19 @@
       ];
     const sprite = enemySprites[frameName];
     if (!sprite?.complete || sprite.naturalWidth <= 0) return;
-    const spriteSize = definition.spriteSize * (target.captureScale ?? 1);
+    const spriteSize =
+      definition.spriteSize *
+      (target.captureScale ?? 1) *
+      spriteScaleMultiplier;
     const capturedForBite = Number.isFinite(target.captureElapsed);
     const capturedByTongue = Boolean(target.tongueCaptured);
 
-    ctx.save();
-    ctx.translate(target.x, target.y);
+    targetContext.save();
+    targetContext.translate(target.x, target.y);
     if (capturedForBite || capturedByTongue) {
       // The capture path updates this angle from the worm's live mouth pose,
       // or from the final tongue link while the target is attached.
-      ctx.rotate(target.angle);
+      targetContext.rotate(target.angle);
     } else if (definition.sideProfile) {
       // Above-ground side-profile sprites mirror horizontally so a direction
       // change never rotates their feet or belly away from the ground.
@@ -21671,19 +24307,19 @@
         target.flightDirection ??
         target.rabbitDirection ??
         (Math.cos(target.angle) < 0 ? -1 : 1);
-      ctx.scale(facingDirection < 0 ? -1 : 1, 1);
+      targetContext.scale(facingDirection < 0 ? -1 : 1, 1);
     } else {
-      ctx.rotate(target.angle);
+      targetContext.rotate(target.angle);
     }
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(
+    targetContext.imageSmoothingEnabled = true;
+    targetContext.drawImage(
       sprite,
       -spriteSize * 0.5,
       -spriteSize * 0.5,
       spriteSize,
       spriteSize,
     );
-    ctx.restore();
+    targetContext.restore();
   }
 
   function drawTargets() {
@@ -21713,6 +24349,118 @@
     visibleTargets.forEach((target) => {
       if (target.kind === ENEMY_TYPES.TRISTAR) drawEnemy(target);
     });
+  }
+
+  function drawSprinterAreaIndicator() {
+    const command = activeSprinterAreaTarget();
+    const completion = game.sprinterAreaCompletion;
+    if (!command && !completion) return;
+
+    const zoom = cameraZoom();
+    const visible = getVisibleWorldBounds(0);
+    const referenceX = visible.x + visible.width * 0.5;
+
+    if (command) {
+      const pulse = 0.5 + Math.sin(game.elapsed * 6) * 0.5;
+      const x = nearestPeriodicWorldX(command.x, referenceX);
+      if (
+        x + command.radius >= visible.x &&
+        x - command.radius <= visible.x + visible.width &&
+        command.y + command.radius >= visible.y &&
+        command.y - command.radius <= visible.y + visible.height
+      ) {
+        const reticleRadius = (10 + pulse * 2) / zoom;
+        const crosshairInner = reticleRadius + 5 / zoom;
+        const crosshairOuter = reticleRadius + 15 / zoom;
+        ctx.save();
+        ctx.fillStyle = palette.splatterBright;
+        ctx.globalAlpha = 0.055 + pulse * 0.025;
+        ctx.beginPath();
+        ctx.arc(x, command.y, command.radius, 0, TAU);
+        ctx.fill();
+
+        ctx.strokeStyle = palette.splatterBright;
+        ctx.lineWidth = 2.5 / zoom;
+        ctx.globalAlpha = 0.68 + pulse * 0.22;
+        ctx.setLineDash([11 / zoom, 7 / zoom]);
+        ctx.lineDashOffset = (-game.elapsed * 34) / zoom;
+        ctx.beginPath();
+        ctx.arc(x, command.y, command.radius, 0, TAU);
+        ctx.stroke();
+
+        ctx.setLineDash([]);
+        ctx.lineWidth = 2 / zoom;
+        ctx.beginPath();
+        ctx.arc(x, command.y, reticleRadius, 0, TAU);
+        ctx.moveTo(x - crosshairOuter, command.y);
+        ctx.lineTo(x - crosshairInner, command.y);
+        ctx.moveTo(x + crosshairInner, command.y);
+        ctx.lineTo(x + crosshairOuter, command.y);
+        ctx.moveTo(x, command.y - crosshairOuter);
+        ctx.lineTo(x, command.y - crosshairInner);
+        ctx.moveTo(x, command.y + crosshairInner);
+        ctx.lineTo(x, command.y + crosshairOuter);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      const huntTarget = command.huntTarget;
+      if (huntTarget && huntTarget.health > 0) {
+        const targetX = nearestPeriodicWorldX(huntTarget.x, referenceX);
+        const targetRadius = huntTarget.radius + (7 + pulse * 3) / zoom;
+        if (
+          targetX + targetRadius >= visible.x &&
+          targetX - targetRadius <= visible.x + visible.width &&
+          huntTarget.y + targetRadius >= visible.y &&
+          huntTarget.y - targetRadius <= visible.y + visible.height
+        ) {
+          const tickInner = targetRadius + 3 / zoom;
+          const tickOuter = targetRadius + 10 / zoom;
+          ctx.save();
+          ctx.strokeStyle = palette.cream;
+          ctx.globalAlpha = 0.72 + pulse * 0.24;
+          ctx.lineWidth = 2.25 / zoom;
+          ctx.beginPath();
+          ctx.arc(targetX, huntTarget.y, targetRadius, 0, TAU);
+          ctx.moveTo(targetX - tickOuter, huntTarget.y);
+          ctx.lineTo(targetX - tickInner, huntTarget.y);
+          ctx.moveTo(targetX + tickInner, huntTarget.y);
+          ctx.lineTo(targetX + tickOuter, huntTarget.y);
+          ctx.moveTo(targetX, huntTarget.y - tickOuter);
+          ctx.lineTo(targetX, huntTarget.y - tickInner);
+          ctx.moveTo(targetX, huntTarget.y + tickInner);
+          ctx.lineTo(targetX, huntTarget.y + tickOuter);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
+    if (completion) {
+      const progress = clamp(
+        (game.elapsed - completion.startedAt) /
+          SPRINTER_RULES.areaCompletionDuration,
+        0,
+        1,
+      );
+      if (progress >= 1) return;
+      const x = nearestPeriodicWorldX(completion.x, referenceX);
+      const easedProgress = 1 - (1 - progress) ** 3;
+      ctx.save();
+      ctx.strokeStyle = palette.cream;
+      ctx.globalAlpha = (1 - progress) * 0.5;
+      ctx.lineWidth = 3 / zoom;
+      ctx.beginPath();
+      ctx.arc(
+        x,
+        completion.y,
+        completion.radius * (0.88 + easedProgress * 0.12),
+        0,
+        TAU,
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   function drawEnemyHealthBar(target) {
@@ -21916,8 +24664,9 @@
     ctx.fill();
   }
 
-  function drawProceduralWorm() {
-    const renderState = buildSpitterCraneRenderState();
+  function drawProceduralWorm(
+    renderState = buildSpitterCraneRenderState(),
+  ) {
     const segments = renderState.outputSegments;
     ctx.save();
     ctx.lineCap = "round";
@@ -22562,7 +25311,7 @@
     return hasConnections;
   }
 
-  function createAcidFluidPatternTile() {
+  function createAcidFluidPatternTile(color) {
     const size = ACID_RULES.fluidPatternTileSize;
     const tile =
       typeof OffscreenCanvas === "function"
@@ -22573,19 +25322,17 @@
     const tileContext = tile.getContext("2d");
     const image = tileContext.createImageData(size, size);
     const data = image.data;
-    const patternColors = [
-      palette.acidFluidShadow,
-      palette.acidFluid,
-      palette.acidFluidMid,
-      palette.acidFluidHighlight,
-    ].map((color) => {
-      const value = Number.parseInt(color.slice(1), 16);
-      return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-    });
-    const shadow = patternColors[0];
-    const base = patternColors[1];
-    const middle = patternColors[2];
-    const highlight = patternColors[3];
+    const selected = hexColorToRgb(
+      normalizeHexColor(color) || DEFAULT_ACID_COLORS[0],
+    );
+    const shade = (target, amount) =>
+      selected.map((channel, index) =>
+        lerp(channel, target[index], amount),
+      );
+    const shadow = shade([0, 0, 0], 0.55);
+    const base = shade([0, 0, 0], 0.2);
+    const middle = selected;
+    const highlight = shade([255, 255, 255], 0.36);
 
     // Integer-frequency waves are periodic on both axes. The first pixel
     // after any edge therefore continues the same field from the opposite
@@ -22629,11 +25376,13 @@
     return tile;
   }
 
-  function acidFluidPatternTile() {
-    if (!acidFluidPatternTileCache) {
-      acidFluidPatternTileCache = createAcidFluidPatternTile();
+  function acidFluidPatternTile(color) {
+    let tile = acidFluidPatternTileCache.get(color);
+    if (!tile) {
+      tile = createAcidFluidPatternTile(color);
+      acidFluidPatternTileCache.set(color, tile);
     }
-    return acidFluidPatternTileCache;
+    return tile;
   }
 
   function createAcidClusterAtlas(dropletCount) {
@@ -22648,12 +25397,10 @@
     atlas.height = rows * tileSize;
     const atlasContext = atlas.getContext("2d");
     atlasContext.imageSmoothingEnabled = true;
-    const fluidPattern =
-      atlasContext.createPattern(acidFluidPatternTile(), "repeat") ||
-      palette.acidFluid;
     const pixelsPerRadius =
       (tileSize * 0.5 - 4) / ACID_RULES.visualClusterExtent;
     const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    const acidColorLut = activeAcidColorLut();
 
     for (
       let variant = 0;
@@ -22665,6 +25412,12 @@
       );
       const centerX = (variant % columns + 0.5) * tileSize;
       const centerY = (Math.floor(variant / columns) + 0.5) * tileSize;
+      const variantColor = acidColorLut[variant] || DEFAULT_ACID_COLORS[0];
+      const fluidPattern =
+        atlasContext.createPattern(
+          acidFluidPatternTile(variantColor),
+          "repeat",
+        ) || variantColor;
       const geometry = new Float32Array(dropletCount * 3);
       const rotation = random() * TAU;
       for (let index = 0; index < dropletCount; index += 1) {
@@ -22773,7 +25526,11 @@
         ),
       );
       const variant =
-        Math.abs(Math.trunc(particle.visualVariant || 0)) %
+        Math.abs(
+          Math.trunc(
+            particle.acidColorIndex ?? particle.visualVariant ?? 0,
+          ),
+        ) %
         ACID_RULES.visualClusterVariants;
       ctx.drawImage(
         acidClusterAtlas(dropletCount),
@@ -22798,9 +25555,9 @@
     ctx.globalAlpha = 0.96;
 
     if (traceAcidRibbonConnections(bounds, ACID_RULES.linkCoreRadiusScale)) {
-      // A matching flat underlay avoids a scale/phase seam where differently
-      // sized patterned clusters overlap their connective ribbon.
-      ctx.fillStyle = palette.acidFluid;
+      // One neutral batched underlay keeps every connection to a single fill;
+      // the overlaid clusters carry each particle's selected gradient hue.
+      ctx.fillStyle = "#171217";
       ctx.fill();
     }
     drawAcidClusters(bounds);
@@ -22812,13 +25569,12 @@
     game.tongues.forEach((tongue) => drawTongue(tongue));
   }
 
-  function drawWorm() {
+  function drawWorm(renderState = buildSpitterCraneRenderState()) {
     if (!wormSpritesAreReady()) {
-      drawProceduralWorm();
+      drawProceduralWorm(renderState);
       return;
     }
 
-    const renderState = buildSpitterCraneRenderState();
     const segments = renderState.outputSegments;
     const bodyLayout = createBodySpriteLayout(segments);
     const visibleBounds = getVisibleWorldBounds(0);
@@ -22927,14 +25683,14 @@
     ctx.fill();
     ctx.stroke();
 
-    ctx.font = '800 10px "Courier New", monospace';
+    ctx.font = '800 50px "Courier New", monospace';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const labelX = behindHead ? startX - unitX * 15 : endX + unitX * 15;
-    const labelY = behindHead ? startY - unitY * 15 : endY + unitY * 15;
+    const labelX = behindHead ? startX - unitX * 35 : endX + unitX * 35;
+    const labelY = behindHead ? startY - unitY * 35 : endY + unitY * 35;
     const text = showMagnitude ? `${label} ${Math.round(vectorMagnitude)}` : label;
     ctx.strokeStyle = palette.ink;
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 8;
     ctx.strokeText(text, labelX, labelY);
     ctx.fillStyle = color;
     ctx.fillText(text, labelX, labelY);
@@ -22997,11 +25753,11 @@
   }
 
   function drawCollisionLabel(text, x, y, color) {
-    ctx.font = '800 9px "Courier New", monospace';
+    ctx.font = '800 45px "Courier New", monospace';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.strokeStyle = palette.ink;
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 8;
     ctx.strokeText(text, x, y);
     ctx.fillStyle = color;
     ctx.fillText(text, x, y);
@@ -23285,7 +26041,7 @@
 
     const eatHitboxSweep = getEatHitboxSweep();
     const eatCone = getEatConeGeometry();
-    const mouthSensorRadius = MOUTH_BEHAVIOR.proximityRadius * wormScale();
+    const activeMouthSensorRadius = mouthSensorRadius();
     const headCollisionRadius = wormDimension("collisionRadius");
     const visualHeadPose = getEatHitboxPose();
     const stoneWheelRadius = stoneSurfaceWheelRadius(headCollisionRadius);
@@ -23340,7 +26096,7 @@
     }
 
     ctx.beginPath();
-    ctx.arc(game.head.x, game.head.y, mouthSensorRadius, 0, TAU);
+    ctx.arc(game.head.x, game.head.y, activeMouthSensorRadius, 0, TAU);
     ctx.setLineDash([8, 7]);
     ctx.strokeStyle = sensorColor;
     ctx.lineWidth = 2;
@@ -23349,7 +26105,7 @@
     drawCollisionLabel(
       "MOUTH SENSOR",
       game.head.x,
-      game.head.y - mouthSensorRadius - 9,
+      game.head.y - activeMouthSensorRadius - 9,
       sensorColor,
     );
 
@@ -23522,7 +26278,6 @@
     ctx.fillRect(0, 0, game.viewport.width, game.viewport.height);
     if (!game.levelLoaded) return;
 
-    updateCamera();
     const zoom = cameraZoom();
 
     ctx.save();
@@ -23531,10 +26286,12 @@
 
     drawBackground();
     drawTargets();
+    drawSprinterAreaIndicator();
     drawAcidFluid();
     drawParticles("back");
     drawTongues();
-    drawWorm();
+    const wormRenderState = buildSpitterCraneRenderState();
+    drawWorm(wormRenderState);
     drawParticles("front");
     drawEnemyHealthBars();
     drawGridOverlay();
@@ -23544,7 +26301,7 @@
     drawSteeringVectors();
     drawFrame();
     ctx.restore();
-    drawMinimap();
+    drawMinimap(wormRenderState);
     prefetchTerrainChunk();
   }
 
@@ -23662,10 +26419,17 @@
     const dt = Math.min(maximumDelta, Math.max(0, (time - game.lastTime) / 1000 || 0));
     game.lastTime = time;
 
-    if (game.started && !game.paused && !game.menuOpen) {
-      const updateStart = profiling ? performance.now() : 0;
+    const gameplayActive =
+      game.started && !game.paused && !game.menuOpen;
+    const updateStart = profiling && gameplayActive ? performance.now() : 0;
+    if (gameplayActive) {
       game.elapsed += dt;
       updatePhysics(dt);
+    }
+
+    if (game.levelLoaded) updateCamera(dt);
+    if (gameplayActive) {
+      updateVisibleTristarArmTunnels(dt);
       updateHud();
       if (profiling) updateDuration = performance.now() - updateStart;
     }
@@ -23773,6 +26537,18 @@
   canvas.addEventListener("pointerdown", (event) => {
     if (!event.isPrimary) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (
+      wormHasAbility(WORM_ABILITIES.SPRINT) &&
+      game.levelLoaded &&
+      game.started &&
+      !game.paused &&
+      !game.menuOpen
+    ) {
+      const point = canvasWorldPoint(event);
+      beginSprinterAreaTarget(point.x, point.y);
+      event.preventDefault();
+      return;
+    }
     if (
       wormHasAbility(WORM_ABILITIES.ACID) &&
       game.levelLoaded &&
@@ -24121,7 +26897,6 @@
     if (liveEnemyCount() >= enemyPopulationLimit()) return;
     if (availableEnemyKindSlots(kind) <= 0) return;
 
-    updateCamera();
     const visible = getVisibleWorldBounds(0);
     const spawnPosition =
       DEV_ENEMY_SPAWN_POSITIONS[
@@ -24313,6 +27088,16 @@
   wormBrushColorInput.addEventListener("input", () => {
     wormPainter.color = wormBrushColorInput.value;
   });
+  wormAcidColorInputs.forEach((input) => {
+    input.addEventListener("input", () => {
+      const index = Number(input.dataset.wormAcidColor);
+      if (!Number.isInteger(index) || index < 0 || index >= 3) return;
+      const nextColors = [...wormPainter.acidColors];
+      nextColors[index] = input.value;
+      setWormPainterAcidColors(nextColors);
+      drawWormEditorPreview();
+    });
+  });
   wormBrushSizeInput.addEventListener("change", () => {
     wormPainter.brushSize = Number(wormBrushSizeInput.value);
     updateWormPaintStatus();
@@ -24403,9 +27188,11 @@
     loadSelectedWorld();
     loadSavedWormType();
     await loadSavedWormAppearance();
-    // Build the seven bounded liquid-density sprites before play. Leveling up
-    // can then change spray density without compiling a new atlas mid-frame.
-    prewarmAcidClusterAtlases();
+    // Build the seven bounded liquid-density sprites before Spitter play.
+    // Licker does not pay the startup time or retain the roughly 5.9 MiB cache.
+    if (wormHasAbility(WORM_ABILITIES.ACID)) {
+      prewarmAcidClusterAtlases();
+    }
     resize();
     showHomeScreen();
     requestAnimationFrame((time) => {

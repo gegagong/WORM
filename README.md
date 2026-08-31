@@ -16,33 +16,52 @@ Then open `http://localhost:4173`.
 
 - `A` / `D` — steer
 - `W` — accelerate while underground
-- `S` — brake quickly while underground or crawling on stone
-- `Space` + `W` — boost to 1.5× speed while underground
+- `S` — brake quickly while underground or crawling on stone; cancel a Sprinter area command
+- `Space` + `W` — boost underground to 1.5× speed, or 2.25× as Sprinter
 - Hold `Space` while airborne — hold the mouth open without spending boost
 - As Licker, click or tap anywhere — target easy or normal prey near that point and spit the tongue
 - As Spitter, hold click or touch — spray acid at twice the normal movement-boost drain rate
+- As Sprinter, click or tap — mark a mouth-sensor-sized hunting zone and pursue its easy and normal prey one by one
 - As Licker while airborne, hold click or touch near hard prey — tongue grapple
 - While tongue-grappling, hold `W` to reel in rapidly; add `Space` to reel faster using boost
 - `A` / `D` have no effect while tongue-grappled
-- Hold `Space` near hard prey underground — latch attack
+- Hold `Space` near hard prey underground — pursue and latch onto the nearest hard target
 - On a stone surface: `W` moves forward, `A` / `D` choose its direction, and `S` brakes
 - `F` — open or close Developer Tools
 - `Esc` — open or close the game menu
 
-The **Menu** button provides Worlds, Worm Type, Edit Worm, Enemy Information, Pause, Reset, and
-Developer Tools. **Enemy Information** opens a full-screen field guide generated from
+The Home screen provides World, Worm Type, and Edit Worm selection. During a run, the
+**Menu** button provides Continue, Enemy Information, Reset, Developer Tools, and Return Home.
+**Enemy Information** opens a full-screen field guide generated from
 the enemy registry. It lists each enemy's point value, maximum HP, and prey class at the
 worm's current bite force, so new enemy definitions appear there automatically. Dropped
 meat is omitted because it is a variable-value pickup rather than an enemy.
 
 ## Worm types
 
-The selected worm can be changed from the intro card or **Menu → Worm Type**, and the
+The selected worm can be changed from the Home screen's **Selected worm** card, and the
 choice is retained in browser storage. **Licker** is the original worm and owns the
 complete articulated-tongue ability: prey capture, multi-tongue targeting, and airborne
 hard-prey grappling. **Spitter** uses the same movement, growth, bite, boost, body, and
-appearance behavior, but replaces tongues with a pointer-aimed acid hose. Each simulated
-second of active spraying consumes two seconds of boost charge; using movement boost at
+appearance behavior, but replaces tongues with a pointer-aimed acid hose. **Sprinter**
+replaces the active pointer ability with manual click pursuit. Its movement boost is 50%
+faster than the other worms, its mouth sensor reaches 50% farther, and its airborne turn
+force is tripled. Holding Boost does not automatically aim at prey; it retains the shared
+hard-prey latch behavior when a hard enemy is nearby or physically meets the airborne mouth.
+Clicking the playfield marks a hunting zone whose radius matches the Sprinter's current mouth
+sensor when the command is issued, then the worm selects and physically pursues one easy or
+normal enemy in that live zone at a time. Hard enemies are ignored completely and do not keep
+the command active. Eligible prey are ordered by point
+value, with distance and target ID breaking ties, and the selected victim remains stable until
+it is caught, leaves the zone, or becomes unavailable. New easy or normal prey can enter the
+active zone and join the hunt. Underground and stone-surface pursuit uses Sprinter's full boost
+speed and normal boost drain without requiring held movement input; in open air, click guidance
+can rotate existing momentum at up to two full turns per second, so it tracks prey very quickly
+while adding neither speed nor boost drain. Prey use the ordinary contact, chew, score, and
+boost-restoration flow. Stone collisions redirect the
+run or transition it into guided surface travel without discarding the zone. Braking, exhausting
+boost, opening a menu, resetting, or changing worm type cancels the command. Each simulated
+second of Spitter's active spraying consumes two seconds of boost charge; using movement boost at
 the same time raises the combined drain to three seconds of charge per second. Each simulated
 acid carrier sticks to the first enemy hurtbox it sweeps into, refreshes its original
 randomized lifespan, and follows that contact point until it dissolves or its host
@@ -67,21 +86,23 @@ order. A worm crossing one promotes it to the ordinary fully dark, longer-lived 
 Acid lasts
 0.8–1.1 seconds
 at level 0 and 4.3–4.6 seconds at level 100. Its physical carriers are rendered as
-compact clusters joined by broad batched ribbons. One cached, borderless dark-purple
-mottled pattern tiles seamlessly through every cluster, while the connecting ribbons use
-its matching base color so different cluster scales never expose a phase seam. The new
-texture removes the per-particle radial shading that exposed their boundaries, making the
-hose read as one cohesive liquid without increasing the number of simulated particles or
-enlarging their damage hitboxes.
+compact clusters joined by broad batched ribbons. On spawn, each carrier randomly selects
+one of 24 evenly spaced colors around the saved Color 1 → Color 2 → Color 3 → Color 1
+gradient and retains that color for its lifetime. Seven density atlases bake the selected
+colors into seamless mottled cluster tiles, preserving one sprite draw per visible carrier;
+the connective ribbon remains one dark-neutral batched fill. This keeps the hose cohesive
+without increasing simulated particle count, damage hitboxes, or per-frame draw calls.
 
 Each type has its own scaling record for base entity scale, size and segment growth,
 growth costs, bite-force growth, and boost-capacity growth. Licker gains 12% of its base
 size and one segment per level. Spitter gains 18% of its base size per level but only one
-segment every two levels, producing fewer, substantially larger body sections. The two
-types still share the movement and level systems, including the same level-scaled stone
+segment every two levels, producing fewer, substantially larger body sections. Sprinter
+gains only 8% of its base size per level but adds three segments every two levels, keeping
+roughly the same total body length as Licker with a slimmer, more articulated build. All three
+types share the movement and level systems, including the same level-scaled stone
 locomotion rate. Switching types preserves the current level and boost-charge ratio. If
 Licker has an active tongue when the type changes, its tether is safely removed and any
-currently captured target is released.
+currently captured target is released; an active boost pursuit is also cancelled safely.
 
 Prey classes always use maximum HP relative to the worm's current bite force: **easy prey**
 has at most 1× bite force in HP, **normal prey** has more than 1× but no more than 2×, and
@@ -92,19 +113,36 @@ All gameplay entities currently use an experimental 62.5% global size multiplier
 larger than the previous 50% experiment. This scales the worm's rendered and physical
 dimensions—including segment spacing, collision, mouth geometry, and tunnel width—and
 scales enemy and meat sprite/hurtbox sizes by the same amount.
-Both worms start with 16 body segments; Licker gains one additional segment per level,
-while Spitter gains one after each complete pair of levels.
+All three worms start with 16 body segments. Licker gains one additional segment per level,
+Spitter gains one after each complete pair of levels, and Sprinter alternates between one
+and two new segments per level for three every two levels.
 Entity scaling does not alter world coordinates, the 12 px terrain grid, material
 textures, stone contours, camera framing, movement speeds, scores, or health values.
-The top-left HUD contains a local minimap in place of the prototype logo. It shows
-nearby air, soil, tunneled soil, and stone; pink points mark nearby enemies and pale
-points mark meat. The outlined rectangle is the current camera view and the orange
-arrow is the worm's position and facing direction. The terrain and target layer updates
-at 10 Hz from a small fixed-resolution sample while the camera rectangle and worm marker
-remain frame-responsive, so the minimap never scans or renders the entire world.
-Opening Developer Tools also reveals the live FPS readout, an FPS-limit selector, the
-current terrain state, and a live performance-gate panel; all stay hidden during normal
-play. The frame cap can be set to 30, 60, or 120 FPS, or left uncapped. Uncapped rendering
+The top-left HUD contains a large circular radar in place of the prototype logo. Its
+240 × 240 display scales down at narrow breakpoints and uses a black screen with red
+returns. Every two gameplay seconds it freezes a local snapshot of nearby terrain,
+tunnels, enemies, and meat in world space. Enemies currently classified as normal or
+hard prey appear as proportionally scaled red miniatures of their on-screen form: they
+retain the active animation frame, facing or rotation, capture shrink, and—on normal or
+hard Tri-Stars—the current arm pose and pulsing triangular body. Only easy prey and meat
+use compact red dot returns. The return type is frozen at ping time from the enemy's
+maximum health and the worm's current bite force, just like the pose itself. The previous
+scan remains as a fading echo, so movement and newly dug terrain leave a short-lived
+afterimage instead of updating continuously.
+Frozen returns are reprojected as the worm moves, including across the world's
+horizontal seam. A live flat-red copy of the active user-edited worm stays above the
+echoes on every frame, including its saved body, outline, rings, mouth, jaws, reflection
+settings, and current mouth/head pose. Oversized high-level bodies are uniformly
+miniaturized without changing their internal proportions, keeping the whole silhouette
+inside the aperture without expanding the world area that drives nearby enemy
+simulation. The fixed-resolution scan remains local,
+so the radar never scans or renders the entire world. Dense enemy scans are assembled
+in bounded offscreen slices and committed only when complete, avoiding a periodic scan
+hitch or partially painted echo at the 180 Hz performance target.
+During normal play the top-right HUD is limited to score, level, velocity, and boost.
+Opening Developer Tools additionally reveals the enemy count, growth progress, current
+terrain state, live FPS readout, FPS-limit selector, and performance-gate panel. The frame
+cap can be set to 30, 60, or 120 FPS, or left uncapped. Uncapped rendering
 still follows the browser's `requestAnimationFrame` cadence, which browsers normally
 synchronize to the display and may restrict to 60 Hz on some Chromium/platform
 combinations. The profiler samples only while Developer Tools is open. It displays the
@@ -136,7 +174,9 @@ small steps remain part of the same curve, while long walls and undersides are e
 Standalone spans whose horizontal extent is no more than one 12 px block are discarded.
 The currently occupied surface is highlighted.
 The separate **Combat stats** overlay labels active and captured enemies with HP and
-shows the worm's current level-scaled bite force beside its mouth.
+shows the worm's current level-scaled bite force beside its mouth. All in-world labels
+produced by the direction, steering, hitbox, and combat-stat tools use five times their
+original font size; the Developer Tools controls themselves retain their compact sizing.
 
 A second gameplay-controls panel opens with Developer Tools. Its worm-level field
 overrides the score-earned level, updating the worm's size, segment count, bite force,
@@ -148,13 +188,18 @@ enemy types are included automatically.
 
 While control input is held, the worm can steer its airborne momentum but cannot
 accelerate in open air. Holding Boost while airborne opens the mouth without consuming
-boost charge; bite and eating animations still take priority. It regains acceleration
-after returning to ground. A low-speed
+boost charge but does not aim toward enemies. Bite and eating animations still take priority.
+The worm regains acceleration after
+returning to ground. A low-speed
 landing on an exposed stone contour switches to surface-crawling controls instead.
 Air steering applies a force perpendicular to the current momentum while gravity
 applies a separate, constant world-down force. If gravity exceeds an upward turn force,
 the resulting force still points downward. Releasing every control stops the worm
 underground; airborne momentum continues until re-entry.
+Sprinter applies three times the normal airborne turn force, giving its faster boosted
+breaches roughly twice the angular response of the other worms at their boosted speed.
+While an active click hunt has selected prey, its separate guidance can turn existing
+airborne momentum by up to two full rotations per second without accelerating.
 Airborne gravity is fixed at 775 world pixels per second squared, increased from 515.
 Ordinary airborne movement and tongue-grapple freefall use this same downward
 acceleration.
@@ -326,6 +371,15 @@ slows the body, and its speed remains capped at 600 pixels per second. The burst
 one or two arms are carrying prey and is suppressed entirely when all three are occupied.
 Tentacle inertia makes the released fan flare and trail naturally, while dangling-arm
 separation and the joint limits remain authoritative throughout the pulse.
+Every moving Tri-Star core in the circular minimap's normal-simulation area leaves the
+same longer-lived dark soil tunnel as the worm. The lightweight off-minimap ecology omits
+terrain mutation so a remote worst-case population cannot overwhelm the frame budget or
+tunnel-expiry queue. An arm leaves a short-lived acid-style tapered tunnel only where its
+current or swept geometry crosses the actual camera viewport. Arm carving is skipped
+outside the screen and uses a separate frame-rate-scaled terrain budget with a short-lived
+deferred queue. Terrain contact is sampled at a phase-staggered 60 Hz while the arms still
+animate every frame; saved-pose sweeps preserve motion between samples without spending the
+player's acid budget.
 
 Tri-Stars pulse toward the nearest available beetle or mole. They still recognize local
 beetle groups when choosing which reachable prey to collect with multiple arms, but a
@@ -415,15 +469,18 @@ one-bite instant kill never shortens a longer bite sequence already in progress.
 
 Hard prey cannot be captured by normal contact, even after its current HP falls below the
 hard-prey threshold because classification uses maximum HP. Contact reverses and dampens
-the worm's momentum while leaving the enemy alive. Holding Boost while underground targets
+the worm's momentum while leaving the enemy alive. Holding Boost while underground normally targets
 the nearest hard prey inside the mouth sensor and
 spends boost charge while the worm rapidly curves toward it using a pursuit turn rate
 above normal ground steering. Reserving that target does not stop its own movement; it
 continues its current enemy behavior during the pursuit and freezes only when the worm's
 head actually reaches it. The bite sequence
 does not begin until the visual center of the head reaches
-the enemy's center. While airborne, holding Boost does not target or pursue hard prey;
-an actual swept-mouth collision instead starts the same latch directly at the point of
+the enemy's center. Sprinter expands this hard-prey sensor by 50%, but otherwise uses the same
+nearest-hard-target selection and release/repress latch edge as the other worms. Holding Boost
+never targets easy or normal prey, does not continually retarget a hard approach, and does not
+auto-steer the Sprinter in open air. An actual swept-mouth collision while Boost is held starts
+the hard-prey latch directly at the point of
 impact. The head then stays positionally locked there while the body keeps
 its own inertial chain motion and the enemy plays its scurry animation at five times
 normal speed. Each jaw closure sprays layered red splatter. Completing all four bites
@@ -438,11 +495,17 @@ embedded head can launch clear without immediately colliding again. A kill still
 releases in place to produce the meat burst. Releasing Boost or exhausting charge
 after the head has locked on interrupts the bite sequence without damage but applies
 the same amplified release bounce in either terrain or air. Cancelling during the underground pursuit approach does not
-bounce because the head has not latched yet. Boost must be released before starting
-another latch. Hard-prey latch eligibility and ordinary-bite repulsion both use maximum HP,
+bounce because the head has not latched yet. A completed hard-prey attack still requires Boost
+to be released before starting another hard latch. Hard-prey latch eligibility and ordinary-bite repulsion both use maximum HP,
 while each completed latch still subtracts bite force from current HP. A 10-HP mole is hard
 prey relative to a level-0 worm's 2-point bite force, so it requires five
 completed latch attacks at level 0 and drops meat after the fifth.
+
+A clicked Sprinter hunt is separate from Boost latching. It considers only easy and normal
+enemy hurtboxes overlapping the live marked circle, keeps one selected prey stable during its
+approach, and hands off only after that individual is captured or becomes unavailable. Hard
+prey are neither selected nor counted as pending zone members. No area damage is applied, and
+soft prey must enter the physical mouth capture before the next target can be approached.
 
 An enemy reduced to zero HP by a latch drops several 1-HP meat pieces instead of
 awarding its score directly. The original score is divided across those pieces without
@@ -532,8 +595,8 @@ level 0; reaching level 1 costs 5 points, then the per-level requirement follows
 score thresholds begin at 5, 12, 21, 32, 47…. Each growth level adds 30 world pixels per
 second to the worm's unboosted maximum speed and increases every physical and visual worm
 dimension, including its collision radius and tunnel width. Licker also gains one segment
-each level; Spitter gains one every second level. Boost and ability-specific speed
-multipliers apply to that level-scaled maximum.
+each level; Spitter gains one every second level; Sprinter gains three every two levels.
+Boost and ability-specific speed multipliers apply to that level-scaled maximum.
 
 ## Background sky
 
@@ -557,10 +620,10 @@ or spawning behavior. See `assets/enemies/README.md` for canvas and orientation 
 
 ## Worm appearance sprites
 
-Both worm types resolve the same nine transparent `shared-default-*.png` layers from
+All three worm types resolve the same nine transparent `shared-default-*.png` layers from
 `assets/worm/`. This set was extracted without resampling from the current edited Licker
-appearance, including its custom tongue and tongue-ring art. Licker and Spitter therefore
-begin with the same model while retaining their separate movement scaling and abilities.
+appearance, including its custom tongue and tongue-ring art. Licker, Spitter, and Sprinter
+therefore begin with the same model while retaining separate scaling and abilities.
 The older `licker-default-*.png` and `default-*.png` sets remain archived alongside it.
 
 The shared set provides upper and lower jaw layers, upper and lower mouth layers, body
@@ -584,10 +647,12 @@ with transparent backgrounds to preserve the shared neck pivot and alignment.
 
 ### In-game worm editor
 
-Choose **Edit worm** from the game menu to open the appearance workshop. The editor
-starts from the active worm and provides Upper Jaw, Lower Jaw, Upper Mouth, Lower Mouth,
-Body, Rings, Outline, Tongue, and Tongue Rings layers. Select Paint or Erase, choose a
-color and pixel brush size, then drag on the enlarged transparent PNG canvas. Fill
+Choose **Edit selected worm** on the Home screen to open the appearance workshop. The editor
+starts from the active worm and provides seven common sprite layers: Upper Jaw, Lower Jaw,
+Upper Mouth, Lower Mouth, Body, Rings, and Outline. Licker also shows Tongue and Tongue
+Rings. With Spitter selected, those two options are replaced by three acid color selectors
+and a Color 1 → Color 2 → Color 3 → Color 1 gradient strip. Select Paint or Erase, choose
+a color and pixel brush size, then drag on the enlarged transparent PNG canvas. Fill
 replaces an exact-color connected pixel region with the selected color; right-clicking
 with Fill makes that region transparent. Fill follows the selected symmetry mode and
 stays inside the editable half of split jaw and mouth layers. Right-drag always erases.
@@ -616,16 +681,20 @@ that movement touches the player worm or active world. Preview body and outline 
 use the same cached composite and every-third-point sparse path as gameplay, including
 endpoint coverage, while preview rings retain every original position. Its tongue repeatedly extends,
 swings toward changing random directions, retracts completely, and pauses before the
-next cycle so both editable tongue layers can be judged in motion. The simulation runs only while
+next cycle so both editable tongue layers can be judged in motion; Spitter instead sprays
+a moving sample of the pending acid gradient. The simulation runs only while
 the appearance editor is open. **Load defaults** copies the built-in artwork into the
 working canvases, while **Cancel** discards all unsaved edits. **Export worm** downloads
-a shareable, versioned `.worm.json` package containing all nine PNG layers and the
-jaw/mouth mirroring choices. **Import worm** loads a compatible package into the editor
+a shareable version-2 `.worm.json` package containing all nine PNG layers, the jaw/mouth
+mirroring choices, and Spitter's three acid colors. Version-1 packages remain importable.
+When a version-1 package is opened for Spitter, its missing palette resolves to the
+built-in legacy acid colors.
+**Import worm** loads a compatible package into the editor
 for inspection or further changes but does not overwrite the saved appearance until
 **Save worm** is selected. Saving applies the appearance to the game and stores its
-nine PNG data URLs and optional jaw- and mouth-mirroring sources under
-`worm.type-appearance.v1.<worm-type-id>` in browser `localStorage`, so Licker and Spitter
-retain independent custom overrides on the next visit. Earlier Licker appearances are
+nine PNG data URLs, optional jaw- and mouth-mirroring sources, and acid colors under
+`worm.type-appearance.v1.<worm-type-id>` in browser `localStorage`, so Licker, Spitter,
+and Sprinter retain independent custom overrides on the next visit. Earlier Licker appearances are
 migrated automatically; their previously
 reflected mouth is preserved as an independent lower-mouth image. Custom artwork
 changes visuals only; physics, collision, scoring, growth, and body following remain
@@ -694,8 +763,13 @@ surface from immediately recapturing the head during the outward pivot. The worm
 returns to airborne physics. The Hitboxes / hurtboxes developer overlay displays the
 generated curves and highlights the one currently holding the worm.
 
-The canvas is a viewport into that world. Its camera is recalculated from the worm's
-world position every frame, placing the head at the exact center of the screen. Near a
+The canvas is a viewport into that world. During ordinary play, its camera is recalculated from
+the worm's world position every frame, placing the head at the exact center of the screen. A
+Sprinter click hunt temporarily overrides that follow camera: the view flies to the center of
+the marked circle over half a second, remains exactly locked there until the command completes
+or is cancelled, then flies back to the moving worm over half a second before exact head-follow
+resumes. Re-clicking during a hunt redirects the flight smoothly to the new circle, and wrapped
+world coordinates always use the nearby image instead of sending the camera around the map. Near a
 horizontal seam, terrain chunks from the opposite edge are drawn beside the current
 edge so the camera never exposes an empty strip. The view zooms out by 10% at every fifth growth level
 (levels 5, 10, 15, and so on), with a minimum zoom of 40%. Resizing the browser changes

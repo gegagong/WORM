@@ -1,7 +1,7 @@
 # Worm sprite sets
 
-The nine `shared-default-*.png` files are the built-in appearance for both Licker and
-Spitter. They were extracted without resampling from the current edited Licker save made
+The nine `shared-default-*.png` files are the built-in appearance for Licker, Spitter,
+and Sprinter. They were extracted without resampling from the current edited Licker save made
 on August 10, 2026. The older `licker-default-*.png` and `default-*.png` sets are retained
 as archived previous defaults. All sets are 2× assets. After conversion to logical
 dimensions, the current experimental 62.5% entity scale halves them again before the
@@ -20,8 +20,14 @@ growth multiplier is applied.
 | `shared-default-tongue-ring.png` | 80 × 80 | Repeating editable overlay at tongue joints |
 
 The shared default mirrors `headUpper` to the lower jaw and `mouthUpper` to the lower
-mouth, matching the saved appearance. Both worm types restore these same reflection
+mouth, matching the saved appearance. All three worm types restore these same reflection
 choices when **Load defaults** is used.
+
+The Licker editor exposes all nine layers. Spitter hides the two tongue controls and
+shows its three acid-gradient color selectors in their place, but its saved appearance
+and exported package still retain all nine PNGs for schema and cross-type compatibility.
+Sprinter exposes the seven common jaw, mouth, body, ring, and outline layers without
+tongue or acid controls.
 
 Keep the canvas dimensions and transparent backgrounds when replacing the files.
 The jaw and mouth layers must share the same alignment and face right. Upper layers use
