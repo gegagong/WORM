@@ -1138,6 +1138,10 @@
     freefallMaximumSpeed: 520,
     freefallConstraintIterations: 8,
     renderLineSamples: 4,
+    // The continuous tapered silhouette always stays full-detail. At extreme
+    // levels, thin only repeated decorative texture/ring stamps so thousands
+    // of Canvas draw calls cannot consume an entire 180 Hz frame.
+    targetRenderedTextureStamps: 1400,
     outerBaseWidth: 11,
     innerBaseWidth: 7,
     highlightBaseWidth: 2.2,
@@ -1541,6 +1545,8 @@
     mouthChewTimer: 0,
     tongues: [],
     automaticTongueSearchCooldown: 0,
+    targetById: new Map(),
+    targetByIdReady: false,
     acidParticles: [],
     acidParticlePool: [],
     acidEmissionAccumulator: 0,
@@ -1657,6 +1663,19 @@
   const acidTargetBroadphaseBuckets = [];
   const acidTargetBroadphaseUsedBucketKeys = [];
   const acidTargetCandidateScratch = [];
+  // Tongue ownership is queried from several enemy and mouth-collision
+  // loops. Keep exact counts so those checks stay O(1) even when a large
+  // Licker has many simultaneous tongues.
+  const activeTongueTargetCounts = new Map();
+  // Reused by the passenger narrow phase. First-encounter array order
+  // preserves the old broad-phase candidate order, while query-stamped fields
+  // on each target accumulate its exact closest route-link contact without a
+  // per-link Map lookup or per-frame result allocation.
+  const tonguePassengerContactScratch = [];
+  const tonguePassengerLinkScratch = {};
+  let tonguePassengerContactQueryId = 0;
+  let activeHeavyTongueGrappleCache = null;
+  let activeHeavyTongueGrappleCacheValid = false;
   let acidTargetBroadphaseColumnCount = 1;
   let acidTargetBroadphaseRowCount = 1;
   let acidTargetBroadphaseQueryId = 0;
@@ -3709,6 +3728,12 @@
       acidPreviousX: x,
       acidPreviousY: y,
       acidBroadphaseQueryId: 0,
+      tonguePassengerContactQueryId: 0,
+      tonguePassengerDistanceSquared: Infinity,
+      tonguePassengerSegmentIndex: 0,
+      tonguePassengerSegmentAmount: 0,
+      tonguePassengerTangentOffset: 0,
+      tonguePassengerNormalOffset: 0,
       angle,
       radius: definition.radius,
       sizeScale: definition.sizeScale,
@@ -4121,6 +4146,8 @@
     );
     game.nextTargetId = 0;
     game.targets = [];
+    game.targetById.clear();
+    game.targetByIdReady = false;
     game.capturedTargets = [];
     game.meatTargetCount = 0;
     game.roundSpawnRegionType = chooseRoundSpawnRegionType();
@@ -5703,6 +5730,9 @@
     game.mouthBiteHoldTimer = 0;
     game.mouthChewTimer = 0;
     game.tongues = [];
+    activeTongueTargetCounts.clear();
+    activeHeavyTongueGrappleCache = null;
+    activeHeavyTongueGrappleCacheValid = true;
     game.automaticTongueSearchCooldown = 0;
     game.latchAttack = null;
     game.boostLatchReady = true;
@@ -5816,6 +5846,9 @@
       if (target.tongueCaptured) resumeTargetAfterTongueRelease(target);
     });
     game.tongues.length = 0;
+    activeTongueTargetCounts.clear();
+    activeHeavyTongueGrappleCache = null;
+    activeHeavyTongueGrappleCacheValid = true;
     game.automaticTongueSearchCooldown = 0;
   }
 
@@ -9559,7 +9592,11 @@
     return { points };
   }
 
-  function getTongueGeometry(tongue, progress = tongue?.progress ?? 0) {
+  function getTongueGeometry(
+    tongue,
+    progress = tongue?.progress ?? 0,
+    knownTarget = undefined,
+  ) {
     if (!tongue) return null;
     const { pose, back, front } = tongueHeadAnchors();
     const maximumLength =
@@ -9568,7 +9605,9 @@
     // beyond the mouth. The straight rear-to-front head passage is extra and
     // must not reduce the tongue's usable targeting range.
     const maximumCurveLength = maximumLength;
-    const lockedTarget = activeTongueTarget(tongue);
+    const lockedTarget = knownTarget === undefined
+      ? activeTongueTarget(tongue)
+      : knownTarget;
     const target = lockedTarget && !tongue.freefallNodes
       ? { x: lockedTarget.x, y: lockedTarget.y }
       : tongue.aimOnly &&
@@ -9594,10 +9633,10 @@
 
     const route = tongue.freefallNodes
       ? {
-          points: tongue.freefallNodes.map((node) => ({
-            x: node.x,
-            y: node.y,
-          })),
+          // Geometry consumers only read x/y, so the physical nodes can be
+          // shared directly instead of cloning a long route for simulation
+          // and again for rendering every frame.
+          points: tongue.freefallNodes,
         }
       : useRearAim
         ? rearTongueRoute(
@@ -13374,11 +13413,14 @@
         target.kind === ENEMY_TYPES.TRISTAR ||
         target.tristarCaptorId !== null,
     );
-    const targetById = needsTristarTargetIndex
-      ? game.tristarTargetById || new Map()
+    const needsTongueTargetIndex =
+      game.tongues.length > 0 ||
+      (wormHasAbility(WORM_ABILITIES.TONGUE) && game.boosting);
+    const targetById = needsTristarTargetIndex || needsTongueTargetIndex
+      ? game.targetById
       : null;
+    game.targetByIdReady = Boolean(targetById);
     if (targetById) {
-      game.tristarTargetById = targetById;
       targetById.clear();
     }
     game.targets.forEach((target) => {
@@ -16080,14 +16122,58 @@
 
   function activeTongueTarget(tongue) {
     if (!Number.isFinite(tongue?.targetId)) return null;
+    if (game.targetByIdReady) {
+      const indexedTarget = game.targetById.get(tongue.targetId);
+      if (indexedTarget) return indexedTarget;
+    }
     return game.targets.find((target) => target.id === tongue.targetId) || null;
+  }
+
+  function incrementActiveTongueTarget(targetId) {
+    if (!Number.isFinite(targetId)) return;
+    activeTongueTargetCounts.set(
+      targetId,
+      (activeTongueTargetCounts.get(targetId) || 0) + 1,
+    );
+  }
+
+  function decrementActiveTongueTarget(targetId) {
+    if (!Number.isFinite(targetId)) return;
+    const nextCount = (activeTongueTargetCounts.get(targetId) || 0) - 1;
+    if (nextCount > 0) activeTongueTargetCounts.set(targetId, nextCount);
+    else activeTongueTargetCounts.delete(targetId);
+  }
+
+  function rebuildActiveTongueTargetCounts() {
+    activeTongueTargetCounts.clear();
+    for (let index = 0; index < game.tongues.length; index += 1) {
+      incrementActiveTongueTarget(game.tongues[index].targetId);
+    }
+    activeHeavyTongueGrappleCacheValid = false;
+  }
+
+  function appendTongue(tongue) {
+    game.tongues.push(tongue);
+    incrementActiveTongueTarget(tongue.targetId);
+    activeHeavyTongueGrappleCacheValid = false;
+    return tongue;
+  }
+
+  function clearTongueTarget(tongue) {
+    if (!tongue) return;
+    decrementActiveTongueTarget(tongue.targetId);
+    tongue.targetId = null;
+    if (activeHeavyTongueGrappleCache === tongue) {
+      activeHeavyTongueGrappleCache = null;
+      activeHeavyTongueGrappleCacheValid = true;
+    }
   }
 
   function targetHasActiveTongue(target, tristarFrameContext = null) {
     if (tristarFrameContext?.tongueTargetIds) {
       return tristarFrameContext.tongueTargetIds.has(target.id);
     }
-    return game.tongues.some((tongue) => tongue.targetId === target.id);
+    return activeTongueTargetCounts.has(target.id);
   }
 
   function targetHasBoostLatchReservation(target) {
@@ -16118,15 +16204,34 @@
   function removeTongue(tongue) {
     deliverTonguePassengersToMouth(tongue);
     const index = game.tongues.indexOf(tongue);
-    if (index >= 0) game.tongues.splice(index, 1);
+    if (index >= 0) {
+      decrementActiveTongueTarget(tongue.targetId);
+      game.tongues.splice(index, 1);
+      if (activeHeavyTongueGrappleCache === tongue) {
+        activeHeavyTongueGrappleCache = null;
+      }
+      activeHeavyTongueGrappleCacheValid = false;
+    }
   }
 
   function activeHeavyTongueGrapple() {
-    return game.tongues.find(
+    if (activeHeavyTongueGrappleCacheValid) {
+      const cachedTongue = activeHeavyTongueGrappleCache;
+      if (!cachedTongue) return null;
+      if (
+        cachedTongue.phase === "heavy-grappled" &&
+        activeTongueTarget(cachedTongue)
+      ) {
+        return cachedTongue;
+      }
+    }
+    activeHeavyTongueGrappleCache = game.tongues.find(
       (tongue) =>
         tongue.phase === "heavy-grappled" &&
         Boolean(activeTongueTarget(tongue)),
     ) || null;
+    activeHeavyTongueGrappleCacheValid = true;
+    return activeHeavyTongueGrappleCache;
   }
 
   function handOffHeavyGrappleBody(tongue) {
@@ -16153,9 +16258,7 @@
 
   function prioritizedTongueTargets(x, y, maximumCount) {
     const radiusSquared = tongueTargetingRadius() ** 2;
-    const claimedTargetIds = new Set(
-      game.tongues.map((tongue) => tongue.targetId),
-    );
+    const claimedTargetIds = activeTongueTargetCounts;
     const candidates = [];
 
     game.targets.forEach((target) => {
@@ -16190,9 +16293,7 @@
       wormVisualLength() * TONGUE_RULES.lengthMultiplier;
     const tongueTipRadius =
       TONGUE_RULES.outerBaseWidth * wormScale() * 0.5;
-    const claimedTargetIds = new Set(
-      game.tongues.map((tongue) => tongue.targetId),
-    );
+    const claimedTargetIds = activeTongueTargetCounts;
     const candidates = [];
 
     game.targets.forEach((target) => {
@@ -16234,6 +16335,7 @@
           progress: 1,
         },
         1,
+        target,
       );
       if (
         !fullReachGeometry ||
@@ -16314,7 +16416,7 @@
       maximumLaunches,
     );
     selectedTargets.forEach((target) => {
-      game.tongues.push({
+      appendTongue({
         automaticBoost: true,
         automaticLatchCharged: false,
         aimOffsetX: target.x - game.head.x,
@@ -16414,57 +16516,44 @@
     );
   }
 
-  function tonguePassengerContact(points, target) {
-    const tongueRadius = TONGUE_RULES.outerBaseWidth * wormScale() * 0.5;
+  function updateTonguePassengerSegmentContact(
+    link,
+    target,
+    tongueRadius,
+  ) {
     const collisionRadius = target.radius + tongueRadius;
     const collisionRadiusSquared = collisionRadius * collisionRadius;
-    let bestContact = null;
-    let bestDistanceSquared = Infinity;
-
-    for (let index = 1; index < points.length; index += 1) {
-      const start = points[index - 1];
-      const end = points[index];
-      const segmentX = end.x - start.x;
-      const segmentY = end.y - start.y;
-      const segmentLengthSquared =
-        segmentX * segmentX + segmentY * segmentY;
-      if (segmentLengthSquared <= 0.000001) continue;
-      const targetX = nearestPeriodicWorldX(
-        target.x,
-        (start.x + end.x) * 0.5,
-      );
-      const amount = clamp(
-        ((targetX - start.x) * segmentX +
-          (target.y - start.y) * segmentY) /
-          segmentLengthSquared,
-        0,
-        1,
-      );
-      const contactX = start.x + segmentX * amount;
-      const contactY = start.y + segmentY * amount;
-      const offsetX = targetX - contactX;
-      const offsetY = target.y - contactY;
-      const distanceSquared = offsetX * offsetX + offsetY * offsetY;
-      if (
-        distanceSquared > collisionRadiusSquared ||
-        distanceSquared >= bestDistanceSquared
-      ) {
-        continue;
-      }
-      const segmentLength = Math.sqrt(segmentLengthSquared);
-      const tangentX = segmentX / segmentLength;
-      const tangentY = segmentY / segmentLength;
-      const normalX = -segmentY / segmentLength;
-      const normalY = segmentX / segmentLength;
-      bestDistanceSquared = distanceSquared;
-      bestContact = {
-        segmentIndex: index,
-        segmentAmount: amount,
-        tangentOffset: offsetX * tangentX + offsetY * tangentY,
-        normalOffset: offsetX * normalX + offsetY * normalY,
-      };
+    if (!link.valid) return false;
+    const targetX = nearestPeriodicWorldX(
+      target.x,
+      link.midpointX,
+    );
+    const amount = clamp(
+      ((targetX - link.startX) * link.segmentX +
+        (target.y - link.startY) * link.segmentY) /
+        link.lengthSquared,
+      0,
+      1,
+    );
+    const contactX = link.startX + link.segmentX * amount;
+    const contactY = link.startY + link.segmentY * amount;
+    const offsetX = targetX - contactX;
+    const offsetY = target.y - contactY;
+    const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+    if (
+      distanceSquared > collisionRadiusSquared ||
+      distanceSquared >= target.tonguePassengerDistanceSquared
+    ) {
+      return false;
     }
-    return bestContact;
+    target.tonguePassengerDistanceSquared = distanceSquared;
+    target.tonguePassengerSegmentIndex = link.index;
+    target.tonguePassengerSegmentAmount = amount;
+    target.tonguePassengerTangentOffset =
+      offsetX * link.tangentX + offsetY * link.tangentY;
+    target.tonguePassengerNormalOffset =
+      offsetX * link.normalX + offsetY * link.normalY;
+    return true;
   }
 
   function positionTonguePassengers(tongue, geometry, dt) {
@@ -16530,6 +16619,19 @@
     }
   }
 
+  function beginTonguePassengerContactQuery() {
+    tonguePassengerContactScratch.length = 0;
+    tonguePassengerContactQueryId =
+      (tonguePassengerContactQueryId + 1) >>> 0;
+    if (tonguePassengerContactQueryId === 0) {
+      for (let index = 0; index < game.targets.length; index += 1) {
+        game.targets[index].tonguePassengerContactQueryId = 0;
+      }
+      tonguePassengerContactQueryId = 1;
+    }
+    return tonguePassengerContactQueryId;
+  }
+
   function stickTonguePassengers(
     tongue,
     primaryTarget,
@@ -16545,10 +16647,28 @@
     }
     const points = tongueFlexibleCenterlinePoints(geometry);
     const tongueRadius = TONGUE_RULES.outerBaseWidth * wormScale() * 0.5;
-    const queryId = beginTargetBroadphaseQuery();
+    const contactQueryId = beginTonguePassengerContactQuery();
     for (let index = 1; index < points.length; index += 1) {
       const start = points[index - 1];
       const end = points[index];
+      const link = tonguePassengerLinkScratch;
+      link.index = index;
+      link.startX = start.x;
+      link.startY = start.y;
+      link.segmentX = end.x - start.x;
+      link.segmentY = end.y - start.y;
+      link.midpointX = (start.x + end.x) * 0.5;
+      link.lengthSquared =
+        link.segmentX * link.segmentX + link.segmentY * link.segmentY;
+      link.valid = link.lengthSquared > 0.000001;
+      if (link.valid) {
+        const segmentLength = Math.sqrt(link.lengthSquared);
+        link.tangentX = link.segmentX / segmentLength;
+        link.tangentY = link.segmentY / segmentLength;
+        link.normalX = -link.segmentY / segmentLength;
+        link.normalY = link.segmentX / segmentLength;
+      }
+      const queryId = beginTargetBroadphaseQuery();
       collectTargetBroadphaseCandidates(
         Math.min(start.x, end.x) - tongueRadius,
         Math.min(start.y, end.y) - tongueRadius,
@@ -16556,13 +16676,41 @@
         Math.max(start.y, end.y) + tongueRadius,
         queryId,
       );
+      for (
+        let candidateIndex = 0;
+        candidateIndex < acidTargetCandidateScratch.length;
+        candidateIndex += 1
+      ) {
+        const target = acidTargetCandidateScratch[candidateIndex];
+        if (target.tonguePassengerContactQueryId !== contactQueryId) {
+          target.tonguePassengerContactQueryId = contactQueryId;
+          target.tonguePassengerDistanceSquared = Infinity;
+          target.tonguePassengerSegmentIndex = 0;
+          target.tonguePassengerSegmentAmount = 0;
+          target.tonguePassengerTangentOffset = 0;
+          target.tonguePassengerNormalOffset = 0;
+          tonguePassengerContactScratch.push(target);
+        }
+        updateTonguePassengerSegmentContact(
+          link,
+          target,
+          tongueRadius,
+        );
+      }
     }
 
-    for (let index = 0; index < acidTargetCandidateScratch.length; index += 1) {
-      const target = acidTargetCandidateScratch[index];
-      if (!tonguePassengerTargetCanStick(target, captureState)) continue;
-      const contact = tonguePassengerContact(points, target);
-      if (!contact) continue;
+    for (
+      let index = 0;
+      index < tonguePassengerContactScratch.length;
+      index += 1
+    ) {
+      const target = tonguePassengerContactScratch[index];
+      if (
+        !Number.isFinite(target.tonguePassengerDistanceSquared) ||
+        !tonguePassengerTargetCanStick(target, captureState)
+      ) {
+        continue;
+      }
       clearTristarRelationships(target);
       target.tongueCaptured = true;
       target.paralyzed = true;
@@ -16571,8 +16719,15 @@
       target.vy = 0;
       target.biteBounceCooldown = 0;
       tongue.passengers ||= [];
-      tongue.passengers.push({ target, ...contact });
+      tongue.passengers.push({
+        target,
+        segmentIndex: target.tonguePassengerSegmentIndex,
+        segmentAmount: target.tonguePassengerSegmentAmount,
+        tangentOffset: target.tonguePassengerTangentOffset,
+        normalOffset: target.tonguePassengerNormalOffset,
+      });
     }
+    tonguePassengerContactScratch.length = 0;
   }
 
   function beginTongueCapture(
@@ -16592,7 +16747,7 @@
             TONGUE_RULES.automaticLatchBoostCost)
       )
     ) {
-      tongue.targetId = null;
+      clearTongueTarget(tongue);
       return false;
     }
     clearTristarRelationships(target);
@@ -16673,6 +16828,8 @@
     );
     const ropeLength = Math.max(distanceToAnchor, articulatedLength);
     tongue.phase = "heavy-grappled";
+    activeHeavyTongueGrappleCache = tongue;
+    activeHeavyTongueGrappleCacheValid = true;
     tongue.grappleRopeLength = ropeLength;
     tongue.grappleInitialRopeLength = Math.max(0.001, ropeLength);
     tongue.grappleMaximumLength = Math.max(
@@ -16768,7 +16925,7 @@
       if (releasedTarget) releasedTarget.boostLatchHitboxDisabled = true;
       handOffHeavyGrappleBody(tongue);
     }
-    tongue.targetId = null;
+    clearTongueTarget(tongue);
     tongue.heavyHold = false;
     delete tongue.holdPointerId;
     tongue.holdRemaining = 0;
@@ -16816,7 +16973,7 @@
     const geometry = getTongueGeometry(tongue, tongue.progress);
     initializeTongueRetractionFromPose(tongue, geometry);
     handOffHeavyGrappleBody(tongue);
-    tongue.targetId = null;
+    clearTongueTarget(tongue);
     tongue.heavyHold = false;
     delete tongue.holdPointerId;
     tongue.holdRemaining = 0;
@@ -17306,7 +17463,7 @@
     );
     const selectionRadius = tongueTargetingRadius();
     if (selectedTargets.length === 0) {
-      game.tongues.push({
+      appendTongue({
         aimOnly: true,
         aimOffsetX: targetX - game.head.x,
         aimOffsetY: targetY - game.head.y,
@@ -17322,7 +17479,7 @@
       return true;
     }
     selectedTargets.forEach((selectedTarget) => {
-      game.tongues.push({
+      appendTongue({
         aimOffsetX: targetX - game.head.x,
         aimOffsetY: targetY - game.head.y,
         selectionX: targetX,
@@ -17371,7 +17528,7 @@
       phase: "extending",
       holdRemaining: 0,
     };
-    game.tongues.push(tongue);
+    appendTongue(tongue);
     return true;
   }
 
@@ -17513,13 +17670,10 @@
       wormBiteDamage() / TONGUE_RULES.passengerBiteForceDivisor;
     if (maximumHealth < MINIMUM_ENEMY_MAX_HEALTH) return null;
 
-    const claimedTargetIds = new Set();
+    const claimedTargetIds = activeTongueTargetCounts;
     let hasEligibleTongue = false;
     for (let index = 0; index < game.tongues.length; index += 1) {
       const tongue = game.tongues[index];
-      if (Number.isFinite(tongue.targetId)) {
-        claimedTargetIds.add(tongue.targetId);
-      }
       if (tongue.phase !== "extending") continue;
       const target = activeTongueTarget(tongue);
       if (target && target.kind !== ENEMY_TYPES.MEAT) {
@@ -19003,6 +19157,10 @@
   }
 
   function updatePhysics(dt) {
+    // Repair the compact ownership index once per frame as well as updating
+    // it at mutations. This keeps developer/test-injected tongues safe while
+    // every hot-path ownership query remains constant-time.
+    rebuildActiveTongueTargetCounts();
     const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
     const radius = wormDimension("collisionRadius");
     const previousVelocityX = game.velocity.x;
@@ -20547,6 +20705,8 @@
     game.activeWorldName = "";
     game.clouds = [];
     game.targets = [];
+    game.targetById.clear();
+    game.targetByIdReady = false;
     game.capturedTargets = [];
     game.meatTargetCount = 0;
     game.totalTargets = 0;
@@ -20561,6 +20721,9 @@
     game.roundSpawnRetryAt = 0;
     game.particles = [];
     game.tongues = [];
+    activeTongueTargetCounts.clear();
+    activeHeavyTongueGrappleCache = null;
+    activeHeavyTongueGrappleCacheValid = true;
     game.automaticTongueSearchCooldown = 0;
     game.latchAttack = null;
     game.onStoneSurface = false;
@@ -25053,16 +25216,18 @@
     };
   }
 
-  function traceTaperedTongueShape(
-    targetContext,
-    points,
-    baseWidth,
-    scale,
-  ) {
-    const { cumulativeLengths, totalLength } = tonguePathMetrics(points);
-    const leftEdge = [];
-    const rightEdge = [];
-    points.forEach((point, index) => {
+  function prepareTongueRenderMetrics(points, metrics) {
+    if (
+      metrics.normalXs?.length === points.length &&
+      metrics.normalYs?.length === points.length &&
+      metrics.taperScales?.length === points.length
+    ) {
+      return metrics;
+    }
+    const normalXs = new Array(points.length);
+    const normalYs = new Array(points.length);
+    const taperScales = new Array(points.length);
+    for (let index = 0; index < points.length; index += 1) {
       const previous = points[Math.max(0, index - 1)];
       const next = points[Math.min(points.length - 1, index + 1)];
       let tangentX = next.x - previous.x;
@@ -25070,34 +25235,47 @@
       const tangentLength = magnitude(tangentX, tangentY) || 1;
       tangentX /= tangentLength;
       tangentY /= tangentLength;
-      const progress = cumulativeLengths[index] / totalLength;
-      const halfWidth =
-        baseWidth *
-        scale *
-        Math.pow(Math.max(0, 1 - progress), TONGUE_RULES.taperExponent) *
-        0.5;
-      const normalX = -tangentY;
-      const normalY = tangentX;
-      leftEdge.push({
-        x: point.x + normalX * halfWidth,
-        y: point.y + normalY * halfWidth,
-      });
-      rightEdge.push({
-        x: point.x - normalX * halfWidth,
-        y: point.y - normalY * halfWidth,
-      });
-    });
+      normalXs[index] = -tangentY;
+      normalYs[index] = tangentX;
+      const progress = metrics.cumulativeLengths[index] / metrics.totalLength;
+      taperScales[index] = Math.pow(
+        Math.max(0, 1 - progress),
+        TONGUE_RULES.taperExponent,
+      );
+    }
+    metrics.normalXs = normalXs;
+    metrics.normalYs = normalYs;
+    metrics.taperScales = taperScales;
+    return metrics;
+  }
+
+  function traceTaperedTongueShape(
+    targetContext,
+    points,
+    baseWidth,
+    scale,
+    metrics = tonguePathMetrics(points),
+  ) {
+    prepareTongueRenderMetrics(points, metrics);
+    const halfBaseWidth = baseWidth * scale * 0.5;
 
     targetContext.beginPath();
-    targetContext.moveTo(leftEdge[0].x, leftEdge[0].y);
-    for (let index = 1; index < leftEdge.length; index += 1) {
-      targetContext.lineTo(leftEdge[index].x, leftEdge[index].y);
+    for (let index = 0; index < points.length; index += 1) {
+      const halfWidth = halfBaseWidth * metrics.taperScales[index];
+      const x = points[index].x + metrics.normalXs[index] * halfWidth;
+      const y = points[index].y + metrics.normalYs[index] * halfWidth;
+      if (index === 0) targetContext.moveTo(x, y);
+      else targetContext.lineTo(x, y);
     }
-    for (let index = rightEdge.length - 1; index >= 0; index -= 1) {
-      targetContext.lineTo(rightEdge[index].x, rightEdge[index].y);
+    for (let index = points.length - 1; index >= 0; index -= 1) {
+      const halfWidth = halfBaseWidth * metrics.taperScales[index];
+      targetContext.lineTo(
+        points[index].x - metrics.normalXs[index] * halfWidth,
+        points[index].y - metrics.normalYs[index] * halfWidth,
+      );
     }
     targetContext.closePath();
-    return { cumulativeLengths, totalLength };
+    return metrics;
   }
 
   function fillTaperedTongue(
@@ -25106,6 +25284,7 @@
     fillStyle,
     targetContext = ctx,
     scale = wormScale(),
+    metrics = null,
   ) {
     if (points.length < 2) return;
     traceTaperedTongueShape(
@@ -25113,14 +25292,31 @@
       points,
       baseWidth,
       scale,
+      metrics || tonguePathMetrics(points),
     );
     targetContext.fillStyle = fillStyle;
     targetContext.fill();
   }
 
-  function tonguePathSample(points, metrics, distance) {
+  function tonguePathSample(
+    points,
+    metrics,
+    distance,
+    startingSectionIndex = 1,
+    output = null,
+  ) {
     const targetDistance = clamp(distance, 0, metrics.totalLength);
-    let sectionIndex = 1;
+    let sectionIndex = clamp(
+      Math.floor(startingSectionIndex),
+      1,
+      metrics.cumulativeLengths.length - 1,
+    );
+    while (
+      sectionIndex > 1 &&
+      metrics.cumulativeLengths[sectionIndex - 1] > targetDistance
+    ) {
+      sectionIndex -= 1;
+    }
     while (
       sectionIndex < metrics.cumulativeLengths.length - 1 &&
       metrics.cumulativeLengths[sectionIndex] < targetDistance
@@ -25135,12 +25331,13 @@
     const amount = sectionLength > 0
       ? (targetDistance - sectionStart) / sectionLength
       : 0;
-    return {
-      x: lerp(previous.x, next.x, amount),
-      y: lerp(previous.y, next.y, amount),
-      angle: Math.atan2(next.y - previous.y, next.x - previous.x),
-      progress: targetDistance / Math.max(1, metrics.totalLength),
-    };
+    const sample = output || {};
+    sample.x = lerp(previous.x, next.x, amount);
+    sample.y = lerp(previous.y, next.y, amount);
+    sample.angle = Math.atan2(next.y - previous.y, next.x - previous.x);
+    sample.progress = targetDistance / Math.max(1, metrics.totalLength);
+    if (output) sample.sectionIndex = sectionIndex;
+    return sample;
   }
 
   function tongueTextureIsReady(texture) {
@@ -25157,25 +25354,41 @@
     texture,
     scale,
     spacing,
+    metrics = null,
+    visibleBounds = null,
+    alreadyClipped = false,
+    sampleStride = 1,
   ) {
     if (points.length < 2 || !tongueTextureIsReady(texture)) return;
-    const metrics = tonguePathMetrics(points);
-    targetContext.save();
-    traceTaperedTongueShape(
-      targetContext,
-      points,
-      TONGUE_RULES.outerBaseWidth,
-      scale,
-    );
-    targetContext.clip();
+    const pathMetrics = metrics || tonguePathMetrics(points);
+    if (!alreadyClipped) {
+      targetContext.save();
+      traceTaperedTongueShape(
+        targetContext,
+        points,
+        TONGUE_RULES.outerBaseWidth,
+        scale,
+        pathMetrics,
+      );
+      targetContext.clip();
+    }
     targetContext.imageSmoothingEnabled = true;
     const segmentWidth = spacing * 1.12;
+    const sample = {};
+    let sectionIndex = 1;
     for (
       let distance = spacing * 0.5;
-      distance < metrics.totalLength + spacing * 0.5;
-      distance += spacing
+      distance < pathMetrics.totalLength + spacing * 0.5;
+      distance += spacing * sampleStride
     ) {
-      const sample = tonguePathSample(points, metrics, distance);
+      tonguePathSample(
+        points,
+        pathMetrics,
+        distance,
+        sectionIndex,
+        sample,
+      );
+      sectionIndex = sample.sectionIndex;
       const segmentHeight =
         TONGUE_RULES.outerBaseWidth *
         scale *
@@ -25185,6 +25398,18 @@
         ) *
         1.04;
       if (segmentHeight < 0.05) continue;
+      const sampleRadius = Math.hypot(segmentWidth, segmentHeight) * 0.5;
+      if (
+        visibleBounds &&
+        (
+          sample.x + sampleRadius < visibleBounds.x ||
+          sample.x - sampleRadius > visibleBounds.x + visibleBounds.width ||
+          sample.y + sampleRadius < visibleBounds.y ||
+          sample.y - sampleRadius > visibleBounds.y + visibleBounds.height
+        )
+      ) {
+        continue;
+      }
       targetContext.save();
       targetContext.translate(sample.x, sample.y);
       targetContext.rotate(sample.angle);
@@ -25197,7 +25422,7 @@
       );
       targetContext.restore();
     }
-    targetContext.restore();
+    if (!alreadyClipped) targetContext.restore();
   }
 
   function drawTongueRingTextureSegments(
@@ -25206,24 +25431,40 @@
     texture,
     scale,
     spacing,
+    metrics = null,
+    visibleBounds = null,
+    alreadyClipped = false,
+    sampleStride = 1,
   ) {
     if (points.length < 2 || !tongueTextureIsReady(texture)) return;
-    const metrics = tonguePathMetrics(points);
-    targetContext.save();
-    traceTaperedTongueShape(
-      targetContext,
-      points,
-      TONGUE_RULES.outerBaseWidth,
-      scale,
-    );
-    targetContext.clip();
+    const pathMetrics = metrics || tonguePathMetrics(points);
+    if (!alreadyClipped) {
+      targetContext.save();
+      traceTaperedTongueShape(
+        targetContext,
+        points,
+        TONGUE_RULES.outerBaseWidth,
+        scale,
+        pathMetrics,
+      );
+      targetContext.clip();
+    }
     targetContext.imageSmoothingEnabled = true;
+    const sample = {};
+    let sectionIndex = 1;
     for (
       let distance = spacing;
-      distance < metrics.totalLength - spacing * 0.55;
-      distance += spacing
+      distance < pathMetrics.totalLength - spacing * 0.55;
+      distance += spacing * sampleStride
     ) {
-      const sample = tonguePathSample(points, metrics, distance);
+      tonguePathSample(
+        points,
+        pathMetrics,
+        distance,
+        sectionIndex,
+        sample,
+      );
+      sectionIndex = sample.sectionIndex;
       const ringHeight =
         TONGUE_RULES.outerBaseWidth *
         scale *
@@ -25233,6 +25474,18 @@
         ) *
         1.04;
       if (ringHeight < 0.05) continue;
+      const sampleRadius = Math.hypot(spacing, ringHeight) * 0.5;
+      if (
+        visibleBounds &&
+        (
+          sample.x + sampleRadius < visibleBounds.x ||
+          sample.x - sampleRadius > visibleBounds.x + visibleBounds.width ||
+          sample.y + sampleRadius < visibleBounds.y ||
+          sample.y - sampleRadius > visibleBounds.y + visibleBounds.height
+        )
+      ) {
+        continue;
+      }
       targetContext.save();
       targetContext.translate(sample.x, sample.y);
       targetContext.rotate(sample.angle);
@@ -25245,42 +25498,82 @@
       );
       targetContext.restore();
     }
-    targetContext.restore();
+    if (!alreadyClipped) targetContext.restore();
   }
 
-  function drawTongue(tongue) {
+  function drawTongue(
+    tongue,
+    visibleBounds = null,
+    textureSampleStride = 1,
+  ) {
     const geometry = getTongueGeometry(tongue);
     if (!geometry) return;
     const points = tongueCenterlinePoints(geometry);
+    const metrics = tonguePathMetrics(points);
+    const scale = wormScale();
+    const spacing =
+      wormSegmentSpacing() * TONGUE_RULES.segmentSpacingMultiplier;
     fillTaperedTongue(
       points,
       TONGUE_RULES.outerBaseWidth,
       palette.wormDark,
+      ctx,
+      scale,
+      metrics,
     );
     fillTaperedTongue(
       points,
       TONGUE_RULES.innerBaseWidth,
       palette.tongue,
+      ctx,
+      scale,
+      metrics,
     );
     fillTaperedTongue(
       points,
       TONGUE_RULES.highlightBaseWidth,
       palette.tongueHighlight,
-    );
-    drawTongueTextureSegments(
       ctx,
-      points,
-      wormSprites.tongue,
-      wormScale(),
-      wormSegmentSpacing() * TONGUE_RULES.segmentSpacingMultiplier,
+      scale,
+      metrics,
     );
-    drawTongueRingTextureSegments(
-      ctx,
-      points,
-      wormSprites.tongueRing,
-      wormScale(),
-      wormSegmentSpacing() * TONGUE_RULES.segmentSpacingMultiplier,
-    );
+    if (
+      tongueTextureIsReady(wormSprites.tongue) ||
+      tongueTextureIsReady(wormSprites.tongueRing)
+    ) {
+      ctx.save();
+      traceTaperedTongueShape(
+        ctx,
+        points,
+        TONGUE_RULES.outerBaseWidth,
+        scale,
+        metrics,
+      );
+      ctx.clip();
+      drawTongueTextureSegments(
+        ctx,
+        points,
+        wormSprites.tongue,
+        scale,
+        spacing,
+        metrics,
+        visibleBounds,
+        true,
+        textureSampleStride,
+      );
+      drawTongueRingTextureSegments(
+        ctx,
+        points,
+        wormSprites.tongueRing,
+        scale,
+        spacing,
+        metrics,
+        visibleBounds,
+        true,
+        textureSampleStride,
+      );
+      ctx.restore();
+    }
   }
 
   function acidParticleInVisibleBounds(particle, bounds, padding = 0) {
@@ -25607,7 +25900,23 @@
 
   function drawTongues() {
     if (!wormHasAbility(WORM_ABILITIES.TONGUE)) return;
-    game.tongues.forEach((tongue) => drawTongue(tongue));
+    const visibleBounds = getVisibleWorldBounds(
+      2 / Math.max(0.01, cameraZoom()),
+    );
+    const baseSpacing =
+      wormSegmentSpacing() * TONGUE_RULES.segmentSpacingMultiplier;
+    const estimatedStampsPerTongue =
+      Math.ceil(wormVisualLength() / Math.max(1, baseSpacing)) * 2;
+    const textureSampleStride = Math.max(
+      1,
+      Math.ceil(
+        (estimatedStampsPerTongue * game.tongues.length) /
+          TONGUE_RULES.targetRenderedTextureStamps,
+      ),
+    );
+    game.tongues.forEach((tongue) =>
+      drawTongue(tongue, visibleBounds, textureSampleStride),
+    );
   }
 
   function drawWorm(renderState = buildSpitterCraneRenderState()) {

@@ -293,6 +293,13 @@ Its layered silhouette begins thick at the rear-head anchor and continuously tap
 a pointed tip. A separate editable tongue-ring PNG repeats at each articulated joint
 along that silhouette. Every tongue layer is rendered behind the worm. Tongue rungs do not
 collide with terrain; only the selected enemy can trigger the new tip-capture behavior.
+Tongue target IDs and reservations use constant-time indexes while active, and incidental
+passenger contact is resolved only against the spatial-grid candidates beside each individual
+link while preserving the original target order and exact closest attachment point. Rendering
+shares each tongue's path measurements, skips fully offscreen texture stamps, and retains the
+full-resolution tapered silhouette. Only at extreme levels with many simultaneous tongues are
+the repeated decorative tongue and ring stamps evenly thinned to keep their Canvas draw-call
+count bounded; their colors, scale, route, motion, and continuous silhouette remain unchanged.
 
 Boost starts with 2 seconds at size level 0, increases to 3 seconds at level 1,
 and gains another second of capacity with every later size level. Movement boost drains
