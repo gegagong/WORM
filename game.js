@@ -557,6 +557,11 @@
     // Click-hunt guidance can reverse airborne momentum in one quarter-second.
     // This is angular steering only; it never adds speed.
     huntAirTurnRate: TAU * 2,
+    // A blocked or temporarily unavailable prey item can keep a circle alive
+    // indefinitely, so exponential growth is capped before it becomes
+    // numerically unstable while still reaching near-instant target alignment.
+    huntTurnDoublingTime: 1,
+    huntTurnMaximumMultiplier: 16,
     areaCompletionDuration: 0.48,
     // At Sprinter's higher launch speed this yields roughly twice Licker's
     // angular response and a meaningfully tighter full-boost turn radius.
@@ -647,7 +652,7 @@
       ability: WORM_ABILITIES.SPRINT,
       abilityLabel: "Click pursuit",
       description:
-        "Click to mark a mouth-sensor-sized hunting zone and pursue its easy and normal prey one by one with very high aerial turn speed. The camera flies to the zone and stays locked there for the hunt. Boost retains the normal hard-prey latch but does not auto-aim the Sprinter.",
+        "Click to mark a mouth-sensor-sized hunting zone and pursue its easy and normal prey one by one. Hunt steering starts very high, doubles each second up to 16×, and resets when the circle ends. The camera flies to the zone and stays locked there for the hunt. Boost retains the normal hard-prey latch but does not auto-aim the Sprinter.",
       scaling: Object.freeze({
         baseEntityScale: ENTITY_SCALE,
         scalePerLevel: SPRINTER_GROWTH_RULES.scalePerLevel,
@@ -15193,6 +15198,30 @@
       : null;
   }
 
+  function sprinterHuntTurnMultiplier(
+    command = activeSprinterAreaTarget(),
+  ) {
+    if (!command) return 1;
+    const doublingTime = Math.max(
+      0.001,
+      SPRINTER_RULES.huntTurnDoublingTime,
+    );
+    const maximumMultiplier = Math.max(
+      1,
+      SPRINTER_RULES.huntTurnMaximumMultiplier,
+    );
+    const maximumDoublings = Math.log2(maximumMultiplier);
+    const issuedAt = Number(command.issuedAt);
+    const startedAt = Number.isFinite(issuedAt)
+      ? issuedAt
+      : game.elapsed;
+    const elapsed = Math.max(
+      0,
+      game.elapsed - startedAt,
+    );
+    return 2 ** Math.min(maximumDoublings, elapsed / doublingTime);
+  }
+
   function clearSprinterAreaTarget(clearCompletion = false) {
     const hadTarget = Boolean(game.sprinterAreaTarget);
     const latch = game.latchAttack;
@@ -15688,6 +15717,9 @@
       motion.acceleration * BOOST_LATCH_RULES.approachAccelerationMultiplier;
     const turnSpeed =
       motion.groundTurnSpeed * BOOST_LATCH_RULES.approachTurnSpeedMultiplier;
+    const huntTurnMultiplier = latch.areaHunt
+      ? sprinterHuntTurnMultiplier()
+      : 1;
 
     for (let step = 0; step < substeps; step += 1) {
       const visualHeadX = game.head.x + Math.cos(game.heading) * headOffset;
@@ -15711,7 +15743,7 @@
       // so a fast Sprinter can flow through an off-axis group without
       // orbiting a nearby target or shedding its accumulated momentum. The
       // head offset bounds point-blank angular steps around the body pivot.
-      const activeTurnSpeed = latch.captureOnArrival
+      const baseActiveTurnSpeed = latch.captureOnArrival
         ? Math.max(
             turnSpeed,
             (game.speed *
@@ -15723,6 +15755,8 @@
               ),
           )
         : turnSpeed;
+      const activeTurnSpeed =
+        baseActiveTurnSpeed * huntTurnMultiplier;
       game.heading += clamp(
         angleDifference,
         -activeTurnSpeed * stepTime,
@@ -18501,6 +18535,9 @@
         activeWormScaling().stoneLocomotionScalePerLevel;
     const boostTurnScale = game.boosting ? wormBoostSpeedMultiplier() : 1;
     const activeTurnScale = levelTurnScale * boostTurnScale;
+    const huntTurnMultiplier = areaTarget
+      ? sprinterHuntTurnMultiplier()
+      : 1;
     const targetSpeed = keys.down
       ? 0
       : accelerating
@@ -18578,7 +18615,10 @@
       Math.cos(targetHeading - game.heading),
     );
     const maximumHeadingChange =
-      STONE_RULES.surfaceHeadTurnSpeed * activeTurnScale * dt;
+      STONE_RULES.surfaceHeadTurnSpeed *
+      activeTurnScale *
+      huntTurnMultiplier *
+      dt;
     game.heading += clamp(
       headingDifference,
       -maximumHeadingChange,
@@ -19190,7 +19230,8 @@
         steerAirborneVelocityTowardTarget(
           sprinterAreaPursuit,
           dt,
-          SPRINTER_RULES.huntAirTurnRate,
+          SPRINTER_RULES.huntAirTurnRate *
+            sprinterHuntTurnMultiplier(sprinterAreaTarget),
         ),
       );
       if (

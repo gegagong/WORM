@@ -56,8 +56,11 @@ value, with distance and target ID breaking ties, and the selected victim remain
 it is caught, leaves the zone, or becomes unavailable. New easy or normal prey can enter the
 active zone and join the hunt. Underground and stone-surface pursuit uses Sprinter's full boost
 speed and normal boost drain without requiring held movement input; in open air, click guidance
-can rotate existing momentum at up to two full turns per second, so it tracks prey very quickly
-while adding neither speed nor boost drain. Prey use the ordinary contact, chew, score, and
+starts at two full turns per second while adding neither speed nor boost drain. For as long as
+the same hunt circle remains active, its turn-speed multiplier doubles every simulated second
+up to 16×. The multiplier carries across prey handoffs and applies to underground interception,
+stone-surface head alignment, and airborne guidance; a new click restarts it at 1×, while ending
+or cancelling the circle removes it immediately. Prey use the ordinary contact, chew, score, and
 boost-restoration flow. Stone collisions redirect the
 run or transition it into guided surface travel without discarding the zone. Braking, exhausting
 boost, opening a menu, resetting, or changing worm type cancels the command. Each simulated
@@ -199,7 +202,8 @@ underground; airborne momentum continues until re-entry.
 Sprinter applies three times the normal airborne turn force, giving its faster boosted
 breaches roughly twice the angular response of the other worms at their boosted speed.
 While an active click hunt has selected prey, its separate guidance can turn existing
-airborne momentum by up to two full rotations per second without accelerating.
+airborne momentum without accelerating. It begins at two full rotations per second and uses
+the active circle's exponential turn-speed multiplier.
 Airborne gravity is fixed at 775 world pixels per second squared, increased from 515.
 Ordinary airborne movement and tongue-grapple freefall use this same downward
 acceleration.
