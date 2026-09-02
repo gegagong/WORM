@@ -122,13 +122,16 @@ and two new segments per level for three every two levels.
 Entity scaling does not alter world coordinates, the 12 px terrain grid, material
 textures, stone contours, camera framing, movement speeds, scores, or health values.
 The top-left HUD contains a large circular radar in place of the prototype logo. Its
-240 × 240 display scales down at narrow breakpoints and uses a black screen with red
+300 × 300 display scales down at narrow breakpoints without changing the world-space
+range shown, and uses a black screen with red and yellow-orange
 returns. Every two gameplay seconds it freezes a local snapshot of nearby terrain,
 tunnels, enemies, and meat in world space. Enemies currently classified as normal or
 hard prey appear as proportionally scaled red miniatures of their on-screen form: they
 retain the active animation frame, facing or rotation, capture shrink, and—on normal or
-hard Tri-Stars—the current arm pose and pulsing triangular body. Only easy prey and meat
-use compact red dot returns. The return type is frozen at ping time from the enemy's
+hard Tri-Stars—the current arm pose and pulsing triangular body. Easy enemies use
+yellow-orange dot returns whose radii scale with the fifth root of their point value,
+with the 1-point beetle retaining the previous smallest enemy-dot size. Meat keeps its
+separate compact red return. The return type is frozen at ping time from the enemy's
 maximum health and the worm's current bite force, just like the pose itself. The previous
 scan remains as a fading echo, so movement and newly dug terrain leave a short-lived
 afterimage instead of updating continuously.
@@ -304,7 +307,11 @@ count bounded; their colors, scale, route, motion, and continuous silhouette rem
 Boost starts with 2 seconds at size level 0, increases to 3 seconds at level 1,
 and gains another second of capacity with every later size level. Movement boost drains
 one second of charge per second, while Spitter's acid drains two; using both simultaneously
-drains three. Charge recharges at one second per second after the relevant controls are
+drains three. While a Spitter is locked into the biting phase of a hard-prey latch, its
+acid hose activates automatically and coats that target's near-facing surface with physical
+particles. Those particles retain the normal attachment lifetime and damage behavior, and
+the automatic hose adds the usual acid drain to the latch's movement-boost drain. Charge
+recharges at one second per second after the relevant controls are
 released. Holding the acid input after depletion blocks recharge and prevents intermittent
 single-particle sputtering until the input is released. Completing the ordinary head-contact
 eating animation restores 0.1 seconds of boost for every point carried by the consumed enemy

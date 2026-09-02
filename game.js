@@ -4,7 +4,7 @@
   const canvas = document.querySelector("#game");
   const ctx = canvas.getContext("2d", { alpha: false });
   const gameShell = document.querySelector(".game-shell");
-  const MINIMAP_PIXEL_SIZE = 240;
+  const MINIMAP_PIXEL_SIZE = 300;
   // Terrain is deliberately sampled below display resolution so a radar ping
   // remains comfortably inside a 180 Hz frame; nearest scaling suits the grid.
   const MINIMAP_TERRAIN_SAMPLE_SIZE = 120;
@@ -127,7 +127,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260824-sprinter-v8";
+    const styleUrl = "./styles.css?v=20260901-larger-radar-v9";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -626,7 +626,7 @@
       ability: WORM_ABILITIES.ACID,
       abilityLabel: "Acid hose",
       description:
-        "Cranes toward the pointer and pours a persistent stream of damaging acid.",
+        "Cranes toward the pointer and pours a persistent stream of damaging acid. A bite latch automatically coats its target.",
       scaling: Object.freeze({
         baseEntityScale: ENTITY_SCALE,
         scalePerLevel: SPITTER_GROWTH_RULES.scalePerLevel,
@@ -1691,6 +1691,8 @@
   const MINIMAP_RULES = Object.freeze({
     width: MINIMAP_PIXEL_SIZE,
     height: MINIMAP_PIXEL_SIZE,
+    minimumEnemyDotRadiusPixels: 1.8,
+    meatDotRadiusPixels: 1.3,
     scanInterval: 2,
     echoLifetime: 4,
     maximumEchoes: 2,
@@ -1715,6 +1717,7 @@
     stone: Object.freeze([255, 0, 0, 180]),
   });
   const MINIMAP_RADAR_RED = "rgb(255, 0, 0)";
+  const MINIMAP_RADAR_EASY = "rgb(255, 174, 0)";
   const minimapTerrainSampleCanvas = document.createElement("canvas");
   minimapTerrainSampleCanvas.width = MINIMAP_TERRAIN_SAMPLE_SIZE;
   minimapTerrainSampleCanvas.height = MINIMAP_TERRAIN_SAMPLE_SIZE;
@@ -1795,6 +1798,7 @@
       bounds: { x: 0, y: 0, width: 1, height: 1 },
       phase: 0,
       entryIndex: 0,
+      redReturnsTinted: false,
     },
     wormPoints: [],
     wormFitScale: 1,
@@ -4455,6 +4459,9 @@
     const zoom = cameraZoom();
     const visibleWidth = game.viewport.width / zoom;
     const visibleHeight = game.viewport.height / zoom;
+    // The pixel dimensions cancel when converted back into bounds below, so
+    // enlarging the radar increases display resolution without changing its
+    // existing world-space range.
     const worldUnitsPerPixel =
       Math.max(
         visibleWidth / MINIMAP_RULES.width,
@@ -4490,10 +4497,21 @@
   }
 
   function minimapRadarDotRadiusPixels(kind) {
-    if (kind === ENEMY_TYPES.VULTURE) return 2.7;
-    if (kind === ENEMY_TYPES.TRISTAR) return 2.5;
-    if (kind === ENEMY_TYPES.MEAT) return 1.3;
-    return 1.8;
+    if (kind === ENEMY_TYPES.MEAT) {
+      return MINIMAP_RULES.meatDotRadiusPixels;
+    }
+    const beetlePoints = ENEMY_DEFINITIONS[ENEMY_TYPES.BEETLE].score;
+    const enemyPoints = Math.max(
+      beetlePoints,
+      ENEMY_DEFINITIONS[kind]?.score || beetlePoints,
+    );
+    // Fifth-root radius scaling keeps point value legible without allowing
+    // high-value easy prey to dominate the radar. Beetles retain the previous
+    // smallest enemy-dot radius because their point-value ratio is exactly 1.
+    return MINIMAP_RULES.minimumEnemyDotRadiusPixels * Math.pow(
+      enemyPoints / beetlePoints,
+      0.2,
+    );
   }
 
   function fillMinimapRadarTargetEntries(bounds) {
@@ -4754,16 +4772,20 @@
     let clockCheckCount = 0;
     let drewReturn = false;
     let dotPathOpen = false;
+    let dotPathColor = MINIMAP_RADAR_RED;
     scanWork:
-    while (job.phase < 3) {
+    while (job.phase < 4) {
       if (job.entryIndex >= entryCount) {
         if (dotPathOpen) {
-          targetContext.fillStyle = MINIMAP_RADAR_RED;
+          targetContext.fillStyle = dotPathColor;
           targetContext.fill();
           dotPathOpen = false;
         }
         job.phase += 1;
         job.entryIndex = 0;
+        // Tint sprite silhouettes and red dot fallbacks before yellow-orange
+        // easy-enemy dots are added in the final scan phase.
+        if (job.phase === 3 && !job.redReturnsTinted) break scanWork;
         continue;
       }
       const entry = entries[job.entryIndex];
@@ -4783,8 +4805,9 @@
       } else if (
         job.phase === 1 &&
         (
-          !entry.miniatureReturn ||
+          entry.kind === ENEMY_TYPES.MEAT ||
           (
+            entry.miniatureReturn &&
             entry.kind !== ENEMY_TYPES.TRISTAR &&
             !entry.radarSpriteReady
           )
@@ -4793,6 +4816,7 @@
         if (!dotPathOpen) {
           targetContext.beginPath();
           dotPathOpen = true;
+          dotPathColor = MINIMAP_RADAR_RED;
         }
         appendMinimapRadarDot(entry, targetContext, worldUnitsPerPixel);
         workUnits += 1;
@@ -4822,6 +4846,19 @@
         );
         workUnits += 2;
         drewReturn = true;
+      } else if (
+        job.phase === 3 &&
+        !entry.miniatureReturn &&
+        entry.kind !== ENEMY_TYPES.MEAT
+      ) {
+        if (!dotPathOpen) {
+          targetContext.beginPath();
+          dotPathOpen = true;
+          dotPathColor = MINIMAP_RADAR_EASY;
+        }
+        appendMinimapRadarDot(entry, targetContext, worldUnitsPerPixel);
+        workUnits += 1;
+        drewReturn = true;
       }
       clockCheckCount += 1;
       if (
@@ -4838,7 +4875,7 @@
       }
     }
     if (dotPathOpen) {
-      targetContext.fillStyle = MINIMAP_RADAR_RED;
+      targetContext.fillStyle = dotPathColor;
       targetContext.fill();
     }
     targetContext.restore();
@@ -4846,14 +4883,17 @@
     // Force deferred canvas commands to rasterize inside this bounded slice,
     // rather than accumulating into one large hitch at final composition.
     if (drewReturn) flushMinimapRadarCanvas(targetContext);
-    if (job.phase < 3) return false;
-
-    targetContext.save();
-    targetContext.globalCompositeOperation = "source-in";
-    targetContext.fillStyle = MINIMAP_RADAR_RED;
-    targetContext.fillRect(0, 0, width, height);
-    targetContext.restore();
-    flushMinimapRadarCanvas(targetContext);
+    if (job.phase === 3 && !job.redReturnsTinted) {
+      targetContext.save();
+      targetContext.globalCompositeOperation = "source-in";
+      targetContext.fillStyle = MINIMAP_RADAR_RED;
+      targetContext.fillRect(0, 0, width, height);
+      targetContext.restore();
+      flushMinimapRadarCanvas(targetContext);
+      job.redReturnsTinted = true;
+      return false;
+    }
+    if (job.phase < 4) return false;
 
     const echo = job.echo;
     const echoContext = echo.context;
@@ -4876,6 +4916,7 @@
     job.echo = null;
     job.phase = 0;
     job.entryIndex = 0;
+    job.redReturnsTinted = false;
     minimapState.radarTargetEntryCount = 0;
     return true;
   }
@@ -4901,6 +4942,7 @@
     scanJob.sampledAt = -Infinity;
     scanJob.phase = 0;
     scanJob.entryIndex = 0;
+    scanJob.redReturnsTinted = false;
     minimapState.radarTargetEntryCount = 0;
     minimapState.mapRevision = -1;
     minimapState.lastScanTime = -Infinity;
@@ -5023,6 +5065,7 @@
     scanJob.bounds.height = bounds.height;
     scanJob.phase = 0;
     scanJob.entryIndex = 0;
+    scanJob.redReturnsTinted = false;
     minimapState.mapRevision = game.minimapMapRevision;
     minimapState.lastScanTime = scanTime;
     return true;
@@ -9263,8 +9306,28 @@
     );
   }
 
+  function spitterAutomaticLatchAcidTarget() {
+    const latch = game.latchAttack;
+    if (
+      !wormHasAbility(WORM_ABILITIES.ACID) ||
+      latch?.phase !== "biting" ||
+      latch.releasePending ||
+      latch.targetDefeated ||
+      latch.target?.health <= 0
+    ) {
+      return null;
+    }
+    return latch.target;
+  }
+
+  function spitterSprayRequested() {
+    return Boolean(
+      spitterSprayControlHeld() || spitterAutomaticLatchAcidTarget(),
+    );
+  }
+
   function spitterSprayIsActive() {
-    return game.acidSpraying && spitterSprayControlHeld();
+    return game.acidSpraying && spitterSprayRequested();
   }
 
   function spitterHasHeadGuidedAcid() {
@@ -9288,6 +9351,13 @@
   }
 
   function spitterAimWorldPoint() {
+    const latchTarget = spitterAutomaticLatchAcidTarget();
+    if (latchTarget) {
+      return {
+        x: nearestPeriodicWorldX(latchTarget.x, game.head.x),
+        y: latchTarget.y,
+      };
+    }
     const zoom = cameraZoom();
     return {
       x:
@@ -13660,7 +13730,7 @@
     game.acidParticlePool.push(particle);
   }
 
-  function spawnAcidParticle(nozzle) {
+  function spawnAcidParticle(nozzle, automaticLatchTarget = null) {
     if (game.acidParticles.length >= ACID_RULES.maximumParticles) return false;
     const particle = game.acidParticlePool.pop() || {};
     const sizeScale = acidParticleSizeScale();
@@ -13761,11 +13831,35 @@
     particle.linkGeneration = particle.link?.generation ?? -1;
     game.acidLastEmittedParticle = particle;
     game.acidParticles.push(particle);
+    if (
+      automaticLatchTarget &&
+      acidTargetCanHoldParticle(automaticLatchTarget)
+    ) {
+      const targetX = nearestPeriodicWorldX(
+        automaticLatchTarget.x,
+        nozzle.x,
+      );
+      const targetOffsetX = nozzle.x - targetX;
+      const targetOffsetY = nozzle.y - automaticLatchTarget.y;
+      let normalAngle =
+        magnitude(targetOffsetX, targetOffsetY) > 0.0001
+          ? Math.atan2(targetOffsetY, targetOffsetX)
+          : nozzle.angle + Math.PI;
+      normalAngle +=
+        (Math.random() * 2 - 1) * ACID_RULES.spreadAngle * 2;
+      attachAcidParticleToTarget(
+        particle,
+        automaticLatchTarget,
+        Math.cos(normalAngle),
+        Math.sin(normalAngle),
+      );
+    }
     return true;
   }
 
   function emitSpitterAcid(dt, nozzlePose = null) {
     if (!spitterSprayIsActive()) return;
+    const automaticLatchTarget = spitterAutomaticLatchAcidTarget();
     game.acidEmissionAccumulator = Math.min(
       ACID_RULES.maximumEmissionsPerFrame,
       game.acidEmissionAccumulator + acidParticlesPerSecond() * dt,
@@ -13777,7 +13871,10 @@
     if (emissionCount <= 0) return;
     const nozzle = nozzlePose || spitterAcidNozzlePose();
     let emitted = 0;
-    while (emitted < emissionCount && spawnAcidParticle(nozzle)) {
+    while (
+      emitted < emissionCount &&
+      spawnAcidParticle(nozzle, automaticLatchTarget)
+    ) {
       emitted += 1;
       game.acidEmissionAccumulator -= 1;
     }
@@ -15703,6 +15800,13 @@
     game.speed = 0;
     game.velocity.x = 0;
     game.velocity.y = 0;
+    if (wormHasAbility(WORM_ABILITIES.ACID)) {
+      game.spitterAimAngle = latch.lockAngle;
+      game.acidEmissionAccumulator = Math.max(
+        1,
+        game.acidEmissionAccumulator,
+      );
+    }
     triggerMouthBite(BOOST_LATCH_RULES.bitesPerAttack);
   }
 
@@ -19181,9 +19285,11 @@
     game.previous.y = game.head.y;
     game.previousEatHitbox = getEatHitboxPose();
     const acidSprayHeld = spitterSprayControlHeld();
+    const acidSprayRequested =
+      acidSprayHeld || Boolean(spitterAutomaticLatchAcidTarget());
     // Snapshot availability before this frame's drain so the final funded
     // frame still emits normally, just like the final movement-boost frame.
-    game.acidSpraying = acidSprayHeld && game.boostCharge > 0;
+    game.acidSpraying = acidSprayRequested && game.boostCharge > 0;
     const stoneSurfaceContact = activeStoneSurfaceContact();
     const heavyTongueGrapple = activeHeavyTongueGrapple();
     let stoneSurfaceActive = false;
@@ -19302,7 +19408,7 @@
         0,
         game.boostCharge - boostDrainRate * dt,
       );
-    } else if (!keys.boost && !acidSprayHeld) {
+    } else if (!keys.boost && !acidSprayRequested) {
       game.boostCharge = Math.min(
         boostCapacity(),
         game.boostCharge + BOOST_RULES.rechargeRate * dt,
