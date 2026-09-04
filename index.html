@@ -8,7 +8,7 @@
       content="WORM — a tiny, high-speed underground flight experiment."
     />
     <title>WORM — Dig. Launch. Dive.</title>
-    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260901-larger-radar-v9" />
+    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260902-worm-health-hud-v12" />
     <link rel="preload" as="image" href="./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-upper.png?v=20260815-shared-current-default" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-lower.png?v=20260815-shared-current-default" />
@@ -35,6 +35,24 @@
         <section class="minimap" id="minimap" aria-label="Local radar">
           <canvas id="minimap-canvas" width="300" height="300"></canvas>
           <span class="minimap-label">Radar</span>
+        </section>
+
+        <section class="worm-health-hud" id="worm-health-hud" aria-label="Worm health">
+          <div class="worm-health-heading">
+            <span>Health</span>
+            <strong><span id="worm-health">100</span> / <span id="worm-health-maximum">100</span></strong>
+          </div>
+          <div
+            class="worm-health-meter"
+            id="worm-health-meter"
+            role="progressbar"
+            aria-label="Worm health remaining"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="100"
+          >
+            <span id="worm-health-meter-fill"></span>
+          </div>
         </section>
 
         <div class="telemetry">
@@ -133,6 +151,26 @@
             </button>
             <button class="game-menu-home" id="menu-return-home" type="button">
               <strong>Return home</strong><small>Unload this world and return to selection</small>
+            </button>
+          </nav>
+        </div>
+      </section>
+
+      <section class="game-menu death-screen" id="death-screen" aria-hidden="true">
+        <div class="game-menu-card death-screen-card" role="dialog" aria-modal="true" aria-labelledby="death-screen-title">
+          <header class="game-menu-heading death-screen-heading">
+            <div>
+              <p class="eyebrow">Run ended</p>
+              <h2 id="death-screen-title">Devoured</h2>
+            </div>
+          </header>
+          <p class="death-screen-summary" id="death-screen-summary">The Tri-Star consumed the worm.</p>
+          <nav class="game-menu-actions death-screen-actions" aria-label="Death options">
+            <button class="game-menu-primary" id="death-restart" type="button">
+              <strong>Restart</strong><small>Begin this world again</small>
+            </button>
+            <button class="game-menu-home" id="death-return-home" type="button">
+              <strong>Return home</strong><small>Choose another worm or world</small>
             </button>
           </nav>
         </div>
@@ -459,12 +497,12 @@
             <section
               class="worm-acid-palette"
               id="worm-acid-palette"
-              aria-label="Spitter acid gradient colors"
+              aria-label="Spitter acid particle colors"
               hidden
             >
               <div class="worm-acid-palette-heading">
-                <strong>Acid gradient</strong>
-                <small>Color 1 → 2 → 3 → 1</small>
+                <strong>Acid colors</strong>
+                <small>Each particle picks 1, 2, or 3</small>
               </div>
               <div
                 class="worm-acid-gradient-preview"
@@ -472,33 +510,33 @@
                 aria-hidden="true"
               ></div>
               <label>
-                <span><strong>Color 1</strong><small>First stop</small></span>
+                <span><strong>Color 1</strong><small>Flat particle color</small></span>
                 <input
                   id="worm-acid-color-1"
                   data-worm-acid-color="0"
                   type="color"
                   value="#260b31"
-                  aria-label="Acid gradient color 1"
+                  aria-label="Acid particle color 1"
                 />
               </label>
               <label>
-                <span><strong>Color 2</strong><small>Second stop</small></span>
+                <span><strong>Color 2</strong><small>Flat particle color</small></span>
                 <input
                   id="worm-acid-color-2"
                   data-worm-acid-color="1"
                   type="color"
                   value="#451653"
-                  aria-label="Acid gradient color 2"
+                  aria-label="Acid particle color 2"
                 />
               </label>
               <label>
-                <span><strong>Color 3</strong><small>Third stop</small></span>
+                <span><strong>Color 3</strong><small>Flat particle color</small></span>
                 <input
                   id="worm-acid-color-3"
                   data-worm-acid-color="2"
                   type="color"
                   value="#5b246c"
-                  aria-label="Acid gradient color 3"
+                  aria-label="Acid particle color 3"
                 />
               </label>
             </section>
@@ -594,6 +632,6 @@
 
     </main>
 
-    <script src="./game.js?v=20260901-spitter-latch-acid-v31"></script>
+    <script src="./game.js?v=20260902-tristar-lethal-devour-v43"></script>
   </body>
 </html>

@@ -113,6 +113,67 @@ button {
   text-transform: uppercase;
 }
 
+.worm-health-hud {
+  position: absolute;
+  top: 28px;
+  left: 50%;
+  display: grid;
+  width: clamp(260px, 30vw, 560px);
+  gap: 6px;
+  padding: 9px 12px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: rgba(248, 240, 221, 0.9);
+  box-shadow: 6px 6px 0 rgba(115, 33, 12, 0.2);
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+
+.worm-health-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--ink);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.worm-health-heading strong {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.worm-health-meter {
+  height: 25px;
+  overflow: hidden;
+  border: 3px solid var(--ink);
+  border-radius: 2px;
+  background: rgba(115, 33, 12, 0.2);
+}
+
+.worm-health-meter > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--acid);
+  transform: scaleX(1);
+  transform-origin: left center;
+  transition: transform 120ms linear, background-color 160ms ease;
+}
+
+.worm-health-hud.injured .worm-health-meter > span {
+  background: var(--sun);
+}
+
+.worm-health-hud.critical .worm-health-meter > span {
+  background: var(--rust);
+}
+
 .telemetry {
   display: flex;
   align-items: center;
@@ -577,6 +638,39 @@ kbd {
   font: 700 8px/1.35 "Courier New", monospace;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.death-screen {
+  z-index: 12;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(207, 2, 12, 0.22), transparent 34%),
+    rgba(24, 16, 17, 0.88);
+}
+
+.death-screen-card {
+  width: min(480px, 100%);
+  box-shadow: 12px 12px 0 rgba(207, 2, 12, 0.2);
+}
+
+.death-screen-heading {
+  border-bottom-color: var(--rust);
+}
+
+.death-screen-heading h2 {
+  color: var(--rust);
+}
+
+.death-screen-summary {
+  margin: 0;
+  padding: 18px 22px 2px;
+  color: rgba(24, 34, 29, 0.72);
+  font: 700 10px/1.5 "Courier New", monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.death-screen-actions .game-menu-home {
+  grid-column: 1 / -1;
 }
 
 .enemy-info-overlay {
@@ -1568,10 +1662,9 @@ kbd {
   border: 1px solid rgba(248, 240, 221, 0.38);
   background: linear-gradient(
     90deg,
-    var(--acid-color-1, #260b31) 0%,
-    var(--acid-color-2, #451653) 33.333%,
-    var(--acid-color-3, #5b246c) 66.667%,
-    var(--acid-color-1, #260b31) 100%
+    var(--acid-color-1, #260b31) 0 33.333%,
+    var(--acid-color-2, #451653) 33.333% 66.667%,
+    var(--acid-color-3, #5b246c) 66.667% 100%
   );
 }
 
@@ -2067,6 +2160,11 @@ kbd {
     height: 220px;
   }
 
+  .worm-health-hud {
+    top: 250px;
+    width: min(420px, calc(100vw - 36px));
+  }
+
   .telemetry {
     gap: 10px;
     padding: 8px 10px;
@@ -2267,6 +2365,11 @@ kbd {
     left: 50%;
     padding: 2px 4px;
     font-size: 7px;
+  }
+
+  .worm-health-hud {
+    top: 174px;
+    width: calc(100vw - 24px);
   }
 
   .telemetry {

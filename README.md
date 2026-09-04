@@ -68,14 +68,17 @@ second of Spitter's active spraying consumes two seconds of boost charge; using 
 the same time raises the combined drain to three seconds of charge per second. Each simulated
 acid carrier sticks to the first enemy hurtbox it sweeps into, refreshes its original
 randomized lifespan, and follows that contact point until it dissolves or its host
-disappears. A stuck carrier continuously
-contributes 1/10 of the previous baseline rate of one current bite-force value every
-0.25 seconds, so physical carriers stack and exactly 10 reproduce that baseline. The
-extra droplets baked into each carrier's liquid texture are decorative and do not add
+disappears. The hose emits five times its former number of physical carriers: 390 per
+second at level 0, scaling to a 600-per-second cap. Each stuck carrier contributes one
+fifth of its former individual damage, preserving approximately the same sustained damage
+when the same share of the denser stream connects. The extra droplets baked into each
+carrier's cluster are decorative and do not add
 damage. Acid inherits the worm's full launch velocity, then travels at half speed and
 receives frame-rate-independent friction while underground. At emission, each acid carrier chooses its randomized local
 direction once and travels at that unchanged initial speed along a straight launch guide
-fixed to the translating and rotating rendered head. The guide is one full head-image
+whose base stays fixed to the throat hinge. The guide keeps its own angular velocity, lags
+behind head turns, and is continually spring-corrected toward the mouth's centerline; its
+relative angle is clamped between the two visibly open jaws. The guide is one full head-image
 width long; at its edge the carrier enters world physics with the guide's final direction
 and combines that rotated jet with the worm's actual movement velocity. The visual crane's
 translation and angular lever-arm motion do not add a second turning kick. Releasing the input stops new
@@ -90,9 +93,9 @@ Acid lasts
 0.8–1.1 seconds
 at level 0 and 4.3–4.6 seconds at level 100. Its physical carriers are rendered as
 compact clusters joined by broad batched ribbons. On spawn, each carrier randomly selects
-one of 24 evenly spaced colors around the saved Color 1 → Color 2 → Color 3 → Color 1
-gradient and retains that color for its lifetime. Seven density atlases bake the selected
-colors into seamless mottled cluster tiles, preserving one sprite draw per visible carrier;
+one of the three saved colors and retains that exact flat color for its lifetime. Seven
+density atlases bake eight randomized cluster geometries for each selected color,
+preserving one sprite draw per visible carrier;
 the connective ribbon remains one dark-neutral batched fill. This keeps the hose cohesive
 without increasing simulated particle count, damage hitboxes, or per-frame draw calls.
 
@@ -361,7 +364,7 @@ it encounters. Running the worm's head through an enemy eats it, produces a burs
 reduces the remaining-target count. Collision checks follow the full distance traveled
 by the head each frame so enemies still register at maximum speed.
 
-Tri-Stars are neutral, three-armed underground predators with an equilateral triangular
+Tri-Stars are three-armed underground predators with an equilateral triangular
 core, 120 HP, and a 200-point value. Each arm begins as wide as its attached triangle side,
 tapers segment by segment to a point, and has 24 equal-length links over a 250-pixel resting
 reach. A prey-directed arm can elastically lengthen those links by up to five percent.
@@ -389,6 +392,14 @@ slows the body, and its speed remains capped at 600 pixels per second. The burst
 one or two arms are carrying prey and is suppressed entirely when all three are occupied.
 Tentacle inertia makes the released fan flare and trail naturally, while dangling-arm
 separation and the joint limits remain authoritative throughout the pulse.
+When the core overlaps the camera viewport, terrain steering samples its forward point and
+both forward flanks rather than only its center. Candidate turns that would lead any of that
+footprint into an air or stone block are rejected during both launch planning and coast
+movement. Visible planning looks at least eight terrain blocks ahead even from rest, wider
+fallback turns search behind the desired direction, and the pulse stops if no ground-safe
+heading exists. Tri-Stars outside the camera use the original short center-point ray and
+center-cell movement validation, including in lightweight off-minimap pursuit, so detailed
+air avoidance adds no per-path footprint probes to unseen predators.
 Every moving Tri-Star core in the circular minimap's normal-simulation area leaves the
 same longer-lived dark soil tunnel as the worm. The lightweight off-minimap ecology omits
 terrain mutation so a remote worst-case population cannot overwhelm the frame budget or
@@ -397,7 +408,31 @@ current or swept geometry crosses the actual camera viewport. Arm carving is ski
 outside the screen and uses a separate frame-rate-scaled terrain budget with a short-lived
 deferred queue. Terrain contact is sampled at a phase-staggered 60 Hz while the arms still
 animate every frame; saved-pose sweeps preserve motion between samples without spending the
-player's acid budget.
+player’s acid budget.
+
+When any part of a Tri-Star's full arm-and-core footprint enters the screen and its maximum
+health still classifies it as hard prey, it immediately drops any ecological prey occupying
+its arms, clears the old plan, and prioritizes the nearest segment in the head-side third of the
+worm's body. That same head-side third is the only part its arm tip can grab; contact with the
+remaining rear two-thirds is ignored. Inside arm reach it compares the live root-to-tip direction
+of every free tentacle and reaches with the one already facing closest to the target segment. This
+worm grab does not use the round-robin arm offset from ordinary prey harvesting. The chosen arm
+uses the same stretched, joint-limited reach used for prey while the Tri-Star continues to pulse
+after the moving worm. The worm keeps full control until the moving arm tip actually contacts an
+eligible head-side segment. Contact pins that segment to the arm, disables
+all worm input, and solves the remaining body as a limp, gravity-affected constraint chain while
+the arm curls the worm into the triangle center. The completed attack deals 200 damage—half the
+shared level-15 worm maximum. A nonlethal attack holds the fully curled pose for a short final
+eating beat. If that attack will be lethal, the final beat instead pulls the body head-first into
+the triangle center: rendered segments disappear one at a time and eject small textured pieces
+of the worm's current custom body artwork mixed with stylized droplets. The swallow duration
+grows with segment count but is capped for very long worms, then holds briefly after the last
+segment vanishes. The worm's health remains unchanged throughout either complete animation; only
+after its final beat do damage, release, and a possible death screen occur. A surviving worm is
+then thrown clear with 1.5 seconds of grab
+invulnerability. Beginning a Boost latch against that Tri-Star before contact cancels and pauses
+the worm reach; after the latch releases and bounces the worm away, the predator clears the stale
+plan and reacquires from its live pose.
 
 Tri-Stars pulse toward the nearest available beetle or mole. They still recognize local
 beetle groups when choosing which reachable prey to collect with multiple arms, but a
@@ -432,7 +467,8 @@ beetle within 18 terrain blocks. The same reservation, point-refund, population-
 pipeline handles that simulated meal. Existing arm captures always finish under full AI before
 the lightweight mode begins. As soon as the Tri-Star marker returns to the minimap, its free
 arms and pulse state are rebased at the live body pose for a smooth return to full simulation.
-They ignore rabbits, dragonflies, vultures, meat, other Tri-Stars, and the worm. A devoured prey
+In this lightweight off-map tier they ignore rabbits, dragonflies, vultures, meat, other
+Tri-Stars, and the worm. A devoured prey
 awards no worm score or boost; its reserved point value is
 returned to the round reserve and an enemy replacement is spawned, preserving both the
 1,000-enemy ceiling and the exact 10,000,000-point round total.
@@ -484,6 +520,16 @@ an enemy's health counts as an instant kill but still plays one complete visual 
 damage between one and two times its health uses two bite loops. Weaker attacks extend
 the same timer for additional loops rather than queuing separate animations. A
 one-bite instant kill never shortens a longer bite sequence already in progress.
+
+All playable worm types share the same health rule: 100 maximum HP at level 0 plus 20 HP for
+every size level. Level growth adds the new capacity without healing existing damage, and level
+reductions clamp current HP to the smaller maximum. A large, fixed health bar remains centered at
+the top of the screen and shows the current and maximum HP numerically. Finishing a mouth-eating
+animation restores one worm HP for each point of that enemy's maximum HP, capped at the worm's
+current maximum. This includes ordinary contact, Sprinter hunt, and tongue-delivered prey; acid
+kills and prey eaten by Tri-Stars do not heal the worm. At zero HP the simulation freezes behind
+a death screen that offers either a restart of the current world or a return to the home selection
+screen. Currently only an on-screen hard Tri-Star can damage the worm.
 
 Hard prey cannot be captured by normal contact, even after its current HP falls below the
 hard-prey threshold because classification uses maximum HP. Contact reverses and dampens
@@ -669,7 +715,7 @@ Choose **Edit selected worm** on the Home screen to open the appearance workshop
 starts from the active worm and provides seven common sprite layers: Upper Jaw, Lower Jaw,
 Upper Mouth, Lower Mouth, Body, Rings, and Outline. Licker also shows Tongue and Tongue
 Rings. With Spitter selected, those two options are replaced by three acid color selectors
-and a Color 1 → Color 2 → Color 3 → Color 1 gradient strip. Select Paint or Erase, choose
+and a three-band preview of the exact flat particle colors. Select Paint or Erase, choose
 a color and pixel brush size, then drag on the enlarged transparent PNG canvas. Fill
 replaces an exact-color connected pixel region with the selected color; right-clicking
 with Fill makes that region transparent. Fill follows the selected symmetry mode and
@@ -700,7 +746,7 @@ use the same cached composite and every-third-point sparse path as gameplay, inc
 endpoint coverage, while preview rings retain every original position. Its tongue repeatedly extends,
 swings toward changing random directions, retracts completely, and pauses before the
 next cycle so both editable tongue layers can be judged in motion; Spitter instead sprays
-a moving sample of the pending acid gradient. The simulation runs only while
+a moving sample of the pending three-color particle palette. The simulation runs only while
 the appearance editor is open. **Load defaults** copies the built-in artwork into the
 working canvases, while **Cancel** discards all unsaved edits. **Export worm** downloads
 a shareable version-2 `.worm.json` package containing all nine PNG layers, the jaw/mouth

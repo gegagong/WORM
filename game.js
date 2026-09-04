@@ -46,6 +46,15 @@
   const boostMeterFill = document.querySelector("#boost-meter-fill");
   const boostTimeReadout = document.querySelector("#boost-time");
   const boostCapacityReadout = document.querySelector("#boost-capacity");
+  const wormHealthHud = document.querySelector("#worm-health-hud");
+  const wormHealthMeter = document.querySelector("#worm-health-meter");
+  const wormHealthMeterFill = document.querySelector(
+    "#worm-health-meter-fill",
+  );
+  const wormHealthReadout = document.querySelector("#worm-health");
+  const wormHealthMaximumReadout = document.querySelector(
+    "#worm-health-maximum",
+  );
   const boostTouchButton = document.querySelector('[data-control="boost"]');
   const stateReadout = document.querySelector("#state");
   const statePill = document.querySelector("#state-pill");
@@ -119,6 +128,14 @@
   const menuContinueButton = document.querySelector("#menu-continue");
   const menuDevToolsButton = document.querySelector("#menu-dev-tools");
   const menuReturnHomeButton = document.querySelector("#menu-return-home");
+  const deathScreen = document.querySelector("#death-screen");
+  const deathScreenSummary = document.querySelector(
+    "#death-screen-summary",
+  );
+  const deathRestartButton = document.querySelector("#death-restart");
+  const deathReturnHomeButton = document.querySelector(
+    "#death-return-home",
+  );
   const enemyInfoButton = document.querySelector("#enemy-info-button");
   const enemyInfo = document.querySelector("#enemy-info");
   const enemyInfoCloseButton = document.querySelector("#enemy-info-close");
@@ -127,7 +144,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260901-larger-radar-v9";
+    const styleUrl = "./styles.css?v=20260902-worm-health-hud-v12";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -529,6 +546,12 @@
     pupilRadius: 2.5,
     wakeOffset: 30,
     collisionRadius: 18,
+  });
+  const WORM_HEALTH_RULES = Object.freeze({
+    baseHealth: 100,
+    healthPerLevel: 20,
+    eatenEnemyMaximumHealthRestoreScale: 1,
+    tristarDamageReferenceLevel: 15,
   });
   const GROWTH_RULES = Object.freeze({
     initialCost: 5,
@@ -956,7 +979,10 @@
     minimumWanderSpeed: 240,
     maximumWanderTurn: Math.PI * 0.75,
     terrainLookaheadSeconds: 0.24,
+    minimumTerrainLookaheadBlocks: 8,
     movementSubstepBlocks: 0.45,
+    bodyAirAvoidanceRadiusScale: 0.9,
+    bodyAirAvoidanceFlankSideScale: Math.sqrt(3) * 0.5,
     freeArmSoilDrag: 0.34,
     freeArmGravity: 38,
     freeArmAccelerationInfluence: 0.045,
@@ -974,6 +1000,19 @@
     preyApproachArmLengthScale: 0.7,
     preyReachMaximumStretch: 1.05,
     preyReachDuration: 0.32,
+    wormGrabHeadSegmentFraction: 1 / 3,
+    wormGrabCompletedPoseDuration: 0.35,
+    wormLethalDevourSecondsPerSegment: 0.035,
+    wormLethalDevourMinimumDuration: 0.9,
+    wormLethalDevourMaximumDuration: 2,
+    wormLethalDevourFinalHoldDuration: 0.14,
+    wormLethalChunkParticlesPerSegment: 4,
+    wormGrabInvulnerabilityDuration: 1.5,
+    wormGrabCancelledInvulnerabilityDuration: 0.35,
+    wormGrabReleaseSpeedMultiplier: 1.35,
+    wormGrabBodyConstraintIterations: 10,
+    wormGrabBodyVelocityRetention: 0.9,
+    wormGrabTipRadius: 8 * ENTITY_SCALE,
     preyReachDistalTurnDelayProgress: 0.11,
     preyStretchRecoveryPullFraction: 0.35,
     freeArmStretchRecoveryDuration: 0.15,
@@ -1021,6 +1060,14 @@
     -Math.PI / 4,
     Math.PI / 3,
     -Math.PI / 3,
+  ]);
+  const TRISTAR_VISIBLE_AIR_AVOIDANCE_OFFSETS = Object.freeze([
+    ...TRISTAR_STEERING_OFFSETS,
+    Math.PI / 2,
+    -Math.PI / 2,
+    Math.PI * 2 / 3,
+    -Math.PI * 2 / 3,
+    Math.PI,
   ]);
   const TRISTAR_ARM_TURN_LIMITS = Object.freeze(
     Array.from(
@@ -1161,14 +1208,16 @@
     bodyDrag: 0.94,
     bodyMaximumSpeedMultiplier: 3.5,
   });
+  const ACID_PARTICLE_DENSITY_MULTIPLIER = 5;
   const ACID_RULES = Object.freeze({
-    particlesPerSecond: 78,
+    particlesPerSecond: 78 * ACID_PARTICLE_DENSITY_MULTIPLIER,
     particlesPerSecondSqrtLevelScale: 0.05,
-    maximumParticlesPerSecond: 120,
+    maximumParticlesPerSecond:
+      120 * ACID_PARTICLE_DENSITY_MULTIPLIER,
     // Keep enough pooled capacity for a continuous hose even if a developer
     // changes levels while older, longer-lived particles are still active.
-    maximumParticles: 1152,
-    maximumEmissionsPerFrame: 4,
+    maximumParticles: 1152 * ACID_PARTICLE_DENSITY_MULTIPLIER,
+    maximumEmissionsPerFrame: 4 * ACID_PARTICLE_DENSITY_MULTIPLIER,
     particleRadius: 3.6,
     particleRadiusVariance: 0.42,
     baseVisualDropletsPerParticle: 4,
@@ -1178,14 +1227,13 @@
     visualDropletMinimumRadiusScale: 0.68,
     visualDropletMaximumRadiusScale: 0.94,
     visualDropletMaximumOffset: 1.16,
-    // Twenty-four tiles provide eight evenly spaced colors for each leg of
-    // the editable color 1 -> 2 -> 3 -> 1 gradient. Color and geometry share
-    // the tile index, preserving one atlas draw per visible carrier.
+    // Twenty-four tiles provide eight randomized cluster geometries for each
+    // of the three exact editable colors. Color and geometry share the tile
+    // index, preserving one atlas draw per visible carrier.
     visualClusterVariants: 24,
     visualClusterAtlasColumns: 6,
     visualClusterTileSize: 96,
     visualClusterExtent: 2.62,
-    fluidPatternTileSize: 24,
     minimumNozzleSpeed: 650,
     maximumNozzleSpeed: 920,
     maximumScalingLevel: 100,
@@ -1200,7 +1248,9 @@
     maximumLifeBonus: 3.5,
     fadeDuration: 0.16,
     damageReferenceDuration: 0.25,
-    latchedDamageDivisor: 33,
+    // Five times as many physical carriers retain approximately the same
+    // sustained damage because every individual attachment deals one fifth.
+    latchedDamageDivisor: 33 * ACID_PARTICLE_DENSITY_MULTIPLIER,
     // Sixteen terrain cells keeps the 1,000-enemy broad phase sparse while
     // still covering large hurtboxes with only a handful of buckets.
     targetBroadphaseCellSize: 192,
@@ -1219,6 +1269,14 @@
     craneBodyFraction: 1 / 3,
     aimTurnSpeed: 11,
     sprayJawAngleMultiplier: 1.18,
+    // The short launch guide pivots at the throat independently of the head.
+    // A deliberately under-damped spring lets it lag a turn, then continually
+    // settle back toward the center of the open jaws.
+    guideAngularSpring: 96,
+    guideAngularDamping: 12,
+    guideMaximumAngularAcceleration: 120,
+    guideMaximumAngularSpeed: 14,
+    guideMaximumSimulationStep: 1 / 180,
     boostDrainMultiplier: 2,
     linkDistanceMultiplier: 4.5,
     linkCoreRadiusScale: 1.2,
@@ -1553,6 +1611,10 @@
     acidParticleGeneration: 0,
     acidLastEmittedParticle: null,
     spitterAimAngle: null,
+    spitterAcidGuideAngle: null,
+    spitterAcidGuidePreviousAngle: null,
+    spitterAcidGuideHeadAngle: null,
+    spitterAcidGuideAngularVelocity: 0,
     latchAttack: null,
     sprinterAreaTarget: null,
     sprinterAreaCompletion: null,
@@ -1620,6 +1682,10 @@
       BOOST_RULES.levelOneDuration - BOOST_RULES.secondsPerLevel,
     boosting: false,
     acidSpraying: false,
+    health: WORM_HEALTH_RULES.baseHealth,
+    tristarWormCapture: null,
+    tristarWormDamageInvulnerability: 0,
+    wormDefeated: false,
     map: {
       cellSize: BLOCK_SIZE,
       columns: 0,
@@ -1646,6 +1712,11 @@
     segments: [],
     outputSegments: [],
     headPose: { x: 0, y: 0, angle: 0 },
+  };
+  const tristarDevourRenderState = {
+    outputSegments: [],
+    headPose: { x: 0, y: 0, angle: 0 },
+    headVisible: false,
   };
   // Frame-local particle-seconds accumulated by acid carriers that are stuck
   // to each target. Reusing this Map keeps dense, high-level sprays from
@@ -1680,7 +1751,6 @@
   let acidTargetBroadphaseRowCount = 1;
   let acidTargetBroadphaseQueryId = 0;
   const acidClusterAtlasCache = new Map();
-  const acidFluidPatternTileCache = new Map();
   let acidTunnelTilesRemaining = 0;
   const tristarArmTunnelBudget = { remaining: 0 };
   const pendingTristarArmTunnelTiles = new Map();
@@ -2259,35 +2329,13 @@
     );
   }
 
-  function hexColorToRgb(color) {
-    const value = Number.parseInt(color.slice(1), 16);
-    return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-  }
-
-  function rgbToHex(red, green, blue) {
-    return `#${[red, green, blue]
-      .map((channel) =>
-        clamp(Math.round(channel), 0, 255)
-          .toString(16)
-          .padStart(2, "0"),
-      )
-      .join("")}`;
-  }
-
-  function buildCyclicAcidColorLut(colors) {
-    const stops = normalizeAcidColors(colors).map(hexColorToRgb);
+  function buildFlatAcidColorLut(colors) {
+    const selectedColors = normalizeAcidColors(colors);
     const sampleCount = ACID_RULES.visualClusterVariants;
-    return Array.from({ length: sampleCount }, (_, index) => {
-      const gradientPosition = (index / sampleCount) * stops.length;
-      const startIndex = Math.floor(gradientPosition) % stops.length;
-      const endIndex = (startIndex + 1) % stops.length;
-      const amount = gradientPosition - Math.floor(gradientPosition);
-      return rgbToHex(
-        lerp(stops[startIndex][0], stops[endIndex][0], amount),
-        lerp(stops[startIndex][1], stops[endIndex][1], amount),
-        lerp(stops[startIndex][2], stops[endIndex][2], amount),
-      );
-    });
+    return Array.from(
+      { length: sampleCount },
+      (_, index) => selectedColors[index % selectedColors.length],
+    );
   }
 
   function acidColorArraysMatch(first, second) {
@@ -2299,7 +2347,6 @@
   function invalidateAcidRenderCaches() {
     acidClusterAtlasCache.forEach((atlas) => atlas.close?.());
     acidClusterAtlasCache.clear();
-    acidFluidPatternTileCache.clear();
   }
 
   function applyAcidColors(colors) {
@@ -2311,7 +2358,7 @@
     const shouldRewarm =
       colorsChanged && wormHasAbility(WORM_ABILITIES.ACID);
     wormAppearance.acidColors = normalized;
-    wormAppearance.acidColorLut = buildCyclicAcidColorLut(normalized);
+    wormAppearance.acidColorLut = buildFlatAcidColorLut(normalized);
     if (!colorsChanged) return;
     // A carrier's selected hue is immutable. Removing any paused, old-palette
     // spray avoids recoloring survivors when the shared atlas is replaced.
@@ -2340,7 +2387,7 @@
       colors,
       wormPainter.acidColors,
     );
-    wormPainter.acidColorLut = buildCyclicAcidColorLut(
+    wormPainter.acidColorLut = buildFlatAcidColorLut(
       wormPainter.acidColors,
     );
     syncWormAcidColorInputs();
@@ -2348,7 +2395,7 @@
 
   function activeAcidColorLut() {
     if (!wormAppearance.acidColorLut) {
-      wormAppearance.acidColorLut = buildCyclicAcidColorLut(
+      wormAppearance.acidColorLut = buildFlatAcidColorLut(
         wormAppearance.acidColors,
       );
     }
@@ -2385,6 +2432,33 @@
   const wormBiteDamage = () =>
     activeWormScaling().baseBiteDamage *
     activeWormScaling().biteDamagePerLevel ** game.growthLevel;
+  const wormMaximumHealthAtLevel = (level) =>
+    WORM_HEALTH_RULES.baseHealth +
+    Math.max(0, Math.floor(Number(level) || 0)) *
+      WORM_HEALTH_RULES.healthPerLevel;
+  const wormMaximumHealth = () =>
+    wormMaximumHealthAtLevel(game.growthLevel);
+  const tristarWormAttackDamage = () =>
+    wormMaximumHealthAtLevel(
+      WORM_HEALTH_RULES.tristarDamageReferenceLevel,
+    ) * 0.5;
+  function tristarLethalDevourDuration(capture) {
+    const segmentCount = Math.max(
+      1,
+      Number(capture?.lethalSegmentCount) || game.segments.length,
+    );
+    return clamp(
+      segmentCount * TRISTAR_RULES.wormLethalDevourSecondsPerSegment,
+      TRISTAR_RULES.wormLethalDevourMinimumDuration,
+      TRISTAR_RULES.wormLethalDevourMaximumDuration,
+    );
+  }
+  function tristarWormAttackFinishDuration(capture) {
+    return capture?.willDefeatWorm
+      ? tristarLethalDevourDuration(capture) +
+          TRISTAR_RULES.wormLethalDevourFinalHoldDuration
+      : TRISTAR_RULES.wormGrabCompletedPoseDuration;
+  }
   const wormDimension = (name) => WORM_SHAPE[name] * wormScale();
   const wormSegmentSpacing = () => wormDimension("segmentSpacing");
   const wormSegmentCount = () =>
@@ -5260,23 +5334,26 @@
           Math.hypot(width, height) * 0.5,
       );
     }
-    const headPose = renderState?.headPose || getEatHitboxPose();
-    const headReferenceX = minimapState.wormPoints[0]?.worldX ?? game.head.x;
-    const headX = nearestPeriodicWorldX(headPose.x, headReferenceX);
-    const headPixelX = (headX - bounds.x) * scaleX;
-    const headPixelY = (headPose.y - bounds.y) * scaleY;
-    const jawAngleMultiplier = spitterHeadPoseShouldRemainActive()
-      ? ACID_RULES.sprayJawAngleMultiplier
-      : 1;
-    const headRadius = minimapJawSpriteMaximumRadius(
-      currentWormScale * radiusScale,
-      jawAngleMultiplier,
-    );
-    maximumExtent = Math.max(
-      maximumExtent,
-      magnitude(headPixelX - centerX, headPixelY - centerY) +
-        headRadius,
-    );
+    if (renderState?.headVisible !== false) {
+      const headPose = renderState?.headPose || getEatHitboxPose();
+      const headReferenceX =
+        minimapState.wormPoints[0]?.worldX ?? game.head.x;
+      const headX = nearestPeriodicWorldX(headPose.x, headReferenceX);
+      const headPixelX = (headX - bounds.x) * scaleX;
+      const headPixelY = (headPose.y - bounds.y) * scaleY;
+      const jawAngleMultiplier = spitterHeadPoseShouldRemainActive()
+        ? ACID_RULES.sprayJawAngleMultiplier
+        : 1;
+      const headRadius = minimapJawSpriteMaximumRadius(
+        currentWormScale * radiusScale,
+        jawAngleMultiplier,
+      );
+      maximumExtent = Math.max(
+        maximumExtent,
+        magnitude(headPixelX - centerX, headPixelY - centerY) +
+          headRadius,
+      );
+    }
     const usableRadius =
       Math.min(MINIMAP_RULES.width, MINIMAP_RULES.height) * 0.5 - 8;
     minimapState.wormFitScale =
@@ -5379,6 +5456,7 @@
       minimapContext.fill();
     }
 
+    if (renderState?.headVisible === false) return;
     const scaleX = MINIMAP_RULES.width / bounds.width;
     const scaleY = MINIMAP_RULES.height / bounds.height;
     const headPose = renderState?.headPose || getEatHitboxPose();
@@ -5573,34 +5651,36 @@
       );
     }
 
-    const headPose = renderState?.headPose || getEatHitboxPose();
-    const referenceX = points[0]?.worldX ?? game.head.x;
-    const headX = nearestPeriodicWorldX(headPose.x, referenceX);
-    const centerX = width * 0.5;
-    const centerY = height * 0.5;
-    const headPixelX =
-      centerX +
-      ((headX - bounds.x) * scaleX - centerX) *
-        minimapState.wormFitScale;
-    const headPixelY =
-      centerY +
-      ((headPose.y - bounds.y) * scaleY - centerY) *
-        minimapState.wormFitScale;
-    targetContext.setTransform(1, 0, 0, 1, 0, 0);
-    drawJawSpriteSet(
-      targetContext,
-      wormSprites,
-      headPixelX,
-      headPixelY,
-      headPose.angle,
-      game.mouthOpen,
-      currentWormScale * pixelScale,
-      wormAppearance.mirroredJawSource,
-      wormAppearance.mirroredMouthSource,
-      spitterHeadPoseShouldRemainActive()
-        ? ACID_RULES.sprayJawAngleMultiplier
-        : 1,
-    );
+    if (renderState?.headVisible !== false) {
+      const headPose = renderState?.headPose || getEatHitboxPose();
+      const referenceX = points[0]?.worldX ?? game.head.x;
+      const headX = nearestPeriodicWorldX(headPose.x, referenceX);
+      const centerX = width * 0.5;
+      const centerY = height * 0.5;
+      const headPixelX =
+        centerX +
+        ((headX - bounds.x) * scaleX - centerX) *
+          minimapState.wormFitScale;
+      const headPixelY =
+        centerY +
+        ((headPose.y - bounds.y) * scaleY - centerY) *
+          minimapState.wormFitScale;
+      targetContext.setTransform(1, 0, 0, 1, 0, 0);
+      drawJawSpriteSet(
+        targetContext,
+        wormSprites,
+        headPixelX,
+        headPixelY,
+        headPose.angle,
+        game.mouthOpen,
+        currentWormScale * pixelScale,
+        wormAppearance.mirroredJawSource,
+        wormAppearance.mirroredMouthSource,
+        spitterHeadPoseShouldRemainActive()
+          ? ACID_RULES.sprayJawAngleMultiplier
+          : 1,
+      );
+    }
 
     targetContext.globalCompositeOperation = "source-in";
     targetContext.fillStyle = MINIMAP_RADAR_RED;
@@ -5743,6 +5823,11 @@
     game.growthLevel = game.growthLevelOverride ?? 0;
     game.growthProgress = 0;
     game.growthCost = growthCostForLevel(0);
+    game.health = wormMaximumHealth();
+    game.tristarWormCapture = null;
+    game.tristarWormDamageInvulnerability = 0;
+    game.wormDefeated = false;
+    gameShell.dataset.defeated = "false";
     game.boostCharge = boostCapacity();
     game.boosting = false;
     game.acidSpraying = false;
@@ -6002,9 +6087,50 @@
     syncMenuOpenState();
   }
 
+  function hideDeathScreen() {
+    deathScreen.classList.remove("visible");
+    deathScreen.setAttribute("aria-hidden", "true");
+    gameShell.dataset.defeated = "false";
+  }
+
+  function showDeathScreen() {
+    if (deathScreen.classList.contains("visible")) return;
+    clearControlKeys();
+    cancelSpitterPointer();
+    toggleDevMenu(false);
+    game.paused = true;
+    game.menuOpen = true;
+    gameShell.dataset.paused = "true";
+    gameShell.dataset.defeated = "true";
+    deathScreenSummary.textContent =
+      `Score ${game.score.toLocaleString()} · Level ${game.growthLevel} · ` +
+      "The Tri-Star consumed the worm.";
+    deathScreen.classList.add("visible");
+    deathScreen.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(() => deathRestartButton.focus());
+  }
+
+  function restartAfterDeath() {
+    if (!game.levelLoaded) {
+      hideDeathScreen();
+      showHomeScreen();
+      return;
+    }
+    hideDeathScreen();
+    reset();
+    game.started = true;
+    game.paused = false;
+    game.menuOpen = false;
+    gameShell.dataset.paused = "false";
+    game.lastTime = performance.now();
+    game.lastRenderTime = game.lastTime;
+    render();
+  }
+
   function syncMenuOpenState() {
     game.menuOpen =
       game.homeOpen ||
+      deathScreen.classList.contains("visible") ||
       gameMenu.classList.contains("visible") ||
       enemyInfo.classList.contains("visible") ||
       wormTypeSelect.classList.contains("visible") ||
@@ -6014,7 +6140,14 @@
   }
 
   function openMainMenu() {
-    if (!game.levelLoaded || !game.started || game.homeOpen) return;
+    if (
+      !game.levelLoaded ||
+      !game.started ||
+      game.homeOpen ||
+      game.wormDefeated
+    ) {
+      return;
+    }
     clearControlKeys();
     cancelSpitterPointer();
     toggleDevMenu(false);
@@ -6227,6 +6360,7 @@
     game.selectedWorldId = world.id;
     game.selectedWorldName = world.name;
     game.activeRoundPointLimit = ROUND_POINT_LIMIT;
+    hideDeathScreen();
     updateSelectedWorldLabel();
     homeScreen.classList.remove("visible");
     homeScreen.setAttribute("aria-hidden", "true");
@@ -8373,7 +8507,7 @@
     if (!wormHasAbility(WORM_ABILITIES.ACID)) return;
     const colors =
       wormPainter.acidColorLut ||
-      buildCyclicAcidColorLut(wormPainter.acidColors);
+      buildFlatAcidColorLut(wormPainter.acidColors);
     const forwardX = Math.cos(headAngle);
     const forwardY = Math.sin(headAngle);
     const normalX = -forwardY;
@@ -8410,7 +8544,6 @@
         index * 2 + Math.floor(simulation.time * 6),
         colors.length,
       );
-      wormPreviewContext.globalAlpha = 0.92 - progress * 0.22;
       wormPreviewContext.fillStyle = colors[colorIndex];
       wormPreviewContext.beginPath();
       wormPreviewContext.arc(
@@ -8977,6 +9110,50 @@
     }
   }
 
+  function spawnWormChunkSplash(
+    x,
+    y,
+    incomingAngle,
+    sizeScale = 1,
+    count = TRISTAR_RULES.wormLethalChunkParticlesPerSegment,
+  ) {
+    const effectScale = clamp(
+      Math.sqrt(Math.max(0.25, sizeScale)),
+      0.7,
+      2.4,
+    );
+    const outwardAngle = incomingAngle + Math.PI;
+    for (let index = 0; index < count; index += 1) {
+      const broadSplash = index >= Math.ceil(count * 0.5);
+      const angle = broadSplash
+        ? Math.random() * TAU
+        : outwardAngle + (Math.random() - 0.5) * 1.35;
+      const force = (70 + Math.random() * 190) * effectScale;
+      const life = 0.34 + Math.random() * 0.42;
+      game.particles.push({
+        x: x + (Math.random() - 0.5) * 5 * effectScale,
+        y: y + (Math.random() - 0.5) * 5 * effectScale,
+        vx: Math.cos(angle) * force,
+        vy: Math.sin(angle) * force - 55 * effectScale,
+        life,
+        maxLife: life,
+        size: (2.5 + Math.random() * 4.5) * effectScale,
+        tone: Math.random(),
+        kind: "worm-chunk",
+        chunkShape: index % 3 === 2 ? "drop" : "piece",
+        rotation: Math.random() * TAU,
+        spin: (Math.random() - 0.5) * 15,
+        renderLayer: index % 3 === 0 ? "back" : "front",
+      });
+    }
+    if (game.particles.length > BITE_SPLATTER_RULES.particleLimit) {
+      game.particles.splice(
+        0,
+        game.particles.length - BITE_SPLATTER_RULES.particleLimit,
+      );
+    }
+  }
+
   function updateParticles(dt) {
     game.particles = game.particles.filter((particle) => {
       particle.life -= dt;
@@ -8984,6 +9161,10 @@
       particle.x += particle.vx * dt;
       particle.y += particle.vy * dt;
       particle.vx *= Math.pow(0.08, dt);
+      if (particle.kind === "worm-chunk") {
+        particle.rotation += particle.spin * dt;
+        particle.spin *= Math.pow(0.16, dt);
+      }
       particle.vy +=
         (particle.kind === "burst"
           ? 440
@@ -8993,6 +9174,8 @@
               ? 220
               : particle.kind === "splatter"
                 ? BITE_SPLATTER_RULES.gravity
+              : particle.kind === "worm-chunk"
+                ? 360
               : 240) * dt;
       return true;
     });
@@ -9201,6 +9384,7 @@
     );
     const previousLevel = game.growthLevel;
     const previousBoostCapacity = boostCapacity();
+    const previousMaximumHealth = wormMaximumHealth();
     game.growthLevel = nextLevel;
 
     const desiredSegmentCount = wormSegmentCount();
@@ -9222,6 +9406,16 @@
       );
     } else {
       game.boostCharge = Math.min(game.boostCharge, nextBoostCapacity);
+    }
+
+    const nextMaximumHealth = wormMaximumHealth();
+    if (nextMaximumHealth > previousMaximumHealth) {
+      game.health = Math.min(
+        nextMaximumHealth,
+        game.health + nextMaximumHealth - previousMaximumHealth,
+      );
+    } else {
+      game.health = Math.min(game.health, nextMaximumHealth);
     }
 
     const levelsGained = nextLevel - previousLevel;
@@ -9403,6 +9597,109 @@
     );
   }
 
+  function resetSpitterAcidGuide() {
+    game.spitterAcidGuideAngle = null;
+    game.spitterAcidGuidePreviousAngle = null;
+    game.spitterAcidGuideHeadAngle = null;
+    game.spitterAcidGuideAngularVelocity = 0;
+  }
+
+  function spitterAcidGuideHalfArc() {
+    return (
+      MOUTH_BEHAVIOR.maxJawAngle *
+      clamp(game.mouthOpen, 0, 1) *
+      ACID_RULES.sprayJawAngleMultiplier
+    );
+  }
+
+  function constrainSpitterAcidGuideToMouth(headAngle, halfArc) {
+    if (halfArc <= 0.000001) {
+      game.spitterAcidGuideAngle = headAngle;
+      game.spitterAcidGuideAngularVelocity = 0;
+      return;
+    }
+    const relativeAngle = Math.atan2(
+      Math.sin(game.spitterAcidGuideAngle - headAngle),
+      Math.cos(game.spitterAcidGuideAngle - headAngle),
+    );
+    const constrainedAngle = clamp(relativeAngle, -halfArc, halfArc);
+    if (constrainedAngle === relativeAngle) {
+      game.spitterAcidGuideAngle = headAngle + relativeAngle;
+      return;
+    }
+    game.spitterAcidGuideAngle = headAngle + constrainedAngle;
+    const movingOutward =
+      (constrainedAngle > 0 && game.spitterAcidGuideAngularVelocity > 0) ||
+      (constrainedAngle < 0 && game.spitterAcidGuideAngularVelocity < 0);
+    if (movingOutward) game.spitterAcidGuideAngularVelocity = 0;
+  }
+
+  function updateSpitterAcidGuide(dt, renderedHeadAngle = null) {
+    if (!spitterHeadPoseShouldRemainActive()) {
+      resetSpitterAcidGuide();
+      return;
+    }
+
+    const headAngle = Number.isFinite(renderedHeadAngle)
+      ? renderedHeadAngle
+      : buildSpitterCraneRenderState().headPose.angle;
+    if (!Number.isFinite(game.spitterAcidGuideAngle)) {
+      game.spitterAcidGuideAngle = headAngle;
+      game.spitterAcidGuidePreviousAngle = headAngle;
+      game.spitterAcidGuideHeadAngle = headAngle;
+      game.spitterAcidGuideAngularVelocity = 0;
+      return;
+    }
+
+    game.spitterAcidGuidePreviousAngle = game.spitterAcidGuideAngle;
+    const previousHeadAngle = Number.isFinite(
+      game.spitterAcidGuideHeadAngle,
+    )
+      ? game.spitterAcidGuideHeadAngle
+      : headAngle;
+    const headAngleDelta = Math.atan2(
+      Math.sin(headAngle - previousHeadAngle),
+      Math.cos(headAngle - previousHeadAngle),
+    );
+    game.spitterAcidGuideHeadAngle = headAngle;
+    const halfArc = spitterAcidGuideHalfArc();
+    constrainSpitterAcidGuideToMouth(previousHeadAngle, halfArc);
+    if (dt <= 0) {
+      constrainSpitterAcidGuideToMouth(headAngle, halfArc);
+      return;
+    }
+
+    const stepCount = Math.max(
+      1,
+      Math.ceil(dt / ACID_RULES.guideMaximumSimulationStep),
+    );
+    const stepDuration = dt / stepCount;
+    for (let step = 0; step < stepCount; step += 1) {
+      const simulatedHeadAngle =
+        previousHeadAngle + headAngleDelta * ((step + 1) / stepCount);
+      const correction = Math.atan2(
+        Math.sin(simulatedHeadAngle - game.spitterAcidGuideAngle),
+        Math.cos(simulatedHeadAngle - game.spitterAcidGuideAngle),
+      );
+      const angularAcceleration = clamp(
+        correction * ACID_RULES.guideAngularSpring -
+          game.spitterAcidGuideAngularVelocity *
+            ACID_RULES.guideAngularDamping,
+        -ACID_RULES.guideMaximumAngularAcceleration,
+        ACID_RULES.guideMaximumAngularAcceleration,
+      );
+      game.spitterAcidGuideAngularVelocity = clamp(
+        game.spitterAcidGuideAngularVelocity +
+          angularAcceleration * stepDuration,
+        -ACID_RULES.guideMaximumAngularSpeed,
+        ACID_RULES.guideMaximumAngularSpeed,
+      );
+      game.spitterAcidGuideAngle +=
+        game.spitterAcidGuideAngularVelocity * stepDuration;
+      constrainSpitterAcidGuideToMouth(simulatedHeadAngle, halfArc);
+    }
+  }
+
   function buildSpitterCraneRenderState() {
     const sourceSegments = game.segments;
     const renderState = spitterCraneRenderState;
@@ -9466,14 +9763,48 @@
     return renderState;
   }
 
-  function spitterAcidNozzlePose() {
-    const renderState = buildSpitterCraneRenderState();
-    const pose = renderState.headPose;
+  function buildActiveWormRenderState() {
+    const baseState = buildSpitterCraneRenderState();
+    const capture = game.tristarWormCapture;
+    if (
+      !capture?.willDefeatWorm ||
+      (Number(capture.completedPoseElapsed) || 0) <= 0
+    ) {
+      return baseState;
+    }
+    const consumedCount = clamp(
+      Number(capture.lethalConsumedSegmentCount) || 0,
+      0,
+      baseState.outputSegments.length,
+    );
+    const outputSegments = tristarDevourRenderState.outputSegments;
+    outputSegments.length = 0;
+    for (
+      let index = consumedCount;
+      index < baseState.outputSegments.length;
+      index += 1
+    ) {
+      outputSegments.push(baseState.outputSegments[index]);
+    }
+    const headPose =
+      capture.lethalHeadRenderPose || baseState.headPose;
+    tristarDevourRenderState.headPose.x = headPose.x;
+    tristarDevourRenderState.headPose.y = headPose.y;
+    tristarDevourRenderState.headPose.angle = headPose.angle;
+    tristarDevourRenderState.headVisible = consumedCount === 0;
+    return tristarDevourRenderState;
+  }
+
+  function spitterAcidNozzlePose(renderedHeadPose = null) {
+    const pose =
+      renderedHeadPose || buildSpitterCraneRenderState().headPose;
     const throatOffset = WORM_SPRITE_METRICS.jawHingeX * wormScale();
     return {
       x: pose.x + Math.cos(pose.angle) * throatOffset,
       y: pose.y + Math.sin(pose.angle) * throatOffset,
-      angle: pose.angle,
+      angle: Number.isFinite(game.spitterAcidGuideAngle)
+        ? game.spitterAcidGuideAngle
+        : pose.angle,
     };
   }
 
@@ -10567,6 +10898,9 @@
       { length: TRISTAR_RULES.armCount },
       () => ({
         prey: null,
+        wormReachActive: false,
+        wormReachPreviousTipX: 0,
+        wormReachPreviousTipY: 0,
         pullProgress: 0,
         latchProgress: 1,
         lengthScale: 1,
@@ -10611,6 +10945,8 @@
     );
     target.tristarHuntTarget = null;
     target.tristarHuntMode = "none";
+    target.tristarWormHuntPaused = false;
+    target.tristarWormHuntActive = false;
     target.tristarClusterCenterX = target.x;
     target.tristarClusterCenterY = target.y;
     target.tristarClusterCount = 0;
@@ -10632,6 +10968,7 @@
     target.tristarPulseSteeringRemaining = 0;
     target.tristarPulseSuppressed = false;
     target.tristarCaptureArmCursor = 0;
+    target.tristarDetailedTerrainAvoidance = false;
     target.tristarOffMinimap = false;
     target.tristarOffMinimapTarget = null;
     target.tristarOffMinimapBlockedTargetId = null;
@@ -10756,11 +11093,11 @@
   }
 
   function tristarArmIsConstrained(arm) {
-    return Boolean(arm?.prey);
+    return Boolean(arm?.prey || arm?.wormReachActive);
   }
 
   function tristarArmIsDangling(arm) {
-    return Boolean(arm && !arm.prey);
+    return Boolean(arm && !arm.prey && !arm.wormReachActive);
   }
 
   function tristarArmIsAvailableForPrey(arm) {
@@ -10945,13 +11282,17 @@
     const arm = predator?.tristarArms?.[armIndex];
     if (!arm) return;
     const prey = arm.prey;
+    const wasWormReachActive = Boolean(arm.wormReachActive);
     if (prey) {
       arm.lengthScale = tristarHeldArmLengthScaleAtProgress(arm);
     }
-    const releasedPoints = prey && !tristarFreeArmStateIsValid(arm)
-      ? getHeldTristarArmPoints(predator, armIndex)
+    const releasedPoints = (prey || wasWormReachActive)
+      ? getTristarArmPoints(predator, armIndex)
       : null;
     arm.prey = null;
+    arm.wormReachActive = false;
+    arm.wormReachPreviousTipX = 0;
+    arm.wormReachPreviousTipY = 0;
     arm.pullProgress = 0;
     arm.latchProgress = 1;
     arm.latchStartLengthScale = 1;
@@ -10967,6 +11308,12 @@
     arm.heldCandidatePoseValid = false;
     preserveTristarArmDynamics(predator, armIndex, releasedPoints);
     if (!prey) return;
+    if (prey.isWormCaptureProxy) {
+      prey.tristarCaptorId = null;
+      prey.tristarCaptorArm = -1;
+      finishTristarWormRelease(prey);
+      return;
+    }
     if (
       prey.tristarCaptorId === predator.id &&
       prey.tristarCaptorArm === armIndex
@@ -11055,6 +11402,16 @@
     prey,
     tristarFrameContext = null,
   ) {
+    if (prey?.isWormCaptureProxy) {
+      const capture = game.tristarWormCapture;
+      return Boolean(
+        capture?.proxy === prey &&
+        capture.predator === predator &&
+        capture.armIndex === armIndex &&
+        prey.tristarCaptorId === predator.id &&
+        prey.tristarCaptorArm === armIndex
+      );
+    }
     return Boolean(
       targetIsActive(prey, tristarFrameContext) &&
       prey.health > 0 &&
@@ -11073,22 +11430,26 @@
     prey,
     providedReach = null,
     tristarFrameContext = null,
+    wormCapture = false,
   ) {
     const arm = predator.tristarArms?.[armIndex];
     if (
       !arm ||
-      !tristarArmIsAvailableForPrey(arm) ||
-      !tristarPreyIsAvailable(prey, tristarFrameContext)
+      (!wormCapture && !tristarArmIsAvailableForPrey(arm)) ||
+      (wormCapture && arm.prey) ||
+      (!wormCapture &&
+        !tristarPreyIsAvailable(prey, tristarFrameContext))
     ) {
       return false;
     }
     const reach =
       providedReach || tristarArmReachSolution(predator, armIndex, prey);
     if (!reach?.reached) return false;
+    const latchStartPoints = getTristarArmPoints(predator, armIndex);
     const latchStartTurns = tristarArmTurnsFromPoints(
       predator,
       armIndex,
-      getTristarArmPoints(predator, armIndex),
+      latchStartPoints,
     );
     const reachAlternatives = (
       reach.alternatives?.length ? reach.alternatives : [reach]
@@ -11202,11 +11563,14 @@
     );
     if (!selectedPlan) return false;
 
-    if (!tristarFreeArmStateIsValid(arm)) {
+    arm.wormReachActive = false;
+    arm.wormReachPreviousTipX = 0;
+    arm.wormReachPreviousTipY = 0;
+    if (wormCapture || !tristarFreeArmStateIsValid(arm)) {
       initializeTristarFreeArmState(
         predator,
         armIndex,
-        getTristarArmPoints(predator, armIndex),
+        latchStartPoints,
       );
     }
     const cosine = Math.cos(predator.angle);
@@ -11241,6 +11605,12 @@
     arm.preyOffsetDistance = selectedPlan.preyTipDistance;
     prey.tristarCaptorId = predator.id;
     prey.tristarCaptorArm = armIndex;
+    if (wormCapture) {
+      arm.latchProgress = 1;
+      prey.vx = 0;
+      prey.vy = 0;
+      return true;
+    }
     prey.movementMode = "tristar-captured";
     prey.vx = 0;
     prey.vy = 0;
@@ -11280,6 +11650,519 @@
       options.length,
     );
     return options.slice(offset).concat(options.slice(0, offset));
+  }
+
+  function tristarWormCaptureFor(predator, armIndex = null) {
+    const capture = game.tristarWormCapture;
+    if (!capture || capture.predator !== predator) return null;
+    if (armIndex !== null && capture.armIndex !== armIndex) return null;
+    return capture;
+  }
+
+  function tristarHasActiveWormReach(predator) {
+    return Boolean(
+      predator?.tristarArms?.some((arm) => arm.wormReachActive),
+    );
+  }
+
+  function cancelTristarWormReaches(predator) {
+    predator?.tristarArms?.forEach((arm, armIndex) => {
+      if (arm.wormReachActive) {
+        releaseTristarArm(predator, armIndex, false);
+      }
+    });
+  }
+
+  function pauseTristarWormHuntForLatch(target) {
+    if (target?.kind !== ENEMY_TYPES.TRISTAR) return false;
+    if (!target.tristarArms) initializeTristarTarget(target);
+    target.tristarWormHuntPaused = true;
+    target.tristarWormHuntActive = false;
+    cancelTristarWormReaches(target);
+    target.tristarHuntTarget = null;
+    target.tristarHuntMode = "none";
+    target.tristarClusterHolding = false;
+    return true;
+  }
+
+  function resetTristarWormHuntAfterLatch(target) {
+    if (target?.kind !== ENEMY_TYPES.TRISTAR) return;
+    target.tristarWormHuntPaused = false;
+    target.tristarWormHuntActive = false;
+    target.tristarSearchCooldown = 0;
+    target.tristarHuntTarget = null;
+    target.tristarHuntMode = "none";
+    target.tristarClusterHolding = false;
+    target.tristarClusterHarvesting = false;
+    target.tristarClusterBlockedScans = 0;
+    target.tristarWanderAngle = Math.atan2(
+      game.head.y - target.y,
+      nearestPeriodicWorldX(game.head.x, target.x) - target.x,
+    );
+    target.tristarDesiredSpeed = TRISTAR_RULES.maximumSpeed;
+    resetTristarPulseState(target, false);
+  }
+
+  function tristarCanHuntWorm(target) {
+    return Boolean(
+      target?.kind === ENEMY_TYPES.TRISTAR &&
+      target.tristarDetailedTerrainAvoidance &&
+      target.regionType === BLOCK_TYPES.GROUND &&
+      target.movementMode !== "burrowing" &&
+      !target.tristarWormHuntPaused &&
+      !target.latched &&
+      !target.tongueCaptured &&
+      !target.paralyzed &&
+      !game.tristarWormCapture &&
+      !game.latchAttack &&
+      !game.wormDefeated &&
+      game.health > 0 &&
+      game.tristarWormDamageInvulnerability <= 0 &&
+      enemyIsHardPrey(target)
+    );
+  }
+
+  function tristarWormGrabbableSegmentCount() {
+    if (game.segments.length === 0) return 0;
+    return Math.max(
+      1,
+      Math.floor(
+        game.segments.length * TRISTAR_RULES.wormGrabHeadSegmentFraction,
+      ),
+    );
+  }
+
+  function nearestWormSegmentToTristar(predator) {
+    let nearest = null;
+    let nearestDistanceSquared = Infinity;
+    const segmentRadius = wormDimension("bodyRadius");
+    const grabbableSegmentCount = tristarWormGrabbableSegmentCount();
+    for (let index = 0; index < grabbableSegmentCount; index += 1) {
+      const segment = game.segments[index];
+      const x = nearestPeriodicWorldX(segment.x, predator.x);
+      const dx = x - predator.x;
+      const dy = segment.y - predator.y;
+      const distanceSquared = dx * dx + dy * dy;
+      if (distanceSquared >= nearestDistanceSquared) continue;
+      nearestDistanceSquared = distanceSquared;
+      nearest = {
+        x,
+        y: segment.y,
+        angle: game.heading,
+        radius: index === 0
+          ? wormDimension("headRadius")
+          : segmentRadius,
+        segmentIndex: index,
+        distanceSquared,
+      };
+    }
+    return nearest;
+  }
+
+  function closestFacingFreeTristarArm(predator, wormPoint) {
+    let closest = null;
+    for (
+      let armIndex = 0;
+      armIndex < TRISTAR_RULES.armCount;
+      armIndex += 1
+    ) {
+      const arm = predator.tristarArms[armIndex];
+      if (!tristarArmIsAvailableForPrey(arm)) continue;
+      const points = getTristarArmPoints(predator, armIndex);
+      const root = points[0];
+      const tip = points[points.length - 1];
+      const wormX = nearestPeriodicWorldX(wormPoint.x, root.x);
+      const wormAngle = Math.atan2(
+        wormPoint.y - root.y,
+        wormX - root.x,
+      );
+      const armSpanX = tip.x - root.x;
+      const armSpanY = tip.y - root.y;
+      const armAngle = magnitude(armSpanX, armSpanY) > 0.0001
+        ? Math.atan2(armSpanY, armSpanX)
+        : tristarArmRoot(predator, armIndex).angle;
+      const difference = Math.abs(
+        Math.atan2(
+          Math.sin(wormAngle - armAngle),
+          Math.cos(wormAngle - armAngle),
+        ),
+      );
+      if (
+        closest &&
+        (difference > closest.difference ||
+          (difference === closest.difference && armIndex > closest.armIndex))
+      ) {
+        continue;
+      }
+      closest = { armIndex, difference, startPoints: points };
+    }
+    return closest;
+  }
+
+  function beginTristarWormReach(
+    predator,
+    wormPoint = nearestWormSegmentToTristar(predator),
+  ) {
+    if (
+      !tristarCanHuntWorm(predator) ||
+      tristarHasActiveWormReach(predator)
+    ) {
+      return false;
+    }
+    if (!wormPoint) return false;
+    const maximumReach = tristarArmReach() + wormPoint.radius;
+    if (wormPoint.distanceSquared > maximumReach * maximumReach) {
+      return false;
+    }
+    const armOption = closestFacingFreeTristarArm(predator, wormPoint);
+    if (!armOption) return false;
+    const { armIndex, startPoints } = armOption;
+    const arm = predator.tristarArms[armIndex];
+    beginTristarIkScratchSession(predator);
+    let reach;
+    try {
+      reach = tristarArmReachSolution(predator, armIndex, wormPoint);
+      if (!reach?.reached) return false;
+      arm.wormReachActive = true;
+      arm.pullProgress = 0;
+      arm.latchProgress = 0;
+      arm.latchStartLengthScale = resolvedTristarArmLengthScale(arm);
+      arm.latchTargetLengthScale = clamp(
+        Number(reach.lengthScale) || 1,
+        1,
+        TRISTAR_RULES.preyReachMaximumStretch,
+      );
+      arm.lengthScale = arm.latchStartLengthScale;
+      arm.latchStartTurns = tristarArmTurnsFromPoints(
+        predator,
+        armIndex,
+        startPoints,
+      );
+      arm.latchTargetTurns = Array.from(reach.turns);
+      arm.curlTargetTurns = null;
+      const tip = startPoints[startPoints.length - 1];
+      arm.wormReachPreviousTipX = tip.x;
+      arm.wormReachPreviousTipY = tip.y;
+      return true;
+    } finally {
+      endTristarIkScratchSession(predator);
+    }
+  }
+
+  function wormContactAlongTristarTipSweep(startX, startY, endX, endY) {
+    const sweepX = endX - startX;
+    const sweepY = endY - startY;
+    const sweepLengthSquared = sweepX * sweepX + sweepY * sweepY;
+    const midpointX = (startX + endX) * 0.5;
+    let nearest = null;
+    let nearestProgress = Infinity;
+    const grabbableSegmentCount = tristarWormGrabbableSegmentCount();
+    for (let index = 0; index < grabbableSegmentCount; index += 1) {
+      const segment = game.segments[index];
+      const segmentX = nearestPeriodicWorldX(segment.x, midpointX);
+      const progress = sweepLengthSquared > 0.000001
+        ? clamp(
+            ((segmentX - startX) * sweepX +
+              (segment.y - startY) * sweepY) /
+              sweepLengthSquared,
+            0,
+            1,
+          )
+        : 1;
+      const closestX = startX + sweepX * progress;
+      const closestY = startY + sweepY * progress;
+      const dx = segmentX - closestX;
+      const dy = segment.y - closestY;
+      const contactRadius =
+        (index === 0
+          ? wormDimension("headRadius")
+          : wormDimension("bodyRadius")) +
+        TRISTAR_RULES.wormGrabTipRadius;
+      if (
+        dx * dx + dy * dy > contactRadius * contactRadius ||
+        progress >= nearestProgress
+      ) {
+        continue;
+      }
+      nearestProgress = progress;
+      nearest = {
+        x: segmentX,
+        y: segment.y,
+        radius: contactRadius - TRISTAR_RULES.wormGrabTipRadius,
+        segmentIndex: index,
+      };
+    }
+    return nearest;
+  }
+
+  function beginTristarWormCapture(predator, armIndex, contact) {
+    if (!tristarCanHuntWorm(predator)) return false;
+    const arm = predator.tristarArms?.[armIndex];
+    if (!arm?.wormReachActive) return false;
+    const proxy = {
+      isWormCaptureProxy: true,
+      x: contact.x,
+      y: contact.y,
+      radius: contact.radius,
+      angle: game.heading,
+      vx: 0,
+      vy: 0,
+      tristarCaptorId: null,
+      tristarCaptorArm: -1,
+    };
+    beginTristarIkScratchSession(predator);
+    let attached = false;
+    try {
+      const reach = tristarArmReachSolution(predator, armIndex, proxy);
+      attached = Boolean(
+        reach?.reached &&
+        attachTristarPrey(
+          predator,
+          armIndex,
+          proxy,
+          reach,
+          null,
+          true,
+        ),
+      );
+    } finally {
+      endTristarIkScratchSession(predator);
+    }
+    if (!attached) return false;
+
+    clearSprinterAreaTarget(true);
+    discardActiveTongues();
+    cancelSpitterPointer();
+    endStoneSurfaceContact();
+    game.boosting = false;
+    game.acidSpraying = false;
+    game.speed = 0;
+    game.mouthChewTimer = 0;
+    game.mouthBitePhase = "idle";
+    game.mouthBiteHoldTimer = 0;
+    game.mouthOpen = 0;
+    game.segments[0].x = game.head.x;
+    game.segments[0].y = game.head.y;
+    game.tristarWormCapture = {
+      predator,
+      armIndex,
+      proxy,
+      grabbedSegmentIndex: clamp(
+        contact.segmentIndex,
+        0,
+        Math.max(0, game.segments.length - 1),
+      ),
+      pullX: contact.x,
+      pullY: contact.y,
+      attackCompleted: false,
+      completedPoseElapsed: 0,
+      attackReady: false,
+      willDefeatWorm: game.health <= tristarWormAttackDamage(),
+      lethalSegmentCount: game.segments.length,
+      lethalConsumedSegmentCount: 0,
+      lethalSegmentStarts: null,
+      lethalHeadStartPose: null,
+      lethalHeadRenderPose: null,
+      bodyVelocities: game.segments.map((_, index) => {
+        const carry = lerp(
+          1,
+          0.45,
+          index / Math.max(1, game.segments.length - 1),
+        );
+        return {
+          x: game.velocity.x * carry,
+          y: game.velocity.y * carry,
+        };
+      }),
+    };
+    game.velocity.x = 0;
+    game.velocity.y = 0;
+    targetHuntResetAfterWormCapture(predator);
+    return true;
+  }
+
+  function targetHuntResetAfterWormCapture(predator) {
+    predator.tristarHuntTarget = null;
+    predator.tristarHuntMode = "worm";
+    predator.tristarClusterHolding = false;
+    predator.tristarClusterHarvesting = false;
+    predator.tristarClusterBlockedScans = 0;
+  }
+
+  function activateTristarWormHuntPriority(predator) {
+    if (predator.tristarWormHuntActive) return;
+    predator.tristarWormHuntActive = true;
+    // Crossing onto the screen is an immediate priority transition. Drop
+    // ecological prey already occupying the arms so a stale feeding plan
+    // cannot postpone the first reach toward the worm.
+    predator.tristarArms?.forEach((arm, armIndex) => {
+      if (arm.prey && !arm.prey.isWormCaptureProxy) {
+        releaseTristarArm(predator, armIndex);
+      }
+    });
+    predator.tristarOffMinimapTarget = null;
+    predator.tristarOffMinimapBlockedTargetId = null;
+    predator.tristarOffMinimapBlockedUntil = 0;
+    targetHuntResetAfterWormCapture(predator);
+  }
+
+  function updateTristarWormReach(predator, dt) {
+    for (
+      let armIndex = 0;
+      armIndex < predator.tristarArms.length;
+      armIndex += 1
+    ) {
+      const arm = predator.tristarArms[armIndex];
+      if (!arm.wormReachActive) continue;
+      if (!tristarCanHuntWorm(predator)) {
+        releaseTristarArm(predator, armIndex, false);
+        continue;
+      }
+      arm.latchProgress = Math.min(
+        1,
+        (Number(arm.latchProgress) || 0) +
+          dt / TRISTAR_RULES.preyReachDuration,
+      );
+      const points = getTristarArmPoints(predator, armIndex);
+      const tip = points[points.length - 1];
+      const contact = wormContactAlongTristarTipSweep(
+        arm.wormReachPreviousTipX,
+        arm.wormReachPreviousTipY,
+        tip.x,
+        tip.y,
+      );
+      arm.wormReachPreviousTipX = tip.x;
+      arm.wormReachPreviousTipY = tip.y;
+      if (contact && beginTristarWormCapture(predator, armIndex, contact)) {
+        return true;
+      }
+      if (arm.latchProgress >= 1) {
+        releaseTristarArm(predator, armIndex, false);
+      }
+    }
+    return false;
+  }
+
+  function updateTristarWormHunt(predator, dt) {
+    const activeCapture = tristarWormCaptureFor(predator);
+    if (activeCapture) {
+      return {
+        active: true,
+        captured: true,
+        reaching: false,
+        desiredAngle: predator.angle,
+        desiredSpeed: 0,
+      };
+    }
+    if (!tristarCanHuntWorm(predator)) {
+      predator.tristarWormHuntActive = false;
+      cancelTristarWormReaches(predator);
+      return null;
+    }
+    activateTristarWormHuntPriority(predator);
+    targetHuntResetAfterWormCapture(predator);
+    const wormPoint = nearestWormSegmentToTristar(predator);
+    if (!wormPoint) return null;
+    updateTristarWormReach(predator, dt);
+    if (!game.tristarWormCapture) {
+      beginTristarWormReach(predator, wormPoint);
+    }
+    const captured = Boolean(tristarWormCaptureFor(predator));
+    const reaching = tristarHasActiveWormReach(predator);
+    return {
+      active: true,
+      captured,
+      reaching,
+      desiredAngle: Math.atan2(
+        wormPoint.y - predator.y,
+        wormPoint.x - predator.x,
+      ),
+      desiredSpeed: captured
+        ? 0
+        : TRISTAR_RULES.maximumSpeed,
+    };
+  }
+
+  function finishTristarWormRelease(proxy) {
+    const capture = game.tristarWormCapture;
+    if (!capture || capture.proxy !== proxy) return;
+    game.tristarWormCapture = null;
+    rebuildBodyPathFromSegments();
+    if (capture.attackCompleted) {
+      const predatorX = nearestPeriodicWorldX(
+        capture.predator.x,
+        game.head.x,
+      );
+      let directionX = game.head.x - predatorX;
+      let directionY = game.head.y - capture.predator.y;
+      const directionLength = magnitude(directionX, directionY);
+      if (directionLength > 0.001) {
+        directionX /= directionLength;
+        directionY /= directionLength;
+      } else {
+        directionX = Math.cos(game.heading);
+        directionY = Math.sin(game.heading);
+      }
+      game.speed =
+        wormMaximumSpeed() *
+        TRISTAR_RULES.wormGrabReleaseSpeedMultiplier;
+      game.velocity.x = directionX * game.speed;
+      game.velocity.y = directionY * game.speed;
+      game.heading = Math.atan2(directionY, directionX);
+      game.tristarWormDamageInvulnerability = Math.max(
+        game.tristarWormDamageInvulnerability,
+        TRISTAR_RULES.wormGrabInvulnerabilityDuration,
+      );
+    } else {
+      const headVelocity = capture.bodyVelocities[0] || { x: 0, y: 0 };
+      game.velocity.x = headVelocity.x;
+      game.velocity.y = headVelocity.y;
+      game.speed = magnitude(game.velocity.x, game.velocity.y);
+      game.tristarWormDamageInvulnerability = Math.max(
+        game.tristarWormDamageInvulnerability,
+        TRISTAR_RULES.wormGrabCancelledInvulnerabilityDuration,
+      );
+    }
+    game.inGround = headIsInGround();
+  }
+
+  function completeTristarWormAttack(predator, armIndex, proxy) {
+    const capture = tristarWormCaptureFor(predator, armIndex);
+    const finishDuration = tristarWormAttackFinishDuration(capture);
+    if (
+      !capture ||
+      capture.proxy !== proxy ||
+      capture.attackCompleted ||
+      (Number(capture.completedPoseElapsed) || 0) <
+        finishDuration ||
+      (capture.willDefeatWorm &&
+        (Number(capture.lethalConsumedSegmentCount) || 0) <
+          capture.lethalSegmentCount)
+    ) {
+      return;
+    }
+    capture.attackCompleted = true;
+    game.health = Math.max(0, game.health - tristarWormAttackDamage());
+    game.wormDefeated = game.health <= 0;
+    game.shake = Math.max(game.shake, 9);
+    if (capture.willDefeatWorm) {
+      spawnWormChunkSplash(
+        predator.x,
+        predator.y,
+        predator.angle,
+        Math.max(1, wormScale()),
+        Math.min(24, 8 + Math.ceil(game.segments.length * 0.2)),
+      );
+    } else {
+      spawnBiteSplatter(
+        predator.x,
+        predator.y,
+        predator.angle,
+        Math.max(1, wormScale()),
+        Math.min(90, 28 + game.segments.length),
+      );
+    }
+    releaseTristarArm(predator, armIndex, false);
   }
 
   function tristarClusterCandidateComesFirst(first, second) {
@@ -11696,45 +12579,111 @@
     }
   }
 
+  function tristarPointIsInGround(x, y) {
+    const row = Math.floor(y / game.map.cellSize);
+    if (row < 0 || row >= game.map.rows) return false;
+    const column = wrapWorldColumn(Math.floor(x / game.map.cellSize));
+    const tileValue = game.map.tiles[row * game.map.columns + column];
+    return (
+      tileValue === MATERIAL_TILE_VALUES[BLOCK_TYPES.GROUND] ||
+      tileValue === TUNNELED_GROUND_TILE_VALUE
+    );
+  }
+
+  function tristarLeadingGroundClearanceIsSafe(
+    target,
+    x,
+    y,
+    directionX,
+    directionY,
+  ) {
+    if (!tristarPointIsInGround(x, y)) return false;
+    const clearanceRadius = Math.max(
+      game.map.cellSize * 0.5,
+      (Number(target.radius) || 0) *
+        TRISTAR_RULES.bodyAirAvoidanceRadiusScale,
+    );
+    const normalX = -directionY;
+    const normalY = directionX;
+    const flankForward = clearanceRadius * 0.5;
+    const flankSide =
+      clearanceRadius * TRISTAR_RULES.bodyAirAvoidanceFlankSideScale;
+    return (
+      tristarPointIsInGround(
+        x + directionX * clearanceRadius,
+        y + directionY * clearanceRadius,
+      ) &&
+      tristarPointIsInGround(
+        x + directionX * flankForward + normalX * flankSide,
+        y + directionY * flankForward + normalY * flankSide,
+      ) &&
+      tristarPointIsInGround(
+        x + directionX * flankForward - normalX * flankSide,
+        y + directionY * flankForward - normalY * flankSide,
+      )
+    );
+  }
+
   function tristarGroundPathIsClear(target, angle, distance) {
     const maximumStep =
       game.map.cellSize * TRISTAR_RULES.movementSubstepBlocks;
     const steps = Math.max(1, Math.ceil(distance / maximumStep));
+    const directionX = Math.cos(angle);
+    const directionY = Math.sin(angle);
+    const detailedAvoidance = Boolean(
+      target.tristarDetailedTerrainAvoidance,
+    );
     for (let step = 1; step <= steps; step += 1) {
       const amount = step / steps;
-      if (
-        getBlockAtWorld(
-          target.x + Math.cos(angle) * distance * amount,
-          target.y + Math.sin(angle) * distance * amount,
-        )?.type !== BLOCK_TYPES.GROUND
-      ) {
+      const x = target.x + directionX * distance * amount;
+      const y = target.y + directionY * distance * amount;
+      const safe = detailedAvoidance
+        ? tristarLeadingGroundClearanceIsSafe(
+            target,
+            x,
+            y,
+            directionX,
+            directionY,
+          )
+        : tristarPointIsInGround(x, y);
+      if (!safe) {
         return false;
       }
     }
     return true;
   }
 
-  function tristarSteeringAngle(target, desiredAngle) {
-    const lookahead = Math.max(
-      game.map.cellSize * 1.5,
-      (Number(target.tristarSpeed) || 0) *
+  function tristarTerrainLookaheadForSpeed(target, speed) {
+    const minimumLookaheadBlocks = target.tristarDetailedTerrainAvoidance
+      ? TRISTAR_RULES.minimumTerrainLookaheadBlocks
+      : 1.5;
+    return Math.max(
+      game.map.cellSize * minimumLookaheadBlocks,
+      Math.max(0, Number(speed) || 0) *
         TRISTAR_RULES.terrainLookaheadSeconds,
     );
+  }
+
+  function tristarSteeringAngle(target, desiredAngle) {
+    const lookahead = tristarTerrainLookaheadForSpeed(
+      target,
+      target.tristarSpeed,
+    );
+    const steeringOffsets = target.tristarDetailedTerrainAvoidance
+      ? TRISTAR_VISIBLE_AIR_AVOIDANCE_OFFSETS
+      : TRISTAR_STEERING_OFFSETS;
     for (
       let index = 0;
-      index < TRISTAR_STEERING_OFFSETS.length;
+      index < steeringOffsets.length;
       index += 1
     ) {
-      const candidateAngle = desiredAngle + TRISTAR_STEERING_OFFSETS[index];
+      const candidateAngle = desiredAngle + steeringOffsets[index];
       if (!tristarGroundPathIsClear(target, candidateAngle, lookahead)) {
         continue;
       }
       return candidateAngle;
     }
-    const turnSide = Math.sin(target.id * 12.9898 + game.elapsed * 0.7) < 0
-      ? -1
-      : 1;
-    return target.angle + turnSide * Math.PI * 0.75;
+    return null;
   }
 
   function tristarPulseVertexAngle(target, vertexIndex) {
@@ -11748,12 +12697,12 @@
   }
 
   function tristarPulseLaunchLookahead(target) {
-    return Math.max(
-      game.map.cellSize * 1.5,
+    return tristarTerrainLookaheadForSpeed(
+      target,
       Math.max(
         TRISTAR_RULES.minimumWanderSpeed,
         Number(target.tristarSpeed) || 0,
-      ) * TRISTAR_RULES.terrainLookaheadSeconds,
+      ),
     );
   }
 
@@ -11891,10 +12840,7 @@
   function tristarVelocityPathIsClear(target, vx, vy) {
     const speed = magnitude(vx, vy);
     if (!(speed > 0.0001)) return true;
-    const lookahead = Math.max(
-      game.map.cellSize * 1.5,
-      speed * TRISTAR_RULES.terrainLookaheadSeconds,
-    );
+    const lookahead = tristarTerrainLookaheadForSpeed(target, speed);
     return tristarGroundPathIsClear(
       target,
       Math.atan2(vy, vx),
@@ -12282,11 +13228,22 @@
       Math.ceil(speed * dt / maximumStep),
     );
     const stepTime = dt / stepCount;
+    const directionX = target.vx / speed;
+    const directionY = target.vy / speed;
     let blocked = false;
     for (let step = 0; step < stepCount; step += 1) {
       const nextX = target.x + target.vx * stepTime;
       const nextY = target.y + target.vy * stepTime;
-      if (getBlockAtWorld(nextX, nextY)?.type !== BLOCK_TYPES.GROUND) {
+      const safe = target.tristarDetailedTerrainAvoidance
+        ? tristarLeadingGroundClearanceIsSafe(
+            target,
+            nextX,
+            nextY,
+            directionX,
+            directionY,
+          )
+        : tristarPointIsInGround(nextX, nextY);
+      if (!safe) {
         blocked = true;
         break;
       }
@@ -12343,12 +13300,20 @@
     }
     target.tristarSpeed = speed;
     const steeringAngle = tristarSteeringAngle(target, desiredAngle);
+    if (!Number.isFinite(steeringAngle)) {
+      resetTristarPulseState(target);
+      return "blocked";
+    }
     advanceTristarPulse(target, desiredSpeed, steeringAngle, dt);
     return target.tristarPulsePhase;
   }
 
   function tristarHasHeldPrey(target) {
-    return Boolean(target.tristarArms?.some((arm) => arm.prey));
+    return Boolean(
+      target.tristarArms?.some(
+        (arm) => arm.prey || arm.wormReachActive,
+      ),
+    );
   }
 
   function nearestOffMinimapTristarPrey(
@@ -12427,6 +13392,8 @@
     if (target.tristarOffMinimap || tristarHasHeldPrey(target)) return false;
     resetTristarPulseState(target, false);
     target.tristarOffMinimap = true;
+    target.tristarDetailedTerrainAvoidance = false;
+    target.tristarWormHuntActive = false;
     target.tristarOffMinimapTarget = null;
     target.tristarHuntTarget = null;
     target.tristarHuntMode = "none";
@@ -12563,9 +13530,9 @@
     dt,
     minimapBounds,
   ) {
-    const lookahead = Math.max(
-      game.map.cellSize * 1.5,
-      TRISTAR_RULES.maximumSpeed * TRISTAR_RULES.terrainLookaheadSeconds,
+    const lookahead = tristarTerrainLookaheadForSpeed(
+      target,
+      TRISTAR_RULES.maximumSpeed,
     );
     let steeringAngle = null;
     for (
@@ -12597,8 +13564,10 @@
       return "blocked";
     }
 
-    const vx = Math.cos(steeringAngle) * TRISTAR_RULES.maximumSpeed;
-    const vy = Math.sin(steeringAngle) * TRISTAR_RULES.maximumSpeed;
+    const directionX = Math.cos(steeringAngle);
+    const directionY = Math.sin(steeringAngle);
+    const vx = directionX * TRISTAR_RULES.maximumSpeed;
+    const vy = directionY * TRISTAR_RULES.maximumSpeed;
     const maximumStep =
       game.map.cellSize * TRISTAR_RULES.movementSubstepBlocks;
     const stepCount = Math.max(
@@ -12609,7 +13578,7 @@
     for (let step = 0; step < stepCount; step += 1) {
       const nextX = target.x + vx * stepTime;
       const nextY = target.y + vy * stepTime;
-      if (getBlockAtWorld(nextX, nextY)?.type !== BLOCK_TYPES.GROUND) {
+      if (!tristarPointIsInGround(nextX, nextY)) {
         target.vx = 0;
         target.vy = 0;
         target.tristarSpeed = 0;
@@ -12804,6 +13773,36 @@
         nextX = tip.x + Math.cos(preyAngle) * offsetDistance;
         nextY = tip.y + Math.sin(preyAngle) * offsetDistance;
       }
+      if (prey.isWormCaptureProxy) {
+        const capture = tristarWormCaptureFor(target, armIndex);
+        if (!capture || capture.proxy !== prey) {
+          releaseTristarArm(target, armIndex, false);
+          continue;
+        }
+        prey.x = nextX;
+        prey.y = nextY;
+        prey.vx = dt > 0 ? (nextX - previousX) / dt : 0;
+        prey.vy = dt > 0 ? (nextY - previousY) / dt : 0;
+        prey.angle = preyAngle;
+        capture.pullX = nextX;
+        capture.pullY = nextY;
+        if (
+          (Number(arm.latchProgress) || 0) >= 1 &&
+          (Number(arm.pullProgress) || 0) >= 1
+        ) {
+          const finishDuration = tristarWormAttackFinishDuration(capture);
+          capture.completedPoseElapsed = Math.min(
+            finishDuration,
+            (Number(capture.completedPoseElapsed) || 0) + dt,
+          );
+          capture.attackReady =
+            capture.completedPoseElapsed >= finishDuration;
+        } else {
+          capture.completedPoseElapsed = 0;
+          capture.attackReady = false;
+        }
+        continue;
+      }
       if (
         (Number(arm.latchProgress) || 0) >= 1 &&
         (Number(arm.pullProgress) || 0) >= 1
@@ -12845,6 +13844,11 @@
     tristarFrameContext = null,
   ) {
     if (target.movementMode === "burrowing") {
+      const wormCapture = tristarWormCaptureFor(target);
+      if (wormCapture) {
+        releaseTristarArm(target, wormCapture.armIndex, false);
+      }
+      cancelTristarWormReaches(target);
       resetTristarPulseState(target, false);
       updateBurrowingEnemy(target, dt);
       updateTristarFreeArms(target, dt);
@@ -12855,6 +13859,11 @@
       target.movementMode === "falling" ||
       target.regionType !== BLOCK_TYPES.GROUND
     ) {
+      const wormCapture = tristarWormCaptureFor(target);
+      if (wormCapture) {
+        releaseTristarArm(target, wormCapture.armIndex, false);
+      }
+      cancelTristarWormReaches(target);
       resetTristarPulseState(target, false);
       updateFallingEnemy(target, dt);
       updateTristarFreeArms(target, dt);
@@ -12872,19 +13881,22 @@
       (Number(target.tristarClusterRepositionCooldown) || 0) - dt,
     );
 
-    target.tristarSearchCooldown -= dt;
-    if (target.tristarSearchCooldown <= 0) {
-      target.tristarSearchCooldown = TRISTAR_RULES.scanInterval;
-      refreshTristarHunt(target, tristarFrameContext);
+    const wormHunt = updateTristarWormHunt(target, dt);
+    if (!wormHunt) {
+      target.tristarSearchCooldown -= dt;
+      if (target.tristarSearchCooldown <= 0) {
+        target.tristarSearchCooldown = TRISTAR_RULES.scanInterval;
+        refreshTristarHunt(target, tristarFrameContext);
+      }
     }
 
-    let desiredAngle = target.tristarWanderAngle;
-    let desiredSpeed = target.tristarDesiredSpeed;
+    let desiredAngle = wormHunt?.desiredAngle ?? target.tristarWanderAngle;
+    let desiredSpeed = wormHunt?.desiredSpeed ?? target.tristarDesiredSpeed;
     const huntTarget = target.tristarHuntTarget;
     const releaseRadius =
       TRISTAR_RULES.releaseRadiusBlocks * game.map.cellSize;
     let hasHuntDestination = false;
-    if (huntTarget) {
+    if (!wormHunt && huntTarget) {
       const huntX = nearestPeriodicWorldX(huntTarget.x, target.x);
       const dx = huntX - target.x;
       const dy = huntTarget.y - target.y;
@@ -12902,7 +13914,9 @@
       }
     }
 
-    if (target.tristarClusterHolding) {
+    if (wormHunt) {
+      hasHuntDestination = true;
+    } else if (target.tristarClusterHolding) {
       desiredAngle = target.angle;
       desiredSpeed = 0;
     } else if (!hasHuntDestination) {
@@ -12932,10 +13946,12 @@
       desiredAngle,
       desiredSpeed,
       dt,
-      tristarShouldSuppressLocomotionForPrey(
-        target,
-        tristarFrameContext,
-      ),
+      wormHunt
+        ? Boolean(wormHunt.captured)
+        : tristarShouldSuppressLocomotionForPrey(
+            target,
+            tristarFrameContext,
+          ),
     );
     updateTristarFreeArms(target, dt);
     const heldCount = updateTristarCapturedPrey(
@@ -12945,13 +13961,19 @@
       tristarFrameContext,
     );
     projectTristarFreeArmSeparation(target, dt);
-    target.movementMode = target.tristarClusterHolding
-      ? "tristar-feeding"
-      : heldCount > 0
-        ? "tristar-carrying"
-        : hasHuntDestination
-          ? "tristar-hunting"
-          : "tristar-roaming";
+    target.movementMode = wormHunt?.captured
+      ? "tristar-eating-worm"
+      : wormHunt?.reaching
+        ? "tristar-grabbing-worm"
+        : wormHunt
+          ? "tristar-hunting-worm"
+          : target.tristarClusterHolding
+            ? "tristar-feeding"
+            : heldCount > 0
+              ? "tristar-carrying"
+              : hasHuntDestination
+                ? "tristar-hunting"
+                : "tristar-roaming";
   }
 
   function finishTristarDevours(devouredTargets) {
@@ -13474,6 +14496,26 @@
     );
   }
 
+  function tristarIsOnScreen(target, visibleBounds) {
+    if (!visibleBounds) return false;
+    // The arms are the majority of a Tri-Star's rendered footprint. Using
+    // only its small core here left it visibly on screen for several hundred
+    // world units before worm aggro could activate.
+    const radius = Math.max(
+      0,
+      Number(target.radius) || 0,
+      tristarArmReach(),
+    );
+    const referenceX = visibleBounds.x + visibleBounds.width * 0.5;
+    const targetX = nearestPeriodicWorldX(target.x, referenceX);
+    return !(
+      targetX + radius < visibleBounds.x ||
+      targetX - radius > visibleBounds.x + visibleBounds.width ||
+      target.y + radius < visibleBounds.y ||
+      target.y - radius > visibleBounds.y + visibleBounds.height
+    );
+  }
+
   function updateTargets(dt) {
     // Snapshot every target before anything moves. Tri-Star arms update prey
     // later in this pass, so acid still receives the prey's true full-frame
@@ -13489,6 +14531,9 @@
     const targetById = needsTristarTargetIndex || needsTongueTargetIndex
       ? game.targetById
       : null;
+    const tristarVisibleBounds = needsTristarTargetIndex
+      ? getVisibleWorldBounds(0)
+      : null;
     game.targetByIdReady = Boolean(targetById);
     if (targetById) {
       targetById.clear();
@@ -13496,6 +14541,10 @@
     game.targets.forEach((target) => {
       targetById?.set(target.id, target);
       keepEnemyInsideWorld(target);
+      if (target.kind === ENEMY_TYPES.TRISTAR) {
+        target.tristarDetailedTerrainAvoidance =
+          tristarIsOnScreen(target, tristarVisibleBounds);
+      }
       target.acidPreviousX = target.x;
       target.acidPreviousY = target.y;
       target.healthBarTimer = Math.max(
@@ -13607,7 +14656,11 @@
         target,
         tristarMinimapBounds,
       );
-      if (markerIsVisible || tristarHasHeldPrey(target)) {
+      if (
+        target.tristarDetailedTerrainAvoidance ||
+        markerIsVisible ||
+        tristarHasHeldPrey(target)
+      ) {
         leaveTristarOffMinimapSimulation(target);
         updateTristar(target, dt, devouredTargets, tristarFrameContext);
       } else {
@@ -13705,6 +14758,7 @@
     game.acidLastEmittedParticle = null;
     game.acidEmissionAccumulator = 0;
     game.spitterAimAngle = null;
+    resetSpitterAcidGuide();
     game.acidSpraying = false;
     acidLatchedTargetSeconds.clear();
     acidActiveTargets.clear();
@@ -14274,18 +15328,20 @@
     const headX = nearestPeriodicWorldX(game.head.x, game.previous.x);
     const physicalDeltaX = headX - game.previous.x;
     const physicalDeltaY = game.head.y - game.previous.y;
-    const previousAngle = Number.isFinite(game.previousEatHitbox?.angle)
+    const previousHeadAngle = Number.isFinite(game.previousEatHitbox?.angle)
       ? game.previousEatHitbox.angle
       : getWormHeadAngle();
-    const currentAngle = getWormHeadAngle();
+    const currentHeadAngle = getWormHeadAngle();
     const physicalAngleDelta = Math.atan2(
-      Math.sin(currentAngle - previousAngle),
-      Math.cos(currentAngle - previousAngle),
+      Math.sin(currentHeadAngle - previousHeadAngle),
+      Math.cos(currentHeadAngle - previousHeadAngle),
     );
     return {
       x: currentPose.x - physicalDeltaX,
       y: currentPose.y - physicalDeltaY,
-      angle: currentPose.angle - physicalAngleDelta,
+      angle: Number.isFinite(game.spitterAcidGuidePreviousAngle)
+        ? game.spitterAcidGuidePreviousAngle
+        : currentPose.angle - physicalAngleDelta,
     };
   }
 
@@ -14858,7 +15914,10 @@
         consumedTargets.push(target);
       }
     });
-    finishConsumedTargets(consumedTargets, false);
+    finishConsumedTargets(consumedTargets, {
+      emitFinalSplatter: false,
+      restoreWormHealth: false,
+    });
     if (game.latchAttack?.targetDefeated) {
       releaseBoostLatchAttack(true, false);
       game.boosting = false;
@@ -14867,6 +15926,10 @@
 
   function updateAcidAbility(dt) {
     updateSpitterAim(dt);
+    const renderedHeadPose = spitterHeadPoseShouldRemainActive()
+      ? buildSpitterCraneRenderState().headPose
+      : null;
+    updateSpitterAcidGuide(dt, renderedHeadPose?.angle);
     acidLatchedTargetSeconds.clear();
     acidActiveTargets.clear();
     clearAcidTargetBroadphase();
@@ -14877,7 +15940,9 @@
     const sprayActive = spitterSprayIsActive();
     const guidedAcidIsActive = spitterHasHeadGuidedAcid();
     const guidePose =
-      sprayActive || guidedAcidIsActive ? spitterAcidNozzlePose() : null;
+      sprayActive || guidedAcidIsActive
+        ? spitterAcidNozzlePose(renderedHeadPose)
+        : null;
     const guidePoseMode = spitterCranePoseIsActive() ? 1 : 0;
     const previousGuidePose = guidePose
       ? safePreviousAcidGuidePose(guidePose)
@@ -15142,6 +16207,21 @@
     );
   }
 
+  function restoreWormHealthFromEatenTargets(targets) {
+    if (!targets.length || game.health <= 0 || game.wormDefeated) return 0;
+    const maximumHealth = wormMaximumHealth();
+    const previousHealth = game.health;
+    const restoredHealth = targets.reduce(
+      (total, target) =>
+        total +
+        enemyMaximumHealth(target) *
+          WORM_HEALTH_RULES.eatenEnemyMaximumHealthRestoreScale,
+      0,
+    );
+    game.health = Math.min(maximumHealth, game.health + restoredHealth);
+    return game.health - previousHealth;
+  }
+
   function preyClassForHealth(health, biteDamage = wormBiteDamage()) {
     const maximumHealth = Math.max(0, Number(health) || 0);
     const force = Math.max(0.001, Number(biteDamage) || 0.001);
@@ -15361,6 +16441,15 @@
     return 2 ** Math.min(maximumDoublings, elapsed / doublingTime);
   }
 
+  function discardUncommittedBoostLatch() {
+    const latch = game.latchAttack;
+    if (!latch) return;
+    game.latchAttack = null;
+    if (latch.pausedTristarWormHunt && !latch.targetDefeated) {
+      resetTristarWormHuntAfterLatch(latch.target);
+    }
+  }
+
   function clearSprinterAreaTarget(clearCompletion = false) {
     const hadTarget = Boolean(game.sprinterAreaTarget);
     const latch = game.latchAttack;
@@ -15369,7 +16458,7 @@
         // The command has not touched its prey yet, so cancellation must keep
         // the Sprinter's current momentum instead of using the stationary
         // release path of a committed bite.
-        game.latchAttack = null;
+        discardUncommittedBoostLatch();
       } else {
         releaseBoostLatchAttack(true, latch.phase === "biting");
       }
@@ -15475,7 +16564,7 @@
       return;
     }
     if (latch.phase === "approach") {
-      game.latchAttack = null;
+      discardUncommittedBoostLatch();
       return;
     }
     // A committed target is normally stationary, but another system can
@@ -15580,7 +16669,7 @@
         if (game.latchAttack.hardPursuitCommitted) {
           game.boostLatchReady = true;
         }
-        game.latchAttack = null;
+        discardUncommittedBoostLatch();
       } else {
         // An explicit area order also interrupts a committed bite instead of
         // leaving the new marker queued behind a stationary four-bite cycle.
@@ -15609,6 +16698,8 @@
     // A latch is single-owner state. Replacing it would strand the previous
     // target with `latched = true` and make that enemy frozen/untargetable.
     if (!target || game.latchAttack) return false;
+    const pausedTristarWormHunt =
+      pauseTristarWormHuntForLatch(target);
     game.heading = Number.isFinite(forcedLockAngle)
       ? forcedLockAngle
       : getWormHeadAngle();
@@ -15629,6 +16720,7 @@
       captureOnArrival,
       hardPursuitCommitted: !captureOnArrival,
       areaHunt,
+      pausedTristarWormHunt,
     };
     // A click-owned soft pursuit does not consume the hard-latch
     // release/repress edge. Ordinary Boost acquisition is hard-only.
@@ -15752,6 +16844,9 @@
       game.mouthBitePhase = "idle";
       game.mouthBiteHoldTimer = 0;
       game.mouthOpen = 0;
+    }
+    if (latch.pausedTristarWormHunt && !latch.targetDefeated) {
+      resetTristarWormHuntAfterLatch(latch.target);
     }
   }
 
@@ -17931,7 +19026,13 @@
     game.capturedTargets.push(target);
   }
 
-  function finishConsumedTargets(consumedTargets, emitFinalSplatter = true) {
+  function finishConsumedTargets(
+    consumedTargets,
+    {
+      emitFinalSplatter = true,
+      restoreWormHealth = true,
+    } = {},
+  ) {
     if (consumedTargets.length === 0) return;
     const consumedMeatCount = consumedTargets.reduce(
       (count, target) =>
@@ -17978,6 +19079,9 @@
         0,
       ),
     );
+    if (restoreWormHealth) {
+      restoreWormHealthFromEatenTargets(consumedTargets);
+    }
   }
 
   function updateCapturedTargets(dt) {
@@ -18005,7 +19109,9 @@
         points + Math.max(0, Number(target.scoreValue) || 0),
       0,
     );
-    finishConsumedTargets(consumedTargets, false);
+    finishConsumedTargets(consumedTargets, {
+      emitFinalSplatter: false,
+    });
     if (consumedPointValue > 0) {
       game.boostCharge = Math.min(
         boostCapacity(),
@@ -19260,6 +20366,256 @@
     });
   }
 
+  function updateLethalTristarWormDevour(capture) {
+    if (
+      !capture?.willDefeatWorm ||
+      (Number(capture.completedPoseElapsed) || 0) <= 0 ||
+      game.segments.length === 0
+    ) {
+      return;
+    }
+    if (!capture.lethalSegmentStarts) {
+      capture.lethalSegmentStarts = new Array(game.segments.length);
+      const pose = getEatHitboxPose();
+      capture.lethalHeadStartPose = {
+        x: pose.x,
+        y: pose.y,
+        angle: pose.angle,
+      };
+      capture.lethalHeadRenderPose = {
+        x: pose.x,
+        y: pose.y,
+        angle: pose.angle,
+      };
+    }
+
+    const segmentCount = Math.min(
+      capture.lethalSegmentCount,
+      game.segments.length,
+    );
+    const devourDuration = tristarLethalDevourDuration(capture);
+    const devourProgress = clamp(
+      capture.completedPoseElapsed / devourDuration,
+      0,
+      1,
+    );
+    const segmentSweep = devourProgress * segmentCount;
+    for (let index = 0; index < segmentCount; index += 1) {
+      const localProgress = clamp(segmentSweep - index, 0, 1);
+      if (localProgress <= 0) continue;
+      const segment = game.segments[index];
+      let start = capture.lethalSegmentStarts[index];
+      if (!start) {
+        start = { x: segment.x, y: segment.y };
+        capture.lethalSegmentStarts[index] = start;
+      }
+      const centerX = nearestPeriodicWorldX(capture.predator.x, start.x);
+      const centerY = capture.predator.y;
+      const easedProgress = 1 - (1 - localProgress) ** 3;
+      const approachAngle = Math.atan2(
+        centerY - start.y,
+        centerX - start.x,
+      );
+      const curlOffset =
+        Math.sin(localProgress * Math.PI) *
+        bodyRadius(index, segmentCount) *
+        0.42 *
+        (index % 2 === 0 ? -1 : 1);
+      segment.x =
+        lerp(start.x, centerX, easedProgress) -
+        Math.sin(approachAngle) * curlOffset;
+      segment.y =
+        lerp(start.y, centerY, easedProgress) +
+        Math.cos(approachAngle) * curlOffset;
+    }
+
+    const consumedCount = Math.min(
+      segmentCount,
+      Math.floor(segmentSweep + 0.000001),
+    );
+    const previouslyConsumed = Math.min(
+      segmentCount,
+      Number(capture.lethalConsumedSegmentCount) || 0,
+    );
+    for (let index = previouslyConsumed; index < consumedCount; index += 1) {
+      const start = capture.lethalSegmentStarts[index] || game.segments[index];
+      const centerX = nearestPeriodicWorldX(capture.predator.x, start.x);
+      const incomingAngle = Math.atan2(
+        capture.predator.y - start.y,
+        centerX - start.x,
+      );
+      spawnWormChunkSplash(
+        centerX,
+        capture.predator.y,
+        incomingAngle,
+        Math.max(1, wormScale()),
+      );
+      game.shake = Math.max(game.shake, 2.2);
+    }
+    capture.lethalConsumedSegmentCount = consumedCount;
+
+    const headStart = capture.lethalHeadStartPose;
+    const headProgress = clamp(segmentSweep, 0, 1);
+    const easedHeadProgress = 1 - (1 - headProgress) ** 3;
+    const headCenterX = nearestPeriodicWorldX(
+      capture.predator.x,
+      headStart.x,
+    );
+    capture.lethalHeadRenderPose.x = lerp(
+      headStart.x,
+      headCenterX,
+      easedHeadProgress,
+    );
+    capture.lethalHeadRenderPose.y = lerp(
+      headStart.y,
+      capture.predator.y,
+      easedHeadProgress,
+    );
+    capture.lethalHeadRenderPose.angle = headStart.angle;
+  }
+
+  function updateTristarCapturedWormBody(dt) {
+    const capture = game.tristarWormCapture;
+    if (!capture || game.segments.length === 0 || !(dt > 0)) return;
+    if (capture.bodyVelocities.length !== game.segments.length) {
+      capture.bodyVelocities = game.segments.map(() => ({ x: 0, y: 0 }));
+    }
+    const oldPositions = game.segments.map((segment) => ({
+      x: segment.x,
+      y: segment.y,
+    }));
+    const retention = Math.pow(
+      TRISTAR_RULES.wormGrabBodyVelocityRetention,
+      dt * 60,
+    );
+    for (let index = 0; index < game.segments.length; index += 1) {
+      const segment = game.segments[index];
+      const velocity = capture.bodyVelocities[index];
+      if (
+        getBlockAtWorld(segment.x, segment.y)?.type === BLOCK_TYPES.AIR
+      ) {
+        velocity.y += worldGravityAcceleration() * dt;
+      }
+      velocity.x *= retention;
+      velocity.y *= retention;
+      segment.x += velocity.x * dt;
+      segment.y += velocity.y * dt;
+    }
+
+    const grabbedIndex = clamp(
+      capture.grabbedSegmentIndex,
+      0,
+      game.segments.length - 1,
+    );
+    const pinnedX = nearestPeriodicWorldX(
+      capture.pullX,
+      game.segments[grabbedIndex].x,
+    );
+    const pinnedY = capture.pullY;
+    const spacing = wormSegmentSpacing();
+    for (
+      let iteration = 0;
+      iteration < TRISTAR_RULES.wormGrabBodyConstraintIterations;
+      iteration += 1
+    ) {
+      game.segments[grabbedIndex].x = pinnedX;
+      game.segments[grabbedIndex].y = pinnedY;
+      for (let index = 1; index < game.segments.length; index += 1) {
+        const leader = game.segments[index - 1];
+        const segment = game.segments[index];
+        let dx = segment.x - leader.x;
+        let dy = segment.y - leader.y;
+        let distance = magnitude(dx, dy);
+        if (distance < 0.0001) {
+          dx = -Math.cos(game.heading);
+          dy = -Math.sin(game.heading);
+          distance = 1;
+        }
+        const correction = (distance - spacing) / distance;
+        if (index - 1 === grabbedIndex) {
+          segment.x -= dx * correction;
+          segment.y -= dy * correction;
+        } else if (index === grabbedIndex) {
+          leader.x += dx * correction;
+          leader.y += dy * correction;
+        } else {
+          const halfCorrection = correction * 0.5;
+          leader.x += dx * halfCorrection;
+          leader.y += dy * halfCorrection;
+          segment.x -= dx * halfCorrection;
+          segment.y -= dy * halfCorrection;
+        }
+      }
+    }
+    game.segments[grabbedIndex].x = pinnedX;
+    game.segments[grabbedIndex].y = pinnedY;
+    const minimumY = 22 + wormDimension("collisionRadius");
+    const maximumY = game.height - 22 - wormDimension("collisionRadius");
+    game.segments.forEach((segment) => {
+      segment.y = clamp(segment.y, minimumY, maximumY);
+    });
+    updateLethalTristarWormDevour(capture);
+    game.head.x = game.segments[0].x;
+    game.head.y = game.segments[0].y;
+    if (game.segments.length > 1) {
+      game.heading = Math.atan2(
+        game.segments[0].y - game.segments[1].y,
+        game.segments[0].x - game.segments[1].x,
+      );
+    }
+
+    const maximumBodySpeed = wormMaximumSpeed() * 3;
+    game.segments.forEach((segment, index) => {
+      const displacementX = segment.x - oldPositions[index].x;
+      const displacementY = segment.y - oldPositions[index].y;
+      const displacement = magnitude(displacementX, displacementY);
+      const scale = displacement > 0.0001
+        ? Math.min(maximumBodySpeed, displacement / dt) / displacement
+        : 0;
+      capture.bodyVelocities[index].x = displacementX * scale;
+      capture.bodyVelocities[index].y = displacementY * scale;
+    });
+    game.velocity.x = capture.bodyVelocities[0].x;
+    game.velocity.y = capture.bodyVelocities[0].y;
+    game.speed = magnitude(game.velocity.x, game.velocity.y);
+  }
+
+  function updateTristarCapturedWormPhysics(dt, previousVelocityX, previousVelocityY) {
+    game.boosting = false;
+    game.acidSpraying = false;
+    game.speed = 0;
+    game.velocity.x = 0;
+    game.velocity.y = 0;
+    updateTargets(dt);
+    updateTristarCapturedWormBody(dt);
+    const completedCapture = game.tristarWormCapture;
+    if (completedCapture?.attackReady) {
+      completeTristarWormAttack(
+        completedCapture.predator,
+        completedCapture.armIndex,
+        completedCapture.proxy,
+      );
+    }
+    game.inGround = headIsInGround();
+    updateMouthAnimation(dt);
+    updateCapturedTargets(dt);
+    game.transitionEffectCooldown = Math.max(
+      0,
+      game.transitionEffectCooldown - dt,
+    );
+    updateAcidAbility(dt);
+    refillRoundTargetsTimeSliced();
+    updateAcidTunnelDecay();
+    updateTunnelDecay();
+    updateParticles(dt);
+    game.acceleration.x =
+      (game.velocity.x - previousVelocityX) / Math.max(dt, 0.000001);
+    game.acceleration.y =
+      (game.velocity.y - previousVelocityY) / Math.max(dt, 0.000001);
+    game.shake *= Math.pow(0.0002, dt);
+    if (game.wormDefeated) showDeathScreen();
+  }
+
   function updatePhysics(dt) {
     // Repair the compact ownership index once per frame as well as updating
     // it at mutations. This keeps developer/test-injected tongues safe while
@@ -19269,6 +20625,10 @@
     const radius = wormDimension("collisionRadius");
     const previousVelocityX = game.velocity.x;
     const previousVelocityY = game.velocity.y;
+    game.tristarWormDamageInvulnerability = Math.max(
+      0,
+      game.tristarWormDamageInvulnerability - dt,
+    );
     game.stoneSurfaceRelockTimer = Math.max(
       0,
       game.stoneSurfaceRelockTimer - dt,
@@ -19284,6 +20644,14 @@
     game.previous.x = game.head.x;
     game.previous.y = game.head.y;
     game.previousEatHitbox = getEatHitboxPose();
+    if (game.tristarWormCapture) {
+      updateTristarCapturedWormPhysics(
+        dt,
+        previousVelocityX,
+        previousVelocityY,
+      );
+      return;
+    }
     const acidSprayHeld = spitterSprayControlHeld();
     const acidSprayRequested =
       acidSprayHeld || Boolean(spitterAutomaticLatchAcidTarget());
@@ -19323,7 +20691,7 @@
       ) {
         game.boostLatchReady = true;
       }
-      game.latchAttack = null;
+      discardUncommittedBoostLatch();
     }
     const areaLatchControlHeld = Boolean(
       game.latchAttack?.areaHunt &&
@@ -19555,12 +20923,14 @@
     finalizePendingSprinterCapture();
 
     updateTargets(dt);
+    const capturedByTristar = Boolean(game.tristarWormCapture);
     sprinterAreaTarget = activeSprinterAreaTarget();
     refreshSprinterAreaHuntTarget(
       sprinterAreaTarget,
       true,
     );
     if (
+      !capturedByTristar &&
       heavyTongueGrapple?.phase === "heavy-grappled" &&
       !game.latchAttack
     ) {
@@ -19581,10 +20951,12 @@
     if (game.inGround) {
       endStoneSurfaceContact();
     }
-    eatTargetsAlongHeadPath(
-      stoneCollisionResolved || worldBoundaryResolved,
-    );
-    updateAutomaticBoostTongueTargeting(dt);
+    if (!capturedByTristar) {
+      eatTargetsAlongHeadPath(
+        stoneCollisionResolved || worldBoundaryResolved,
+      );
+      updateAutomaticBoostTongueTargeting(dt);
+    }
     updateTongues(dt);
     updateMouthAnimation(dt);
     if (game.latchAttack?.releasePending) {
@@ -19612,13 +20984,13 @@
     updateCapturedTargets(dt);
     game.transitionEffectCooldown = Math.max(0, game.transitionEffectCooldown - dt);
 
-    if (game.wasInGround && !game.inGround) {
+    if (!capturedByTristar && game.wasInGround && !game.inGround) {
       if (game.transitionEffectCooldown === 0) {
         game.shake = Math.min(2.5, 0.6 + game.speed / 420);
         spawnParticles(game.head.x, game.head.y, 10, "burst");
         game.transitionEffectCooldown = 0.1;
       }
-    } else if (!game.wasInGround && game.inGround) {
+    } else if (!capturedByTristar && !game.wasInGround && game.inGround) {
       game.speed = clamp(
         magnitude(game.velocity.x, game.velocity.y),
         0,
@@ -19632,7 +21004,7 @@
       }
     }
 
-    if (game.inGround) {
+    if (!capturedByTristar && game.inGround) {
       if (game.speed > 1) {
         tunnelGroundBlocksAlongPath(
           game.previous.x,
@@ -19654,7 +21026,9 @@
       game.acceleration.y = 0;
     }
 
-    if (game.latchAttack?.phase === "biting") {
+    if (capturedByTristar) {
+      updateTristarCapturedWormBody(dt);
+    } else if (game.latchAttack?.phase === "biting") {
       updateBoostLatchBody(dt);
     } else if (!activeHeavyTongueGrapple()) {
       if (recordHeadPath()) updateSegments();
@@ -20806,7 +22180,9 @@
     gameShell.dataset.levelLoaded = "false";
     game.started = false;
     game.paused = false;
+    game.wormDefeated = false;
     gameShell.dataset.paused = "false";
+    gameShell.dataset.defeated = "false";
     game.activeWorldId = null;
     game.activeWorldName = "";
     game.clouds = [];
@@ -20858,6 +22234,7 @@
   }
 
   function showHomeScreen() {
+    hideDeathScreen();
     if (game.levelLoaded) unloadLevel();
     else gameShell.dataset.levelLoaded = "false";
     toggleDevMenu(false);
@@ -23931,6 +25308,14 @@
   function getTristarArmPoints(target, armIndex) {
     const visualScale = target.captureScale ?? 1;
     const arm = target.tristarArms?.[armIndex];
+    if (arm?.wormReachActive) {
+      return tristarArmPointsAtProgress(
+        target,
+        armIndex,
+        arm.latchProgress,
+        0,
+      );
+    }
     const prey = arm?.prey;
     const hasLatchedPrey = Boolean(
       prey &&
@@ -23969,6 +25354,32 @@
       prey.tristarCaptorId === target.id &&
       prey.tristarCaptorArm === armIndex,
     );
+    if (arm?.wormReachActive) {
+      let planTurns = heldPlanTurnBuffer;
+      if (!planTurns) {
+        ensureTristarHeldInertiaBuffers(arm);
+        planTurns = arm.heldPlanTurns;
+      }
+      fillTristarArmPlanTurns(
+        arm,
+        planTurns,
+        arm.latchProgress,
+        0,
+      );
+      fillTristarArmPointsFromTurns(
+        target,
+        armIndex,
+        planTurns,
+        points,
+        visualScale,
+        tristarHeldArmLengthScaleAtProgress(
+          arm,
+          arm.latchProgress,
+          0,
+        ),
+      );
+      return points;
+    }
     if (tristarFreeArmStateIsValid(arm)) {
       return tristarArmPointsFromRootHeadings(
         tristarArmRoot(target, armIndex, visualScale),
@@ -24832,7 +26243,6 @@
     });
   }
 
-
   function drawParticles(renderLayer = "back") {
     game.particles.forEach((particle) => {
       if ((particle.renderLayer || "back") !== renderLayer) return;
@@ -24881,6 +26291,10 @@
             ? particle.tone > 0.5
               ? palette.splatterBright
               : palette.splatter
+          : particle.kind === "worm-chunk"
+            ? particle.tone > 0.72
+              ? palette.wormDark
+              : palette.worm
             : palette.soilDark;
       ctx.save();
       ctx.translate(particle.x, particle.y);
@@ -24889,6 +26303,50 @@
         ctx.beginPath();
         ctx.arc(0, 0, liquidSize, 0, TAU);
         ctx.fill();
+      } else if (particle.kind === "worm-chunk") {
+        const chunkSize = particle.size * lerp(0.68, 1, alpha);
+        ctx.rotate(Number(particle.rotation) || 0);
+        ctx.beginPath();
+        if (particle.chunkShape === "drop") {
+          ctx.ellipse(0, 0, chunkSize * 0.72, chunkSize, 0, 0, TAU);
+        } else {
+          ctx.moveTo(-chunkSize * 1.15, -chunkSize * 0.4);
+          ctx.quadraticCurveTo(
+            -chunkSize * 0.45,
+            -chunkSize * 0.95,
+            chunkSize * 0.75,
+            -chunkSize * 0.55,
+          );
+          ctx.quadraticCurveTo(
+            chunkSize * 1.25,
+            0,
+            chunkSize * 0.72,
+            chunkSize * 0.62,
+          );
+          ctx.quadraticCurveTo(
+            -chunkSize * 0.3,
+            chunkSize * 0.88,
+            -chunkSize * 1.15,
+            -chunkSize * 0.4,
+          );
+          ctx.closePath();
+        }
+        ctx.save();
+        ctx.clip();
+        ctx.fillRect(-chunkSize * 1.3, -chunkSize, chunkSize * 2.6, chunkSize * 2);
+        if (wormSprites.segment.complete && wormSprites.segment.naturalWidth > 0) {
+          ctx.drawImage(
+            wormSprites.segment,
+            -chunkSize * 1.35,
+            -chunkSize * 1.35,
+            chunkSize * 2.7,
+            chunkSize * 2.7,
+          );
+        }
+        ctx.restore();
+        ctx.strokeStyle = palette.wormDark;
+        ctx.lineWidth = Math.max(0.55, chunkSize * 0.18);
+        ctx.stroke();
       } else {
         ctx.rotate((particle.x + particle.y) * 0.03);
         ctx.fillRect(-particle.size, -particle.size * 0.5, particle.size * 2, particle.size);
@@ -24978,12 +26436,30 @@
     renderState = buildSpitterCraneRenderState(),
   ) {
     const segments = renderState.outputSegments;
+    if (segments.length === 0) return;
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
-    drawTaperedBody(segments, palette.wormDark, true);
-    drawTaperedBody(segments, palette.worm);
+    if (segments.length === 1) {
+      ctx.beginPath();
+      ctx.arc(
+        segments[0].x,
+        segments[0].y,
+        bodyRadius(0, 1, true),
+        0,
+        TAU,
+      );
+      ctx.fillStyle = palette.wormDark;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(segments[0].x, segments[0].y, bodyRadius(0, 1), 0, TAU);
+      ctx.fillStyle = palette.worm;
+      ctx.fill();
+    } else {
+      drawTaperedBody(segments, palette.wormDark, true);
+      drawTaperedBody(segments, palette.worm);
+    }
 
     for (let index = 2; index < segments.length - 1; index += 2) {
       const point = segments[index];
@@ -25002,10 +26478,14 @@
       ctx.restore();
     }
 
+    if (renderState.headVisible === false) {
+      ctx.restore();
+      return;
+    }
     const head = segments[0];
     const pathHeadAngle = Math.atan2(
-      head.y - segments[1].y,
-      head.x - segments[1].x,
+      head.y - (segments[1]?.y ?? head.y - Math.sin(game.heading)),
+      head.x - (segments[1]?.x ?? head.x - Math.cos(game.heading)),
     );
     const headAngle = spitterHeadPoseShouldRemainActive()
       ? renderState.headPose.angle
@@ -25751,80 +27231,6 @@
     return hasConnections;
   }
 
-  function createAcidFluidPatternTile(color) {
-    const size = ACID_RULES.fluidPatternTileSize;
-    const tile =
-      typeof OffscreenCanvas === "function"
-        ? new OffscreenCanvas(size, size)
-        : document.createElement("canvas");
-    tile.width = size;
-    tile.height = size;
-    const tileContext = tile.getContext("2d");
-    const image = tileContext.createImageData(size, size);
-    const data = image.data;
-    const selected = hexColorToRgb(
-      normalizeHexColor(color) || DEFAULT_ACID_COLORS[0],
-    );
-    const shade = (target, amount) =>
-      selected.map((channel, index) =>
-        lerp(channel, target[index], amount),
-      );
-    const shadow = shade([0, 0, 0], 0.55);
-    const base = shade([0, 0, 0], 0.2);
-    const middle = selected;
-    const highlight = shade([255, 255, 255], 0.36);
-
-    // Integer-frequency waves are periodic on both axes. The first pixel
-    // after any edge therefore continues the same field from the opposite
-    // edge, producing a genuinely seamless, low-contrast liquid texture.
-    for (let y = 0; y < size; y += 1) {
-      const v = (y + 0.5) / size;
-      for (let x = 0; x < size; x += 1) {
-        const u = (x + 0.5) / size;
-        const field =
-          Math.sin(TAU * u + 0.72 * Math.sin(TAU * v)) * 0.54 +
-          Math.sin(TAU * 2 * (u + v)) * 0.28 +
-          Math.cos(TAU * (3 * u - 2 * v)) * 0.18;
-        const tone = clamp(0.5 + field * 0.32, 0, 1);
-        let red;
-        let green;
-        let blue;
-        if (tone < 0.42) {
-          const amount = tone / 0.42;
-          red = lerp(shadow[0], base[0], amount);
-          green = lerp(shadow[1], base[1], amount);
-          blue = lerp(shadow[2], base[2], amount);
-        } else if (tone < 0.76) {
-          const amount = (tone - 0.42) / 0.34;
-          red = lerp(base[0], middle[0], amount);
-          green = lerp(base[1], middle[1], amount);
-          blue = lerp(base[2], middle[2], amount);
-        } else {
-          const amount = (tone - 0.76) / 0.24;
-          red = lerp(middle[0], highlight[0], amount);
-          green = lerp(middle[1], highlight[1], amount);
-          blue = lerp(middle[2], highlight[2], amount);
-        }
-        const offset = (y * size + x) * 4;
-        data[offset] = Math.round(red);
-        data[offset + 1] = Math.round(green);
-        data[offset + 2] = Math.round(blue);
-        data[offset + 3] = 255;
-      }
-    }
-    tileContext.putImageData(image, 0, 0);
-    return tile;
-  }
-
-  function acidFluidPatternTile(color) {
-    let tile = acidFluidPatternTileCache.get(color);
-    if (!tile) {
-      tile = createAcidFluidPatternTile(color);
-      acidFluidPatternTileCache.set(color, tile);
-    }
-    return tile;
-  }
-
   function createAcidClusterAtlas(dropletCount) {
     const tileSize = ACID_RULES.visualClusterTileSize;
     const columns = ACID_RULES.visualClusterAtlasColumns;
@@ -25853,11 +27259,6 @@
       const centerX = (variant % columns + 0.5) * tileSize;
       const centerY = (Math.floor(variant / columns) + 0.5) * tileSize;
       const variantColor = acidColorLut[variant] || DEFAULT_ACID_COLORS[0];
-      const fluidPattern =
-        atlasContext.createPattern(
-          acidFluidPatternTile(variantColor),
-          "repeat",
-        ) || variantColor;
       const geometry = new Float32Array(dropletCount * 3);
       const rotation = random() * TAU;
       for (let index = 0; index < dropletCount; index += 1) {
@@ -25899,7 +27300,7 @@
           ACID_RULES.visualDropletMinimumRadiusScale *
           2 *
           pixelsPerRadius;
-        atlasContext.strokeStyle = fluidPattern;
+        atlasContext.strokeStyle = variantColor;
         atlasContext.stroke();
       }
 
@@ -25916,7 +27317,7 @@
           TAU,
         );
       }
-      atlasContext.fillStyle = fluidPattern;
+      atlasContext.fillStyle = variantColor;
       atlasContext.fill();
     }
 
@@ -25992,11 +27393,10 @@
 
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    ctx.globalAlpha = 0.96;
 
     if (traceAcidRibbonConnections(bounds, ACID_RULES.linkCoreRadiusScale)) {
       // One neutral batched underlay keeps every connection to a single fill;
-      // the overlaid clusters carry each particle's selected gradient hue.
+      // the overlaid clusters carry each particle's exact selected color.
       ctx.fillStyle = "#171217";
       ctx.fill();
     }
@@ -26032,11 +27432,14 @@
     }
 
     const segments = renderState.outputSegments;
-    const bodyLayout = createBodySpriteLayout(segments);
-    const visibleBounds = getVisibleWorldBounds(0);
-    drawCompositeBodySpriteLayer(segments, bodyLayout, visibleBounds);
-    drawSegmentBands(segments, bodyLayout, visibleBounds);
+    if (segments.length > 0) {
+      const bodyLayout = createBodySpriteLayout(segments);
+      const visibleBounds = getVisibleWorldBounds(0);
+      drawCompositeBodySpriteLayer(segments, bodyLayout, visibleBounds);
+      drawSegmentBands(segments, bodyLayout, visibleBounds);
+    }
 
+    if (renderState.headVisible === false) return;
     const headPose = renderState.headPose;
     drawJawSpriteSet(
       ctx,
@@ -26746,7 +28149,7 @@
     drawAcidFluid();
     drawParticles("back");
     drawTongues();
-    const wormRenderState = buildSpitterCraneRenderState();
+    const wormRenderState = buildActiveWormRenderState();
     drawWorm(wormRenderState);
     drawParticles("front");
     drawEnemyHealthBars();
@@ -26806,13 +28209,25 @@
       game.boosting || game.acidSpraying,
     );
     boostMetric.classList.toggle("depleted", game.boostCharge <= 0.001);
-    stateReadout.textContent = activeHeavyTongueGrapple()
-      ? "Tongue grapple"
-      : game.inGround
-        ? "Subterranean"
-        : game.onStoneSurface
-          ? "Surface rolling"
-          : "Airborne";
+    const maximumHealth = Math.max(1, wormMaximumHealth());
+    const currentHealth = clamp(game.health, 0, maximumHealth);
+    const healthRatio = currentHealth / maximumHealth;
+    wormHealthReadout.textContent = String(Math.round(currentHealth));
+    wormHealthMaximumReadout.textContent = String(Math.round(maximumHealth));
+    wormHealthMeterFill.style.transform = `scaleX(${healthRatio})`;
+    wormHealthMeter.setAttribute("aria-valuemax", String(maximumHealth));
+    wormHealthMeter.setAttribute("aria-valuenow", currentHealth.toFixed(2));
+    wormHealthHud.classList.toggle("injured", healthRatio <= 0.5);
+    wormHealthHud.classList.toggle("critical", healthRatio <= 0.25);
+    stateReadout.textContent = game.tristarWormCapture
+      ? "Tri-Star captured"
+      : activeHeavyTongueGrapple()
+        ? "Tongue grapple"
+        : game.inGround
+          ? "Subterranean"
+          : game.onStoneSurface
+            ? "Surface rolling"
+            : "Airborne";
     statePill.classList.toggle(
       "airborne",
       !game.inGround && !game.onStoneSurface,
@@ -26993,6 +28408,10 @@
   canvas.addEventListener("pointerdown", (event) => {
     if (!event.isPrimary) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (game.tristarWormCapture) {
+      event.preventDefault();
+      return;
+    }
     if (
       wormHasAbility(WORM_ABILITIES.SPRINT) &&
       game.levelLoaded &&
@@ -27489,6 +28908,11 @@
   mainMenuButton.addEventListener("click", openMainMenu);
   mainMenuCloseButton.addEventListener("click", closeMainMenu);
   menuContinueButton.addEventListener("click", closeMainMenu);
+  deathRestartButton.addEventListener("click", restartAfterDeath);
+  deathReturnHomeButton.addEventListener("click", () => {
+    hideDeathScreen();
+    showHomeScreen();
+  });
   gameMenu.addEventListener("click", (event) => {
     if (event.target === gameMenu) closeMainMenu();
   });
