@@ -8,6 +8,13 @@
       content="WORM — a tiny, high-speed underground flight experiment."
     />
     <title>WORM — Dig. Launch. Dive.</title>
+    <script>
+      document.addEventListener(
+        "contextmenu",
+        (event) => event.preventDefault(),
+        { capture: true },
+      );
+    </script>
     <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260902-worm-health-hud-v12" />
     <link rel="preload" as="image" href="./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-upper.png?v=20260815-shared-current-default" />
@@ -287,10 +294,17 @@
             </span>
             <input id="dev-worm-level" type="number" min="0" max="100" step="1" placeholder="Auto" inputmode="numeric" />
           </label>
+          <label class="dev-setting" for="dev-level-cost-multiplier">
+            <span class="dev-option-copy">
+              <strong>Level cost multiplier</strong>
+              <small id="dev-level-cost-mode">1× point requirements</small>
+            </span>
+            <input id="dev-level-cost-multiplier" type="number" min="0.01" max="100" step="0.01" value="1" inputmode="decimal" />
+          </label>
           <section class="dev-enemy-spawner" aria-labelledby="dev-enemy-heading">
             <span class="dev-option-copy" id="dev-enemy-heading">
-              <strong>Place enemy</strong>
-              <small>Add an enemy inside the current view · 500 max per type</small>
+              <strong>Replace enemy</strong>
+              <small>Destroy one at random and place the selected type in view · 500 max per type</small>
             </span>
             <div class="dev-enemy-buttons" id="dev-enemy-buttons"></div>
           </section>
@@ -632,6 +646,6 @@
 
     </main>
 
-    <script src="./game.js?v=20260902-tristar-lethal-devour-v43"></script>
+    <script src="./game.js?v=20260904-tristar-beetle-prey-v54"></script>
   </body>
 </html>

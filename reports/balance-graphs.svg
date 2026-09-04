@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200" role="img" aria-labelledby="title description">
+<title id="title">WORM progression and enemy balance graphs</title>
+<desc id="description">Worm level point requirements and bite strength from level zero through one hundred, plus enemy health and point values with bite-match worm levels.</desc>
+<style>
+  text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #eef4ff; }
+  .title { font-size: 32px; font-weight: 800; letter-spacing: 0.4px; }
+  .section { font-size: 22px; font-weight: 750; }
+  .subtitle { font-size: 14px; fill: #9cabc0; }
+  .axis { font-size: 12px; fill: #9cabc0; }
+  .legend { font-size: 13px; font-weight: 650; }
+  .value { font-size: 12px; font-weight: 750; }
+  .enemy { font-size: 14px; font-weight: 750; }
+  .badge { font-size: 12px; font-weight: 650; fill: #9cabc0; }
+  .footer { font-size: 12px; fill: #9cabc0; }
+</style>
+<rect width="1600" height="1200" fill="#090d14"/>
+<rect x="40" y="90" width="1520" height="525" rx="18" fill="#111824" stroke="#263448"/>
+<rect x="40" y="650" width="1520" height="490" rx="18" fill="#111824" stroke="#263448"/>
+<text x="55" y="55" class="title" >WORM · CURRENT BALANCE CURVES</text>
+<text x="70" y="130" class="section" >Worm progression · levels 0–100</text>
+<text x="70" y="158" class="subtitle" >Next-level cost = ceil(5 × 1.3^level) · Bite = 2 × 1.25^level · logarithmic value axis</text>
+<line x1="105" y1="545" x2="1485" y2="545" stroke="#263448" stroke-width="1"/>
+<text x="91" y="549" class="axis" text-anchor="end">1</text>
+<line x1="105" y1="517.6923076923077" x2="1485" y2="517.6923076923077" stroke="#263448" stroke-width="1"/>
+<text x="91" y="521.6923076923077" class="axis" text-anchor="end">10</text>
+<line x1="105" y1="490.38461538461536" x2="1485" y2="490.38461538461536" stroke="#263448" stroke-width="1"/>
+<text x="91" y="494.38461538461536" class="axis" text-anchor="end">100</text>
+<line x1="105" y1="463.07692307692304" x2="1485" y2="463.07692307692304" stroke="#263448" stroke-width="1"/>
+<text x="91" y="467.07692307692304" class="axis" text-anchor="end">1K</text>
+<line x1="105" y1="435.7692307692308" x2="1485" y2="435.7692307692308" stroke="#263448" stroke-width="1"/>
+<text x="91" y="439.7692307692308" class="axis" text-anchor="end">10K</text>
+<line x1="105" y1="408.46153846153845" x2="1485" y2="408.46153846153845" stroke="#263448" stroke-width="1"/>
+<text x="91" y="412.46153846153845" class="axis" text-anchor="end">100K</text>
+<line x1="105" y1="381.15384615384613" x2="1485" y2="381.15384615384613" stroke="#263448" stroke-width="1"/>
+<text x="91" y="385.15384615384613" class="axis" text-anchor="end">1M</text>
+<line x1="105" y1="353.84615384615387" x2="1485" y2="353.84615384615387" stroke="#263448" stroke-width="1"/>
+<text x="91" y="357.84615384615387" class="axis" text-anchor="end">10M</text>
+<line x1="105" y1="326.53846153846155" x2="1485" y2="326.53846153846155" stroke="#263448" stroke-width="1"/>
+<text x="91" y="330.53846153846155" class="axis" text-anchor="end">100M</text>
+<line x1="105" y1="299.2307692307692" x2="1485" y2="299.2307692307692" stroke="#263448" stroke-width="1"/>
+<text x="91" y="303.2307692307692" class="axis" text-anchor="end">1B</text>
+<line x1="105" y1="271.9230769230769" x2="1485" y2="271.9230769230769" stroke="#263448" stroke-width="1"/>
+<text x="91" y="275.9230769230769" class="axis" text-anchor="end">10B</text>
+<line x1="105" y1="244.6153846153846" x2="1485" y2="244.6153846153846" stroke="#263448" stroke-width="1"/>
+<text x="91" y="248.6153846153846" class="axis" text-anchor="end">100B</text>
+<line x1="105" y1="217.3076923076923" x2="1485" y2="217.3076923076923" stroke="#263448" stroke-width="1"/>
+<text x="91" y="221.3076923076923" class="axis" text-anchor="end">1T</text>
+<line x1="105" y1="190" x2="1485" y2="190" stroke="#263448" stroke-width="1"/>
+<text x="91" y="194" class="axis" text-anchor="end">10T</text>
+<line x1="105" y1="190" x2="105" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="105" y="570" class="axis" text-anchor="middle">0</text>
+<line x1="243" y1="190" x2="243" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="243" y="570" class="axis" text-anchor="middle">10</text>
+<line x1="381" y1="190" x2="381" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="381" y="570" class="axis" text-anchor="middle">20</text>
+<line x1="519" y1="190" x2="519" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="519" y="570" class="axis" text-anchor="middle">30</text>
+<line x1="657" y1="190" x2="657" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="657" y="570" class="axis" text-anchor="middle">40</text>
+<line x1="795" y1="190" x2="795" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="795" y="570" class="axis" text-anchor="middle">50</text>
+<line x1="933" y1="190" x2="933" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="933" y="570" class="axis" text-anchor="middle">60</text>
+<line x1="1071" y1="190" x2="1071" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="1071" y="570" class="axis" text-anchor="middle">70</text>
+<line x1="1209" y1="190" x2="1209" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="1209" y="570" class="axis" text-anchor="middle">80</text>
+<line x1="1347" y1="190" x2="1347" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="1347" y="570" class="axis" text-anchor="middle">90</text>
+<line x1="1485" y1="190" x2="1485" y2="545" stroke="#263448" stroke-width="1" opacity="0.55"/>
+<text x="1485" y="570" class="axis" text-anchor="middle">100</text>
+<text x="795" y="593" class="axis" text-anchor="middle">Worm level</text>
+<line x1="795" y1="190" x2="795" y2="545" stroke="#b98cff" stroke-width="2" stroke-dasharray="8 7"/>
+<rect x="698" y="200" width="194" height="42" rx="8" fill="#1e1730" stroke="#b98cff"/>
+<text x="795" y="218" class="value" text-anchor="middle">10M round ceiling</text>
+<text x="795" y="234" class="axis" text-anchor="middle">natural maximum: level 50</text>
+<path d="M105.00,525.91 L118.80,521.92 L132.60,518.94 L146.40,516.56 L160.20,512.88 L174.00,510.08 L187.80,506.83 L201.60,503.90 L215.40,500.96 L229.20,497.69 L243.00,494.79 L256.80,491.63 L270.60,488.52 L284.40,485.42 L298.20,482.34 L312.00,479.24 L325.80,476.12 L339.60,473.00 L353.40,469.89 L367.20,466.79 L381.00,463.67 L394.80,460.56 L408.60,457.46 L422.40,454.35 L436.20,451.23 L450.00,448.12 L463.80,445.01 L477.60,441.90 L491.40,438.79 L505.20,435.68 L519.00,432.57 L532.80,429.46 L546.60,426.34 L560.40,423.23 L574.20,420.12 L588.00,417.01 L601.80,413.90 L615.60,410.79 L629.40,407.67 L643.20,404.56 L657.00,401.45 L670.80,398.34 L684.60,395.23 L698.40,392.12 L712.20,389.01 L726.00,385.89 L739.80,382.78 L753.60,379.67 L767.40,376.56 L781.20,373.45 L795.00,370.34 L808.80,367.22 L822.60,364.11 L836.40,361.00 L850.20,357.89 L864.00,354.78 L877.80,351.67 L891.60,348.56 L905.40,345.44 L919.20,342.33 L933.00,339.22 L946.80,336.11 L960.60,333.00 L974.40,329.89 L988.20,326.77 L1002.00,323.66 L1015.80,320.55 L1029.60,317.44 L1043.40,314.33 L1057.20,311.22 L1071.00,308.11 L1084.80,304.99 L1098.60,301.88 L1112.40,298.77 L1126.20,295.66 L1140.00,292.55 L1153.80,289.44 L1167.60,286.32 L1181.40,283.21 L1195.20,280.10 L1209.00,276.99 L1222.80,273.88 L1236.60,270.77 L1250.40,267.66 L1264.20,264.54 L1278.00,261.43 L1291.80,258.32 L1305.60,255.21 L1319.40,252.10 L1333.20,248.99 L1347.00,245.88 L1360.80,242.76 L1374.60,239.65 L1388.40,236.54 L1402.20,233.43 L1416.00,230.32 L1429.80,227.21 L1443.60,224.09 L1457.40,220.98 L1471.20,217.87 L1485.00,214.76" fill="none" stroke="#ffb347" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="105" cy="525.9127421892856" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="243" cy="494.78527482986726" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="381" cy="463.67276280670904" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="519" cy="432.56682231093873" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="657" cy="401.4514975873251" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="795" cy="370.33623770793406" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="933" cy="339.2209418240718" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="1071" cy="308.105641799558" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="1209" cy="276.9903417637675" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="1347" cy="245.87504171207274" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<circle cx="1485" cy="214.7597416590774" r="3.5" fill="#111824" stroke="#ffb347" stroke-width="2"/>
+<path d="M118.80,525.91 L132.60,515.53 L146.40,508.89 L160.20,503.90 L174.00,499.34 L187.80,495.31 L201.60,491.50 L215.40,487.93 L229.20,484.52 L243.00,481.14 L256.80,477.88 L270.60,474.65 L284.40,471.44 L298.20,468.26 L312.00,465.10 L325.80,461.96 L339.60,458.82 L353.40,455.69 L367.20,452.56 L381.00,449.44 L394.80,446.31 L408.60,443.20 L422.40,440.08 L436.20,436.97 L450.00,433.85 L463.80,430.74 L477.60,427.63 L491.40,424.51 L505.20,421.40 L519.00,418.29 L532.80,415.18 L546.60,412.07 L560.40,408.95 L574.20,405.84 L588.00,402.73 L601.80,399.62 L615.60,396.51 L629.40,393.40 L643.20,390.28 L657.00,387.17 L670.80,384.06 L684.60,380.95 L698.40,377.84 L712.20,374.73 L726.00,371.62 L739.80,368.50 L753.60,365.39 L767.40,362.28 L781.20,359.17 L795.00,356.06 L808.80,352.95 L822.60,349.83 L836.40,346.72 L850.20,343.61 L864.00,340.50 L877.80,337.39 L891.60,334.28 L905.40,331.17 L919.20,328.05 L933.00,324.94 L946.80,321.83 L960.60,318.72 L974.40,315.61 L988.20,312.50 L1002.00,309.38 L1015.80,306.27 L1029.60,303.16 L1043.40,300.05 L1057.20,296.94 L1071.00,293.83 L1084.80,290.72 L1098.60,287.60 L1112.40,284.49 L1126.20,281.38 L1140.00,278.27 L1153.80,275.16 L1167.60,272.05 L1181.40,268.93 L1195.20,265.82 L1209.00,262.71 L1222.80,259.60 L1236.60,256.49 L1250.40,253.38 L1264.20,250.27 L1278.00,247.15 L1291.80,244.04 L1305.60,240.93 L1319.40,237.82 L1333.20,234.71 L1347.00,231.60 L1360.80,228.48 L1374.60,225.37 L1388.40,222.26 L1402.20,219.15 L1416.00,216.04 L1429.80,212.93 L1443.60,209.82 L1457.40,206.70 L1471.20,203.59 L1485.00,200.48" fill="none" stroke="#ff5e68" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="243" cy="481.14214959772045" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="381" cy="449.43537560028244" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="519" cy="418.2892063050059" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="657" cy="387.1729316657039" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="795" cy="356.0576220067399" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="933" cy="324.94232886255054" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="1071" cy="293.82702980393805" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="1209" cy="262.71172986323813" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="1347" cy="231.59642982074914" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<circle cx="1485" cy="200.4811297686446" r="3.5" fill="#111824" stroke="#ff5e68" stroke-width="2"/>
+<path d="M105.00,536.78 L118.80,534.13 L132.60,531.49 L146.40,528.84 L160.20,526.19 L174.00,523.55 L187.80,520.90 L201.60,518.25 L215.40,515.61 L229.20,512.96 L243.00,510.32 L256.80,507.67 L270.60,505.02 L284.40,502.38 L298.20,499.73 L312.00,497.08 L325.80,494.44 L339.60,491.79 L353.40,489.14 L367.20,486.50 L381.00,483.85 L394.80,481.21 L408.60,478.56 L422.40,475.91 L436.20,473.27 L450.00,470.62 L463.80,467.97 L477.60,465.33 L491.40,462.68 L505.20,460.03 L519.00,457.39 L532.80,454.74 L546.60,452.10 L560.40,449.45 L574.20,446.80 L588.00,444.16 L601.80,441.51 L615.60,438.86 L629.40,436.22 L643.20,433.57 L657.00,430.92 L670.80,428.28 L684.60,425.63 L698.40,422.98 L712.20,420.34 L726.00,417.69 L739.80,415.05 L753.60,412.40 L767.40,409.75 L781.20,407.11 L795.00,404.46 L808.80,401.81 L822.60,399.17 L836.40,396.52 L850.20,393.87 L864.00,391.23 L877.80,388.58 L891.60,385.94 L905.40,383.29 L919.20,380.64 L933.00,378.00 L946.80,375.35 L960.60,372.70 L974.40,370.06 L988.20,367.41 L1002.00,364.76 L1015.80,362.12 L1029.60,359.47 L1043.40,356.83 L1057.20,354.18 L1071.00,351.53 L1084.80,348.89 L1098.60,346.24 L1112.40,343.59 L1126.20,340.95 L1140.00,338.30 L1153.80,335.65 L1167.60,333.01 L1181.40,330.36 L1195.20,327.71 L1209.00,325.07 L1222.80,322.42 L1236.60,319.78 L1250.40,317.13 L1264.20,314.48 L1278.00,311.84 L1291.80,309.19 L1305.60,306.54 L1319.40,303.90 L1333.20,301.25 L1347.00,298.60 L1360.80,295.96 L1374.60,293.31 L1388.40,290.67 L1402.20,288.02 L1416.00,285.37 L1429.80,282.73 L1443.60,280.08 L1457.40,277.43 L1471.20,274.79 L1485.00,272.14" fill="none" stroke="#63d7ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="105" cy="536.779565503022" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="243" cy="510.3156773354374" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="381" cy="483.85178916785276" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="519" cy="457.38790100026813" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="657" cy="430.9240128326835" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="795" cy="404.4601246650989" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="933" cy="377.99623649751425" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="1071" cy="351.5323483299296" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="1209" cy="325.068460162345" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="1347" cy="298.6045719947603" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<circle cx="1485" cy="272.1406838271757" r="3.5" fill="#111824" stroke="#63d7ff" stroke-width="2"/>
+<line x1="770" y1="125" x2="795" y2="125" stroke="#ffb347" stroke-width="4" stroke-linecap="round"/>
+<text x="804" y="130" class="legend" >Points to next level</text>
+<line x1="1012" y1="125" x2="1037" y2="125" stroke="#ff5e68" stroke-width="4" stroke-linecap="round"/>
+<text x="1046" y="130" class="legend" >Cumulative points to reach level</text>
+<line x1="1350" y1="125" x2="1375" y2="125" stroke="#63d7ff" stroke-width="4" stroke-linecap="round"/>
+<text x="1384" y="130" class="legend" >Bite strength</text>
+<text x="1475" y="192.4811297686446" class="value" text-anchor="end" fill="#ff5e68">L100: 4.13T cumulative</text>
+<text x="1475" y="232.7597416590774" class="value" text-anchor="end" fill="#ffb347">L100: 1.24T next-level cost</text>
+<text x="1475" y="264.1406838271757" class="value" text-anchor="end" fill="#63d7ff">L100: 9.82B bite</text>
+<text x="70" y="695" class="section" >Enemy HP and point value</text>
+<text x="70" y="723" class="subtitle" >The game has no enemy-level stat. “Bite-match L#” is the first worm level whose bite strength is at least that enemy’s HP.</text>
+<line x1="105" y1="1035" x2="1485" y2="1035" stroke="#263448" stroke-width="1"/>
+<text x="91" y="1039" class="axis" text-anchor="end">0</text>
+<line x1="105" y1="979.3181818181818" x2="1485" y2="979.3181818181818" stroke="#263448" stroke-width="1"/>
+<text x="91" y="983.3181818181818" class="axis" text-anchor="end">50</text>
+<line x1="105" y1="923.6363636363636" x2="1485" y2="923.6363636363636" stroke="#263448" stroke-width="1"/>
+<text x="91" y="927.6363636363636" class="axis" text-anchor="end">100</text>
+<line x1="105" y1="867.9545454545455" x2="1485" y2="867.9545454545455" stroke="#263448" stroke-width="1"/>
+<text x="91" y="871.9545454545455" class="axis" text-anchor="end">150</text>
+<line x1="105" y1="812.2727272727273" x2="1485" y2="812.2727272727273" stroke="#263448" stroke-width="1"/>
+<text x="91" y="816.2727272727273" class="axis" text-anchor="end">200</text>
+<rect x="157" y="1032.7727272727273" width="58" height="2.227272727272748" rx="5" fill="#63d7ff"/>
+<rect x="225" y="1033.8863636363637" width="58" height="1.1136363636362603" rx="5" fill="#ff9f43"/>
+<text x="186" y="1023.7727272727273" class="value" text-anchor="middle" fill="#63d7ff">2</text>
+<text x="254" y="1024.8863636363637" class="value" text-anchor="middle" fill="#ff9f43">1</text>
+<text x="220" y="1063" class="enemy" text-anchor="middle">Beetle</text>
+<text x="220" y="1084" class="badge" text-anchor="middle">Bite-match L0</text>
+<rect x="387" y="1030.5454545454545" width="58" height="4.454545454545496" rx="5" fill="#63d7ff"/>
+<rect x="455" y="1030.5454545454545" width="58" height="4.454545454545496" rx="5" fill="#ff9f43"/>
+<text x="416" y="1021.5454545454545" class="value" text-anchor="middle" fill="#63d7ff">4</text>
+<text x="484" y="1021.5454545454545" class="value" text-anchor="middle" fill="#ff9f43">4</text>
+<text x="450" y="1063" class="enemy" text-anchor="middle">Dragonfly</text>
+<text x="450" y="1084" class="badge" text-anchor="middle">Bite-match L4</text>
+<rect x="617" y="1023.8636363636364" width="58" height="11.136363636363626" rx="5" fill="#63d7ff"/>
+<rect x="685" y="1023.8636363636364" width="58" height="11.136363636363626" rx="5" fill="#ff9f43"/>
+<text x="646" y="1014.8636363636364" class="value" text-anchor="middle" fill="#63d7ff">10</text>
+<text x="714" y="1014.8636363636364" class="value" text-anchor="middle" fill="#ff9f43">10</text>
+<text x="680" y="1063" class="enemy" text-anchor="middle">Mole</text>
+<text x="680" y="1084" class="badge" text-anchor="middle">Bite-match L8</text>
+<rect x="847" y="1021.6363636363636" width="58" height="13.363636363636374" rx="5" fill="#63d7ff"/>
+<rect x="915" y="1023.8636363636364" width="58" height="11.136363636363626" rx="5" fill="#ff9f43"/>
+<text x="876" y="1012.6363636363636" class="value" text-anchor="middle" fill="#63d7ff">12</text>
+<text x="944" y="1014.8636363636364" class="value" text-anchor="middle" fill="#ff9f43">10</text>
+<text x="910" y="1063" class="enemy" text-anchor="middle">Rabbit</text>
+<text x="910" y="1084" class="badge" text-anchor="middle">Bite-match L9</text>
+<rect x="1077" y="901.3636363636364" width="58" height="133.63636363636363" rx="5" fill="#63d7ff"/>
+<rect x="1145" y="812.2727272727273" width="58" height="222.72727272727275" rx="5" fill="#ff9f43"/>
+<text x="1106" y="892.3636363636364" class="value" text-anchor="middle" fill="#63d7ff">120</text>
+<text x="1174" y="803.2727272727273" class="value" text-anchor="middle" fill="#ff9f43">200</text>
+<text x="1140" y="1063" class="enemy" text-anchor="middle">Tri-Star</text>
+<text x="1140" y="1084" class="badge" text-anchor="middle">Bite-match L19</text>
+<rect x="1307" y="856.8181818181818" width="58" height="178.18181818181824" rx="5" fill="#63d7ff"/>
+<rect x="1375" y="856.8181818181818" width="58" height="178.18181818181824" rx="5" fill="#ff9f43"/>
+<text x="1336" y="847.8181818181818" class="value" text-anchor="middle" fill="#63d7ff">160</text>
+<text x="1404" y="847.8181818181818" class="value" text-anchor="middle" fill="#ff9f43">160</text>
+<text x="1370" y="1063" class="enemy" text-anchor="middle">Vulture</text>
+<text x="1370" y="1084" class="badge" text-anchor="middle">Bite-match L20</text>
+<rect x="112" y="1099" width="13" height="13" rx="3" fill="#63d7ff"/>
+<text x="133" y="1110" class="legend" >HP</text>
+<rect x="184" y="1099" width="13" height="13" rx="3" fill="#ff9f43"/>
+<text x="205" y="1110" class="legend" >Point value</text>
+<text x="1540" y="1176" class="footer" text-anchor="end">Generated from game.js · 101 worm levels · 6 enemy types · values current at generation time</text>
+</svg>

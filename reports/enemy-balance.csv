@@ -1,0 +1,7 @@
+enemy,hp,point_value,bite_match_worm_level
+Beetle,2,1,0
+Dragonfly,4,4,4
+Mole,10,10,8
+Rabbit,12,10,9
+Tri-Star,120,200,19
+Vulture,160,160,20

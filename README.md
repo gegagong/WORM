@@ -190,10 +190,16 @@ original font size; the Developer Tools controls themselves retain their compact
 A second gameplay-controls panel opens with Developer Tools. Its worm-level field
 overrides the score-earned level, updating the worm's size, segment count, bite force,
 and boost capacity immediately. Points continue tracking their natural level while an
-override is active; clearing the field returns control to that score-derived level.
-The enemy-placement buttons add one selected enemy at a rotating position in the
-current camera view. Buttons are generated from the enemy registry, so newly registered
-enemy types are included automatically.
+override is active; clearing the field returns control to that score-derived level. The
+level-cost multiplier scales every score-derived point requirement from 0.01× to 100×.
+Reducing it immediately applies banked growth progress to any newly crossed thresholds;
+the selected multiplier remains active when the run is reset.
+The enemy-replacement buttons destroy one random, unclaimed active enemy and place the
+selected type at a rotating position in the current camera view. The new enemy inherits the
+victim's reserved point value, so both live population and the round's obtainable score remain
+unchanged. If the selected type is already at its per-type cap, the victim is chosen from that
+same type. Buttons are generated from the enemy registry, so newly registered enemy types are
+included automatically.
 
 While control input is held, the worm can steer its airborne momentum but cannot
 accelerate in open air. Holding Boost while airborne opens the mouth without consuming
@@ -388,7 +394,8 @@ core. Its orientation stays locked throughout the contraction and thrust. For th
 destination, and its momentum rotates by exactly the same amount. After that short
 post-launch window it holds its course through a substantially longer 1.2-to-1.5-second
 coast before the next contraction. Only the burst adds propulsion, coast drag steadily
-slows the body, and its speed remains capped at 600 pixels per second. The burst weakens when
+slows the body, and its speed remains capped at 600 pixels per second outside a player
+hunt. The burst weakens when
 one or two arms are carrying prey and is suppressed entirely when all three are occupied.
 Tentacle inertia makes the released fan flare and trail naturally, while dangling-arm
 separation and the joint limits remain authoritative throughout the pulse.
@@ -410,15 +417,24 @@ deferred queue. Terrain contact is sampled at a phase-staggered 60 Hz while the 
 animate every frame; saved-pose sweeps preserve motion between samples without spending the
 player’s acid budget.
 
-When any part of a Tri-Star's full arm-and-core footprint enters the screen and its maximum
-health still classifies it as hard prey, it immediately drops any ecological prey occupying
-its arms, clears the old plan, and prioritizes the nearest segment in the head-side third of the
-worm's body. That same head-side third is the only part its arm tip can grab; contact with the
+While any part of a Tri-Star's full arm-and-core footprint is on screen and its maximum health
+still classifies it as hard prey, it can acquire the worm. Screen entry alone does not change its
+target. The hunt begins only when the nearest segment in the head-side third of the worm comes
+within 1.25 times the Tri-Star's fully stretched grabbing distance. At that point it drops any
+ecological prey occupying its arms, clears the old plan, and latches onto hunting the worm until
+its entire footprint leaves the screen, even if the worm moves back beyond the acquisition
+distance. That same head-side third is the only part its arm tip can grab; contact with the
 remaining rear two-thirds is ignored. Inside arm reach it compares the live root-to-tip direction
 of every free tentacle and reaches with the one already facing closest to the target segment. This
 worm grab does not use the round-robin arm offset from ordinary prey harvesting. The chosen arm
 uses the same stretched, joint-limited reach used for prey while the Tri-Star continues to pulse
-after the moving worm. The worm keeps full control until the moving arm tip actually contacts an
+after the moving worm. While pursuing the worm, its maximum speed rises by 50 percent to
+900 pixels per second and every contraction, thrust, and coast phase takes half as long, causing
+it to push itself exactly twice as often. When its velocity starts pointing away from the worm
+instead of toward it, the Tri-Star immediately restarts its contraction and performs one extra
+animated push aimed along the current ground-safe route back toward the worm. The worm keeps full
+control until the moving arm
+tip actually contacts an
 eligible head-side segment. Contact pins that segment to the arm, disables
 all worm input, and solves the remaining body as a limp, gravity-affected constraint chain while
 the arm curls the worm into the triangle center. The completed attack deals 200 damage—half the
@@ -428,20 +444,29 @@ the triangle center: rendered segments disappear one at a time and eject small t
 of the worm's current custom body artwork mixed with stylized droplets. The swallow duration
 grows with segment count but is capped for very long worms, then holds briefly after the last
 segment vanishes. The worm's health remains unchanged throughout either complete animation; only
-after its final beat do damage, release, and a possible death screen occur. A surviving worm is
+after its final beat do damage and release occur. After a lethal release, the absent worm and its
+minimap marker stay hidden while the camera holds on the death scene for three seconds. The impact
+starts a strong, rapidly decaying screen shake while the camera quickly zooms in, rebounds outward,
+and eases back to the normal level-based zoom before the aftermath ends. Enemy AI, movement,
+feeding, particles, terrain decay, and round population continue during that aftermath; the
+Devoured menu pauses the world only when the three seconds end. A surviving worm is
 then thrown clear with 1.5 seconds of grab
 invulnerability. Beginning a Boost latch against that Tri-Star before contact cancels and pauses
 the worm reach; after the latch releases and bounces the worm away, the predator clears the stale
-plan and reacquires from its live pose.
+plan and reacquires from its live pose. Once the worm's bite strength makes a Tri-Star normal or
+easy prey, the Tri-Star immediately cancels any worm grab or ecological prey capture and pulses
+directly
+away from the worm at its normal 600-pixel-per-second maximum speed. It continues fleeing while
+it remains in the active minimap area and never resumes attacking merely because it becomes even
+easier prey.
 
-Tri-Stars pulse toward the nearest available beetle or mole. They still recognize local
-beetle groups when choosing which reachable prey to collect with multiple arms, but a
-farther colony no longer overrides a closer navigation target. They approach to roughly
+Outside a player hunt, Tri-Stars pulse toward the nearest available beetle or mole. They approach
+to roughly
 70 percent of an arm's resting reach before beginning the first grab, bringing the triangular
 body substantially closer to its prey. At that inner grab radius they cancel any pending
 launch, make no movement input, and favor the farther reachable prey within the current
-beetle or fallback-prey priority. Once one arm has secured prey, the stationary sibling arms
-may use their full stretched reach to finish the local group. A rotating arm-attempt order
+prey priority. Once one arm has secured prey, the stationary sibling arms
+may use their full stretched reach to finish nearby beetles or moles. A rotating arm-attempt order
 prevents one awkward outer target from monopolizing every reach attempt. Pursuit points
 directly toward the nearest prey and never
 rotates the body merely to line up a particular prey arm. Each available arm can
@@ -455,23 +480,18 @@ recover continuously into the dangling physics. Tri-Star sensing shares one fram
 periodic prey index and constant-time ownership lookups, while every predator still rechecks
 live reservations in its original update order. Reach/curl IK reuses private scratch geometry
 but retains the same seeds, passes, candidate order, and winning plan. Empty tentacle-contact
-passes skip their redundant joint walk, and rendering reuses point buffers. These changes keep
-the target choices, captures, pulses, and organic tentacle response intact as the number of
+passes skip their redundant joint walk, and rendering reuses point buffers. These structures keep
+captures, pulses, and organic tentacle response intact as the number of
 Tri-Stars rises, while avoiding repeated world scans and short-lived arm allocations.
 Tri-Stars whose marker is outside the local minimap use a lightweight simulation instead:
 empty arms skip all tentacle physics and reach planning, while the body follows the nearest
-available mole, or the nearest beetle when no mole is available, through validated ground at
+available mole—or a beetle when no mole is available—through validated ground at
 up to 600 pixels per second. A cached target and staggered scans keep that search bounded.
-Roughly once every 8–11.5 seconds, an off-map Tri-Star may devour one eligible, also-off-map
-beetle within 18 terrain blocks. The same reservation, point-refund, population-cap, and refill
-pipeline handles that simulated meal. Existing arm captures always finish under full AI before
+Existing arm captures always finish under full AI before
 the lightweight mode begins. As soon as the Tri-Star marker returns to the minimap, its free
 arms and pulse state are rebased at the live body pose for a smooth return to full simulation.
 In this lightweight off-map tier they ignore rabbits, dragonflies, vultures, meat, other
-Tri-Stars, and the worm. A devoured prey
-awards no worm score or boost; its reserved point value is
-returned to the round reserve and an enemy replacement is spawned, preserving both the
-1,000-enemy ceiling and the exact 10,000,000-point round total.
+Tri-Stars, and the worm.
 
 Rabbits use a 90 × 90 world-pixel sprite and a 30.9-pixel hurtbox radius, exactly 1.2×
 the mole's dimensions. Each rabbit has 12 HP and is worth 10 points. It rests for a
@@ -527,9 +547,10 @@ reductions clamp current HP to the smaller maximum. A large, fixed health bar re
 the top of the screen and shows the current and maximum HP numerically. Finishing a mouth-eating
 animation restores one worm HP for each point of that enemy's maximum HP, capped at the worm's
 current maximum. This includes ordinary contact, Sprinter hunt, and tongue-delivered prey; acid
-kills and prey eaten by Tri-Stars do not heal the worm. At zero HP the simulation freezes behind
-a death screen that offers either a restart of the current world or a return to the home selection
-screen. Currently only an on-screen hard Tri-Star can damage the worm.
+kills and prey eaten by Tri-Stars do not heal the worm. At zero HP from a Tri-Star devour, the worm
+disappears and enemies continue simulating for a three-second aftermath before the world freezes
+behind a death screen that offers either a restart of the current world or a return to the home
+selection screen. Currently only an on-screen hard Tri-Star can damage the worm.
 
 Hard prey cannot be captured by normal contact, even after its current HP falls below the
 hard-prey threshold because classification uses maximum HP. Contact reverses and dampens
@@ -654,8 +675,9 @@ size, movement scale, and point value.
 
 Each beetle is worth 1 point, each dragonfly is worth 4 points, each mole is worth
 10 points, and each vulture is worth 160 points. Worm size starts at
-level 0; reaching level 1 costs 5 points, then the per-level requirement follows a
-1.3× curve rounded up to whole points: 7, 9, 11, 15, and so on. The cumulative
+level 0; at the default 1× developer multiplier, reaching level 1 costs 5 points, then
+the per-level requirement follows a 1.3× curve rounded up to whole points: 7, 9, 11,
+15, and so on. The cumulative
 score thresholds begin at 5, 12, 21, 32, 47…. Each growth level adds 30 world pixels per
 second to the worm's unboosted maximum speed and increases every physical and visual worm
 dimension, including its collision radius and tunnel width. Licker also gains one segment

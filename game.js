@@ -262,6 +262,8 @@
     if (
       panel?.querySelector("#dev-worm-level") &&
       panel.querySelector("#dev-worm-level-mode") &&
+      panel.querySelector("#dev-level-cost-multiplier") &&
+      panel.querySelector("#dev-level-cost-mode") &&
       panel.querySelector("#dev-enemy-buttons")
     ) {
       return panel;
@@ -282,10 +284,17 @@
         </span>
         <input id="dev-worm-level" type="number" min="0" max="100" step="1" placeholder="Auto" inputmode="numeric" />
       </label>
+      <label class="dev-setting" for="dev-level-cost-multiplier">
+        <span class="dev-option-copy">
+          <strong>Level cost multiplier</strong>
+          <small id="dev-level-cost-mode">1× point requirements</small>
+        </span>
+        <input id="dev-level-cost-multiplier" type="number" min="0.01" max="100" step="0.01" value="1" inputmode="decimal" />
+      </label>
       <section class="dev-enemy-spawner" aria-labelledby="dev-enemy-heading">
         <span class="dev-option-copy" id="dev-enemy-heading">
-          <strong>Place enemy</strong>
-          <small>Add an enemy inside the current view · 500 max per type</small>
+          <strong>Replace enemy</strong>
+          <small>Destroy one at random and place the selected type in view · 500 max per type</small>
         </span>
         <div class="dev-enemy-buttons" id="dev-enemy-buttons"></div>
       </section>
@@ -364,6 +373,12 @@
   const devWormLevelInput = devGameplayPanel.querySelector("#dev-worm-level");
   const devWormLevelMode = devGameplayPanel.querySelector(
     "#dev-worm-level-mode",
+  );
+  const devLevelCostMultiplierInput = devGameplayPanel.querySelector(
+    "#dev-level-cost-multiplier",
+  );
+  const devLevelCostMode = devGameplayPanel.querySelector(
+    "#dev-level-cost-mode",
   );
   const devEnemyButtons = devGameplayPanel.querySelector(
     "#dev-enemy-buttons",
@@ -957,13 +972,10 @@
     senseRadiusBlocks: 32,
     releaseRadiusBlocks: 40,
     preySpatialHashCellBlocks: 8,
-    beetleClusterRadiusBlocks: 16,
-    beetleClusterHashCellBlocks: 4,
-    beetleClusterMinimumCount: 2,
-    beetleClusterSwitchCountAdvantage: 2,
-    clusterBlockedScanLimit: 3,
-    clusterRepositionDuration: 0.45,
     maximumSpeed: 600,
+    wormHuntAcquisitionGrabDistanceMultiplier: 1.25,
+    wormHuntSpeedMultiplier: 1.5,
+    wormHuntPulseFrequencyMultiplier: 2,
     pulseContractDuration: 0.3,
     pulseBurstDuration: 0.14,
     pulseMinimumCoastDuration: 1.2,
@@ -1006,6 +1018,12 @@
     wormLethalDevourMinimumDuration: 0.9,
     wormLethalDevourMaximumDuration: 2,
     wormLethalDevourFinalHoldDuration: 0.14,
+    postDevourWorldDuration: 3,
+    postDevourZoomInMultiplier: 1.28,
+    postDevourZoomOutMultiplier: 0.82,
+    postDevourZoomInEndProgress: 0.18,
+    postDevourZoomOutEndProgress: 0.52,
+    postDevourShakePixels: 18,
     wormLethalChunkParticlesPerSegment: 4,
     wormGrabInvulnerabilityDuration: 1.5,
     wormGrabCancelledInvulnerabilityDuration: 0.35,
@@ -1037,9 +1055,7 @@
     tipIkTolerance: 0.75,
     scanInterval: 0.15,
     offMinimapSearchInterval: 0.75,
-    offMinimapDevourRadiusBlocks: 18,
-    offMinimapMinimumDevourInterval: 8,
-    offMinimapMaximumDevourInterval: 11.5,
+    offMinimapStopRadiusBlocks: 18,
     // Preserve the same terrain throughput at the 180 Hz performance target,
     // then spend proportionally more of the larger frame budget down to the
     // simulation's 30 Hz delta ceiling.
@@ -1116,6 +1132,8 @@
     [1]: tristarStaticCurlSeed(1, 0.15, 0.65),
   });
   const DEV_WORM_LEVEL_MAX = 100;
+  const DEV_LEVEL_COST_MULTIPLIER_MIN = 0.01;
+  const DEV_LEVEL_COST_MULTIPLIER_MAX = 100;
   const DEV_ENEMY_SPAWN_POSITIONS = Object.freeze([
     Object.freeze([0.76, 0.38]),
     Object.freeze([0.76, 0.62]),
@@ -1675,6 +1693,7 @@
     scoreGrowthLevel: 0,
     growthLevel: 0,
     growthLevelOverride: null,
+    levelCostMultiplier: 1,
     growthProgress: 0,
     growthCost: GROWTH_RULES.initialCost,
     devEnemySpawnIndex: 0,
@@ -1686,6 +1705,7 @@
     tristarWormCapture: null,
     tristarWormDamageInvulnerability: 0,
     wormDefeated: false,
+    postDevourWorldTimer: 0,
     map: {
       cellSize: BLOCK_SIZE,
       columns: 0,
@@ -2424,7 +2444,8 @@
   const growthCostForLevel = (level) =>
     Math.ceil(
       activeWormScaling().initialGrowthCost *
-        activeWormScaling().growthCostMultiplier ** level,
+        activeWormScaling().growthCostMultiplier ** level *
+        game.levelCostMultiplier,
     );
   const wormScale = () =>
     activeWormScaling().baseEntityScale *
@@ -4399,14 +4420,67 @@
     }
   }
 
+  function postDevourCameraZoomMultiplier() {
+    if (!game.wormDefeated || game.postDevourWorldTimer <= 0) return 1;
+    const duration = TRISTAR_RULES.postDevourWorldDuration;
+    const progress = clamp(
+      1 - game.postDevourWorldTimer / Math.max(0.000001, duration),
+      0,
+      1,
+    );
+    const zoomInEnd = TRISTAR_RULES.postDevourZoomInEndProgress;
+    const zoomOutEnd = TRISTAR_RULES.postDevourZoomOutEndProgress;
+    if (progress < zoomInEnd) {
+      const phase = clamp(progress / zoomInEnd, 0, 1);
+      const eased = 1 - (1 - phase) ** 3;
+      return lerp(1, TRISTAR_RULES.postDevourZoomInMultiplier, eased);
+    }
+    if (progress < zoomOutEnd) {
+      const phase = clamp(
+        (progress - zoomInEnd) / (zoomOutEnd - zoomInEnd),
+        0,
+        1,
+      );
+      const eased = phase * phase * (3 - 2 * phase);
+      return lerp(
+        TRISTAR_RULES.postDevourZoomInMultiplier,
+        TRISTAR_RULES.postDevourZoomOutMultiplier,
+        eased,
+      );
+    }
+    const phase = clamp((progress - zoomOutEnd) / (1 - zoomOutEnd), 0, 1);
+    const eased = phase * phase * (3 - 2 * phase);
+    return lerp(TRISTAR_RULES.postDevourZoomOutMultiplier, 1, eased);
+  }
+
   function cameraZoom() {
     const zoomSteps = Math.floor(
       game.growthLevel / CAMERA_RULES.levelsPerZoomStep,
     );
-    return Math.max(
+    const gameplayZoom = Math.max(
       CAMERA_RULES.minimumZoom,
       CAMERA_RULES.zoomPerStep ** zoomSteps,
     );
+    return gameplayZoom * postDevourCameraZoomMultiplier();
+  }
+
+  const screenShake = { x: 0, y: 0 };
+
+  function screenShakeOffset() {
+    const amplitude = Math.max(0, game.shake);
+    if (!game.wormDefeated || amplitude < 0.01) {
+      screenShake.x = 0;
+      screenShake.y = 0;
+      return screenShake;
+    }
+    const time = game.elapsed;
+    screenShake.x =
+      amplitude *
+      (Math.sin(time * 83) * 0.68 + Math.sin(time * 137 + 1.7) * 0.32);
+    screenShake.y =
+      amplitude *
+      (Math.sin(time * 97 + 0.8) * 0.7 + Math.sin(time * 151) * 0.3);
+    return screenShake;
   }
 
   function applyCameraViewportOrigin() {
@@ -5771,7 +5845,7 @@
       drawMinimapRadarEcho(echo, bounds, scanTime);
     }
     drawMinimapRadarPulse(scanTime);
-    drawMinimapLiveWorm(renderState, bounds);
+    if (!game.wormDefeated) drawMinimapLiveWorm(renderState, bounds);
   }
 
   function getVisibleWorldBounds(padding = 0) {
@@ -5827,6 +5901,7 @@
     game.tristarWormCapture = null;
     game.tristarWormDamageInvulnerability = 0;
     game.wormDefeated = false;
+    game.postDevourWorldTimer = 0;
     gameShell.dataset.defeated = "false";
     game.boostCharge = boostCapacity();
     game.boosting = false;
@@ -5872,7 +5947,7 @@
     initializeBodyPath();
     game.previousEatHitbox = getEatHitboxPose();
     snapCameraToWorm();
-    syncDevWormLevelControl();
+    syncDevGameplayControls();
 
     updateHud();
   }
@@ -6090,7 +6165,31 @@
   function hideDeathScreen() {
     deathScreen.classList.remove("visible");
     deathScreen.setAttribute("aria-hidden", "true");
+    game.postDevourWorldTimer = 0;
     gameShell.dataset.defeated = "false";
+  }
+
+  function beginPostDevourWorldView() {
+    if (!game.wormDefeated) return;
+    clearControlKeys();
+    clearSprinterAreaTarget(true);
+    discardActiveTongues();
+    cancelSpitterPointer();
+    clearAcidParticles();
+    toggleDevMenu(false);
+    game.boosting = false;
+    game.acidSpraying = false;
+    game.speed = 0;
+    game.velocity.x = 0;
+    game.velocity.y = 0;
+    game.acceleration.x = 0;
+    game.acceleration.y = 0;
+    game.postDevourWorldTimer = TRISTAR_RULES.postDevourWorldDuration;
+    game.shake = Math.max(
+      game.shake,
+      TRISTAR_RULES.postDevourShakePixels,
+    );
+    gameShell.dataset.defeated = "true";
   }
 
   function showDeathScreen() {
@@ -6098,6 +6197,7 @@
     clearControlKeys();
     cancelSpitterPointer();
     toggleDevMenu(false);
+    game.postDevourWorldTimer = 0;
     game.paused = true;
     game.menuOpen = true;
     gameShell.dataset.paused = "true";
@@ -9429,14 +9529,7 @@
     }
   }
 
-  function awardScore(points) {
-    const awardedPoints = Math.min(
-      Math.max(0, Math.round(Number(points) || 0)),
-      Math.max(0, game.activeRoundPointLimit - game.score),
-    );
-    if (awardedPoints <= 0) return;
-    game.score += awardedPoints;
-    game.growthProgress += awardedPoints;
+  function applyPendingGrowthProgress(showGrowthEffect = false) {
     let levelsGained = 0;
     while (game.growthProgress >= game.growthCost) {
       game.growthProgress -= game.growthCost;
@@ -9445,8 +9538,20 @@
       levelsGained += 1;
     }
     if (levelsGained > 0 && game.growthLevelOverride === null) {
-      setEffectiveWormLevel(game.scoreGrowthLevel, true);
+      setEffectiveWormLevel(game.scoreGrowthLevel, showGrowthEffect);
     }
+    return levelsGained;
+  }
+
+  function awardScore(points) {
+    const awardedPoints = Math.min(
+      Math.max(0, Math.round(Number(points) || 0)),
+      Math.max(0, game.activeRoundPointLimit - game.score),
+    );
+    if (awardedPoints <= 0) return;
+    game.score += awardedPoints;
+    game.growthProgress += awardedPoints;
+    applyPendingGrowthProgress(true);
     syncDevWormLevelControl();
   }
 
@@ -10707,9 +10812,10 @@
   }
 
   function updateDragonfly(target, dt) {
-    const wormDistanceSquared =
-      (target.x - game.head.x) ** 2 +
-      (target.y - game.head.y) ** 2;
+    const wormDistanceSquared = game.wormDefeated
+      ? Infinity
+      : (target.x - game.head.x) ** 2 +
+        (target.y - game.head.y) ** 2;
     const panicking = target.movementMode === "dragonfly-panicking";
     const proximityRadius = panicking
       ? DRAGONFLY_MOTION.wormReleaseRadius
@@ -10947,6 +11053,8 @@
     target.tristarHuntMode = "none";
     target.tristarWormHuntPaused = false;
     target.tristarWormHuntActive = false;
+    target.tristarWormMovingAway = false;
+    target.tristarWormFleeActive = false;
     target.tristarClusterCenterX = target.x;
     target.tristarClusterCenterY = target.y;
     target.tristarClusterCount = 0;
@@ -10976,9 +11084,6 @@
     target.tristarOffMinimapSearchCooldown =
       positiveModulo(target.id * 0.61803398875, 1) *
       TRISTAR_RULES.offMinimapSearchInterval;
-    target.tristarOffMinimapDevourCooldown =
-      positiveModulo(target.id * 0.754877666, 1) *
-      TRISTAR_RULES.offMinimapMaximumDevourInterval;
     target.tristarArmTunnelWasVisible = false;
     target.tristarArmTunnelNextSampleAt = null;
     target.tristarAvoidanceForceX = Array.from(
@@ -11048,6 +11153,19 @@
       ENEMY_DEFINITIONS[ENEMY_TYPES.TRISTAR].radius * 0.5 +
       TRISTAR_RULES.armLength * TRISTAR_RULES.preyApproachArmLengthScale
     );
+  }
+
+  function tristarMaximumSpeed(target) {
+    const multiplier = target?.tristarWormHuntActive
+      ? TRISTAR_RULES.wormHuntSpeedMultiplier
+      : 1;
+    return TRISTAR_RULES.maximumSpeed * multiplier;
+  }
+
+  function tristarPulseDurationScale(target) {
+    return target?.tristarWormHuntActive
+      ? 1 / TRISTAR_RULES.wormHuntPulseFrequencyMultiplier
+      : 1;
   }
 
   function resolvedTristarArmLengthScale(arm) {
@@ -11329,7 +11447,9 @@
     if (!predator) return;
     predator.tristarPulsePhase = "contract";
     predator.tristarPulseElapsed = 0;
-    predator.tristarPulseDuration = TRISTAR_RULES.pulseContractDuration;
+    predator.tristarPulseDuration =
+      TRISTAR_RULES.pulseContractDuration *
+      tristarPulseDurationScale(predator);
     predator.tristarPulseLaunchVertexIndex = 0;
     predator.tristarPulseLaunchAngle =
       (Number.isFinite(predator.angle) ? predator.angle : 0) +
@@ -11677,7 +11797,7 @@
     if (target?.kind !== ENEMY_TYPES.TRISTAR) return false;
     if (!target.tristarArms) initializeTristarTarget(target);
     target.tristarWormHuntPaused = true;
-    target.tristarWormHuntActive = false;
+    target.tristarWormMovingAway = false;
     cancelTristarWormReaches(target);
     target.tristarHuntTarget = null;
     target.tristarHuntMode = "none";
@@ -11688,7 +11808,7 @@
   function resetTristarWormHuntAfterLatch(target) {
     if (target?.kind !== ENEMY_TYPES.TRISTAR) return;
     target.tristarWormHuntPaused = false;
-    target.tristarWormHuntActive = false;
+    target.tristarWormMovingAway = false;
     target.tristarSearchCooldown = 0;
     target.tristarHuntTarget = null;
     target.tristarHuntMode = "none";
@@ -11720,6 +11840,67 @@
       game.tristarWormDamageInvulnerability <= 0 &&
       enemyIsHardPrey(target)
     );
+  }
+
+  function tristarCanRetainWormHunt(target) {
+    return Boolean(
+      target?.kind === ENEMY_TYPES.TRISTAR &&
+      target.tristarDetailedTerrainAvoidance &&
+      !game.wormDefeated &&
+      game.health > 0 &&
+      enemyIsHardPrey(target)
+    );
+  }
+
+  function tristarShouldFleeWorm(target) {
+    return Boolean(
+      target?.kind === ENEMY_TYPES.TRISTAR &&
+      target.regionType === BLOCK_TYPES.GROUND &&
+      target.movementMode !== "burrowing" &&
+      !target.latched &&
+      !target.tongueCaptured &&
+      !target.paralyzed &&
+      !game.wormDefeated &&
+      game.health > 0 &&
+      enemyPreyClass(target) !== PREY_CLASSES.HARD
+    );
+  }
+
+  function updateTristarWormFlee(target) {
+    if (!tristarShouldFleeWorm(target)) {
+      if (target.tristarWormFleeActive) {
+        target.tristarWormFleeActive = false;
+        resetTristarPulseState(target, false);
+      }
+      return null;
+    }
+
+    if (!target.tristarWormFleeActive) {
+      target.tristarWormFleeActive = true;
+      target.tristarWormHuntActive = false;
+      target.tristarWormMovingAway = false;
+      // Becoming ordinary prey takes priority over every existing feeding or
+      // worm-attack plan, including a grab already in progress.
+      releaseAllTristarPrey(target);
+      target.tristarOffMinimapTarget = null;
+      target.tristarOffMinimapBlockedTargetId = null;
+      target.tristarOffMinimapBlockedUntil = 0;
+    }
+
+    target.tristarHuntTarget = null;
+    target.tristarHuntMode = "worm-flee";
+    target.tristarClusterHolding = false;
+    target.tristarClusterHarvesting = false;
+    const wormX = nearestPeriodicWorldX(game.head.x, target.x);
+    const awayX = target.x - wormX;
+    const awayY = target.y - game.head.y;
+    return {
+      active: true,
+      desiredAngle: awayX * awayX + awayY * awayY > 0.000001
+        ? Math.atan2(awayY, awayX)
+        : target.angle,
+      desiredSpeed: TRISTAR_RULES.maximumSpeed,
+    };
   }
 
   function tristarWormGrabbableSegmentCount() {
@@ -11992,9 +12173,11 @@
   function activateTristarWormHuntPriority(predator) {
     if (predator.tristarWormHuntActive) return;
     predator.tristarWormHuntActive = true;
-    // Crossing onto the screen is an immediate priority transition. Drop
-    // ecological prey already occupying the arms so a stale feeding plan
-    // cannot postpone the first reach toward the worm.
+    predator.tristarWormMovingAway = false;
+    resetTristarPulseState(predator, false);
+    // Crossing the proximity threshold is an immediate priority transition.
+    // Drop ecological prey already occupying the arms so a stale feeding
+    // plan cannot postpone the first reach toward the worm.
     predator.tristarArms?.forEach((arm, armIndex) => {
       if (arm.prey && !arm.prey.isWormCaptureProxy) {
         releaseTristarArm(predator, armIndex);
@@ -12004,6 +12187,15 @@
     predator.tristarOffMinimapBlockedTargetId = null;
     predator.tristarOffMinimapBlockedUntil = 0;
     targetHuntResetAfterWormCapture(predator);
+  }
+
+  function tristarWormIsWithinHuntAcquisitionRange(wormPoint) {
+    if (!wormPoint) return false;
+    const grabbingDistance = tristarArmReach() + wormPoint.radius;
+    const acquisitionDistance =
+      grabbingDistance *
+      TRISTAR_RULES.wormHuntAcquisitionGrabDistanceMultiplier;
+    return wormPoint.distanceSquared <= acquisitionDistance ** 2;
   }
 
   function updateTristarWormReach(predator, dt) {
@@ -12046,6 +12238,7 @@
   function updateTristarWormHunt(predator, dt) {
     const activeCapture = tristarWormCaptureFor(predator);
     if (activeCapture) {
+      predator.tristarWormMovingAway = false;
       return {
         active: true,
         captured: true,
@@ -12054,18 +12247,63 @@
         desiredSpeed: 0,
       };
     }
-    if (!tristarCanHuntWorm(predator)) {
+    if (predator.tristarWormHuntPaused) {
+      predator.tristarWormMovingAway = false;
+      cancelTristarWormReaches(predator);
+      return null;
+    }
+    const canAttemptWormAttack = tristarCanHuntWorm(predator);
+    if (
+      !canAttemptWormAttack &&
+      !(
+        predator.tristarWormHuntActive &&
+        tristarCanRetainWormHunt(predator)
+      )
+    ) {
+      const wasHuntingWorm = predator.tristarWormHuntActive;
       predator.tristarWormHuntActive = false;
+      predator.tristarWormMovingAway = false;
+      if (wasHuntingWorm) resetTristarPulseState(predator, false);
+      cancelTristarWormReaches(predator);
+      return null;
+    }
+    const wormPoint = nearestWormSegmentToTristar(predator);
+    if (!wormPoint) {
+      predator.tristarWormMovingAway = false;
+      return null;
+    }
+    if (
+      !predator.tristarWormHuntActive &&
+      (
+        !canAttemptWormAttack ||
+        !tristarWormIsWithinHuntAcquisitionRange(wormPoint)
+      )
+    ) {
+      predator.tristarWormMovingAway = false;
       cancelTristarWormReaches(predator);
       return null;
     }
     activateTristarWormHuntPriority(predator);
     targetHuntResetAfterWormCapture(predator);
-    const wormPoint = nearestWormSegmentToTristar(predator);
-    if (!wormPoint) return null;
-    updateTristarWormReach(predator, dt);
-    if (!game.tristarWormCapture) {
-      beginTristarWormReach(predator, wormPoint);
+    const towardWormX = wormPoint.x - predator.x;
+    const towardWormY = wormPoint.y - predator.y;
+    const movingAway =
+      magnitude(predator.vx, predator.vy) > 0.5 &&
+      predator.vx * towardWormX + predator.vy * towardWormY <= 0;
+    if (movingAway && !predator.tristarWormMovingAway) {
+      // Restart the animated contraction/burst once on the transition to
+      // outward motion. The normal pulse planner aims that extra push along
+      // the current terrain-safe route toward the worm.
+      resetTristarPulseState(predator, false);
+    }
+    predator.tristarWormMovingAway = movingAway;
+    if (canAttemptWormAttack) {
+      updateTristarWormReach(predator, dt);
+      if (!game.tristarWormCapture) {
+        beginTristarWormReach(predator, wormPoint);
+      }
+    } else {
+      cancelTristarWormReaches(predator);
     }
     const captured = Boolean(tristarWormCaptureFor(predator));
     const reaching = tristarHasActiveWormReach(predator);
@@ -12073,13 +12311,10 @@
       active: true,
       captured,
       reaching,
-      desiredAngle: Math.atan2(
-        wormPoint.y - predator.y,
-        wormPoint.x - predator.x,
-      ),
+      desiredAngle: Math.atan2(towardWormY, towardWormX),
       desiredSpeed: captured
         ? 0
-        : TRISTAR_RULES.maximumSpeed,
+        : tristarMaximumSpeed(predator),
     };
   }
 
@@ -12163,154 +12398,7 @@
       );
     }
     releaseTristarArm(predator, armIndex, false);
-  }
-
-  function tristarClusterCandidateComesFirst(first, second) {
-    return Boolean(
-      !second ||
-      first.count > second.count ||
-      (first.count === second.count &&
-        (first.distanceSquared < second.distanceSquared ||
-          (first.distanceSquared === second.distanceSquared &&
-            (first.column < second.column ||
-              (first.column === second.column && first.row < second.row)))))
-    );
-  }
-
-  function findTristarBeetleCluster(predator, beetles) {
-    if (beetles.length < TRISTAR_RULES.beetleClusterMinimumCount) {
-      return null;
-    }
-    const clusterRadius =
-      TRISTAR_RULES.beetleClusterRadiusBlocks * game.map.cellSize;
-    const hashCellSize = Math.max(
-      game.map.cellSize,
-      TRISTAR_RULES.beetleClusterHashCellBlocks * game.map.cellSize,
-    );
-    const maximumCellCenterDistance =
-      clusterRadius + hashCellSize * Math.SQRT2;
-    const maximumCellCenterDistanceSquared =
-      maximumCellCenterDistance * maximumCellCenterDistance;
-    const neighborRange = Math.ceil(maximumCellCenterDistance / hashCellSize);
-    // Aggregate density by fixed local cells so a crowded dev-spawn cannot
-    // turn every Tri-Star scan into an all-pairs beetle comparison.
-    const columns = new Map();
-    const occupiedCells = [];
-
-    beetles.forEach((entry) => {
-      const column = Math.floor(entry.x / hashCellSize);
-      const row = Math.floor(entry.prey.y / hashCellSize);
-      let rows = columns.get(column);
-      if (!rows) {
-        rows = new Map();
-        columns.set(column, rows);
-      }
-      let cell = rows.get(row);
-      if (!cell) {
-        cell = { column, row, count: 0, sumX: 0, sumY: 0 };
-        rows.set(row, cell);
-        occupiedCells.push(cell);
-      }
-      cell.count += 1;
-      cell.sumX += entry.x;
-      cell.sumY += entry.prey.y;
-    });
-
-    const previousCenterIsValid =
-      predator.tristarClusterAnchorId !== null &&
-      Number.isFinite(predator.tristarClusterCenterX) &&
-      Number.isFinite(predator.tristarClusterCenterY);
-    const previousCenterX = previousCenterIsValid
-      ? nearestPeriodicWorldX(predator.tristarClusterCenterX, predator.x)
-      : predator.x;
-    const previousCenterY = previousCenterIsValid
-      ? predator.tristarClusterCenterY
-      : predator.y;
-    const clusterRadiusSquared = clusterRadius * clusterRadius;
-    let best = null;
-    let incumbent = null;
-
-    occupiedCells.forEach((cell) => {
-      let count = 0;
-      let sumX = 0;
-      let sumY = 0;
-      for (
-        let columnOffset = -neighborRange;
-        columnOffset <= neighborRange;
-        columnOffset += 1
-      ) {
-        const neighborColumn = cell.column + columnOffset;
-        const rows = columns.get(neighborColumn);
-        if (!rows) continue;
-        for (
-          let rowOffset = -neighborRange;
-          rowOffset <= neighborRange;
-          rowOffset += 1
-        ) {
-          if (
-            (columnOffset * hashCellSize) ** 2 +
-                (rowOffset * hashCellSize) ** 2 >
-              maximumCellCenterDistanceSquared
-          ) {
-            continue;
-          }
-          const neighbor = rows.get(cell.row + rowOffset);
-          if (!neighbor) continue;
-          count += neighbor.count;
-          sumX += neighbor.sumX;
-          sumY += neighbor.sumY;
-        }
-      }
-      if (count < TRISTAR_RULES.beetleClusterMinimumCount) return;
-      const centerX = sumX / count;
-      const centerY = sumY / count;
-      const dx = centerX - predator.x;
-      const dy = centerY - predator.y;
-      const cluster = {
-        centerX,
-        centerY,
-        column: cell.column,
-        count,
-        distanceSquared: dx * dx + dy * dy,
-        row: cell.row,
-      };
-      if (tristarClusterCandidateComesFirst(cluster, best)) best = cluster;
-      if (previousCenterIsValid) {
-        const previousDx = centerX - previousCenterX;
-        const previousDy = centerY - previousCenterY;
-        if (
-          previousDx * previousDx + previousDy * previousDy <=
-            clusterRadiusSquared &&
-          tristarClusterCandidateComesFirst(cluster, incumbent)
-        ) {
-          incumbent = cluster;
-        }
-      }
-    });
-
-    if (!best) return null;
-    const selected =
-      incumbent &&
-      best.count <
-        incumbent.count + TRISTAR_RULES.beetleClusterSwitchCountAdvantage
-        ? incumbent
-        : best;
-    let anchor = null;
-    let anchorDistanceSquared = Infinity;
-    beetles.forEach((entry) => {
-      const dx = entry.x - selected.centerX;
-      const dy = entry.prey.y - selected.centerY;
-      const distanceSquared = dx * dx + dy * dy;
-      if (
-        distanceSquared < anchorDistanceSquared ||
-        (distanceSquared === anchorDistanceSquared &&
-          entry.prey.id < (anchor?.id ?? Infinity))
-      ) {
-        anchor = entry.prey;
-        anchorDistanceSquared = distanceSquared;
-      }
-    });
-    return anchor ? { ...selected, anchor } : null;
+    if (game.wormDefeated) beginPostDevourWorldView();
   }
 
   function tristarCandidateIsWithinArmReach(predator, candidate) {
@@ -12384,84 +12472,22 @@
         first.prey.id - second.prey.id,
     );
 
-    const beetles = candidates.filter(
-      (candidate) => candidate.prey.kind === ENEMY_TYPES.BEETLE,
-    );
-    const cluster = findTristarBeetleCluster(predator, beetles);
     predator.tristarHuntTarget = candidates[0]?.prey || null;
     predator.tristarHuntMode = predator.tristarHuntTarget ? "prey" : "none";
-    if (cluster) {
-      predator.tristarClusterCenterX = wrapWorldX(cluster.centerX);
-      predator.tristarClusterCenterY = cluster.centerY;
-      predator.tristarClusterCount = cluster.count;
-      predator.tristarClusterAnchorId = cluster.anchor.id;
-    } else {
-      predator.tristarClusterCount = 0;
-      predator.tristarClusterAnchorId = null;
-    }
-
-    const reachableBeetlesBeforeCapture = beetles.reduce(
-      (count, candidate) =>
-        count +
-          (tristarCandidateIsWithinArmReach(predator, candidate) ? 1 : 0),
-      0,
-    );
-    const heldBeetlesBeforeCapture = predator.tristarArms.reduce(
-      (count, arm) =>
-        count + (arm.prey?.kind === ENEMY_TYPES.BEETLE ? 1 : 0),
-      0,
-    );
-    if (
-      !(predator.tristarClusterRepositionCooldown > 0) &&
-      reachableBeetlesBeforeCapture > 0 &&
-      reachableBeetlesBeforeCapture + heldBeetlesBeforeCapture >=
-        TRISTAR_RULES.beetleClusterMinimumCount
-    ) {
-      // Harvesting is sticky across the staggered one-capture-per-scan arm
-      // plans, then releases once the local group has actually been eaten.
-      if (!predator.tristarClusterHarvesting) {
-        predator.tristarClusterBlockedScans = 0;
-      }
-      predator.tristarClusterHarvesting = true;
-    }
+    predator.tristarClusterCount = 0;
+    predator.tristarClusterAnchorId = null;
+    predator.tristarClusterHarvesting = false;
+    predator.tristarClusterHolding = false;
+    predator.tristarClusterBlockedScans = 0;
 
     const captureCandidates = [...candidates];
-    if (cluster) {
-      const focusRadius =
-        (TRISTAR_RULES.beetleClusterRadiusBlocks +
-          TRISTAR_RULES.beetleClusterHashCellBlocks * Math.SQRT2) *
-        game.map.cellSize;
-      const focusRadiusSquared = focusRadius * focusRadius;
-      const capturePriority = (candidate) => {
-        if (candidate.prey.kind !== ENEMY_TYPES.BEETLE) return 2;
-        const dx = candidate.x - cluster.centerX;
-        const dy = candidate.prey.y - cluster.centerY;
-        return dx * dx + dy * dy <= focusRadiusSquared ? 0 : 1;
-      };
-      captureCandidates.sort(
-        (first, second) =>
-          capturePriority(first) - capturePriority(second) ||
-          second.distanceSquared - first.distanceSquared ||
-          first.prey.id - second.prey.id,
-      );
-    } else if (predator.tristarClusterHarvesting) {
-      captureCandidates.sort(
-        (first, second) =>
-          Number(second.prey.kind === ENEMY_TYPES.BEETLE) -
-            Number(first.prey.kind === ENEMY_TYPES.BEETLE) ||
-          second.distanceSquared - first.distanceSquared ||
-          first.prey.id - second.prey.id,
-      );
-    } else {
-      captureCandidates.sort(
-        (first, second) =>
-          second.distanceSquared - first.distanceSquared ||
-          first.prey.id - second.prey.id,
-      );
-    }
+    captureCandidates.sort(
+      (first, second) =>
+        second.distanceSquared - first.distanceSquared ||
+        first.prey.id - second.prey.id,
+    );
 
     let capturesStarted = 0;
-    let beetleCapturesStarted = 0;
     let planAttempts = 0;
     for (let index = 0; index < captureCandidates.length; index += 1) {
       const candidate = captureCandidates[index];
@@ -12495,9 +12521,6 @@
           ) {
             attached = true;
             capturesStarted += 1;
-            if (prey.kind === ENEMY_TYPES.BEETLE) {
-              beetleCapturesStarted += 1;
-            }
           }
         } finally {
           endTristarIkScratchSession(predator);
@@ -12514,69 +12537,6 @@
       Math.floor(Number(predator.tristarCaptureArmCursor) || 0) + 1,
       TRISTAR_RULES.armCount,
     );
-
-    const reachableBeetlesAfterCapture = beetles.reduce(
-      (count, candidate) =>
-        count +
-          (tristarPreyIsAvailable(
-            candidate.prey,
-            tristarFrameContext,
-          ) &&
-          tristarCandidateIsWithinArmReach(predator, candidate)
-            ? 1
-            : 0),
-      0,
-    );
-    const freeArmCount = predator.tristarArms.reduce(
-      (count, arm) =>
-        count + (tristarArmIsAvailableForPrey(arm) ? 1 : 0),
-      0,
-    );
-    const heldBeetleCount = predator.tristarArms.reduce(
-      (count, arm) =>
-        count + (arm.prey?.kind === ENEMY_TYPES.BEETLE ? 1 : 0),
-      0,
-    );
-    if (
-      beetleCapturesStarted > 0 &&
-      heldBeetleCount + reachableBeetlesAfterCapture >=
-        TRISTAR_RULES.beetleClusterMinimumCount
-    ) {
-      predator.tristarClusterHarvesting = true;
-      predator.tristarClusterBlockedScans = 0;
-      predator.tristarClusterRepositionCooldown = 0;
-    }
-    if (predator.tristarClusterHarvesting) {
-      if (reachableBeetlesAfterCapture > 0 && freeArmCount > 0) {
-        predator.tristarClusterBlockedScans = beetleCapturesStarted > 0
-          ? 0
-          : predator.tristarClusterBlockedScans + 1;
-      } else {
-        predator.tristarClusterBlockedScans = 0;
-      }
-      if (
-        predator.tristarClusterBlockedScans >=
-        TRISTAR_RULES.clusterBlockedScanLimit
-      ) {
-        predator.tristarClusterHarvesting = false;
-        predator.tristarClusterHolding = false;
-        predator.tristarClusterBlockedScans = 0;
-        predator.tristarClusterRepositionCooldown =
-          TRISTAR_RULES.clusterRepositionDuration;
-      } else if (
-        reachableBeetlesAfterCapture > 0 ||
-        heldBeetleCount > 0 ||
-        freeArmCount === 0
-      ) {
-        predator.tristarClusterHolding = true;
-      } else {
-        predator.tristarClusterHarvesting = false;
-        predator.tristarClusterHolding = false;
-      }
-    } else {
-      predator.tristarClusterHolding = false;
-      predator.tristarClusterBlockedScans = 0;
-    }
   }
 
   function tristarPointIsInGround(x, y) {
@@ -12712,13 +12672,14 @@
     desiredSpeed,
     scheduledImpulse,
   ) {
+    const maximumSpeed = tristarMaximumSpeed(target);
     const directionX = Math.cos(launchAngle);
     const directionY = Math.sin(launchAngle);
     const forwardSpeed =
       target.vx * directionX + target.vy * directionY;
     const remainingForwardSpeed = Math.max(
       0,
-      clamp(desiredSpeed, 0, TRISTAR_RULES.maximumSpeed) -
+      clamp(desiredSpeed, 0, maximumSpeed) -
         forwardSpeed,
     );
     const currentSpeedSquared =
@@ -12730,7 +12691,7 @@
           Math.max(
             0,
             forwardSpeed * forwardSpeed +
-              TRISTAR_RULES.maximumSpeed ** 2 -
+              maximumSpeed ** 2 -
               currentSpeedSquared,
           ),
         ),
@@ -12975,10 +12936,12 @@
     steeringAngle = target.angle,
     desiredSpeed = TRISTAR_RULES.maximumSpeed,
   ) {
+    const durationScale = tristarPulseDurationScale(target);
     target.tristarPulsePhase = phase;
     target.tristarPulseElapsed = 0;
     if (phase === "contract") {
-      target.tristarPulseDuration = TRISTAR_RULES.pulseContractDuration;
+      target.tristarPulseDuration =
+        TRISTAR_RULES.pulseContractDuration * durationScale;
       target.tristarPulsePushed = false;
       target.tristarPulseSteeringRemaining = 0;
       selectTristarPulseLaunchVertex(
@@ -12987,7 +12950,8 @@
         desiredSpeed,
       );
     } else if (phase === "burst") {
-      target.tristarPulseDuration = TRISTAR_RULES.pulseBurstDuration;
+      target.tristarPulseDuration =
+        TRISTAR_RULES.pulseBurstDuration * durationScale;
       target.tristarPulseSteeringRemaining = 0;
       const launchAngle = Number.isFinite(target.tristarPulseLaunchAngle)
         ? target.tristarPulseLaunchAngle
@@ -13013,9 +12977,9 @@
       target.tristarPulseDuration = randomRange(
         TRISTAR_RULES.pulseMinimumCoastDuration,
         TRISTAR_RULES.pulseMaximumCoastDuration,
-      );
+      ) * durationScale;
       target.tristarPulseSteeringRemaining = target.tristarPulsePushed
-        ? TRISTAR_RULES.pulsePostBurstSteeringDuration
+        ? TRISTAR_RULES.pulsePostBurstSteeringDuration * durationScale
         : 0;
     }
   }
@@ -13205,12 +13169,13 @@
     dt,
     desiredSpeed = TRISTAR_RULES.maximumSpeed,
   ) {
+    const maximumSpeed = tristarMaximumSpeed(target);
     let speed = magnitude(target.vx, target.vy);
-    if (speed > TRISTAR_RULES.maximumSpeed) {
-      const capScale = TRISTAR_RULES.maximumSpeed / speed;
+    if (speed > maximumSpeed) {
+      const capScale = maximumSpeed / speed;
       target.vx *= capScale;
       target.vy *= capScale;
-      speed = TRISTAR_RULES.maximumSpeed;
+      speed = maximumSpeed;
     }
     target.tristarSpeed = speed;
     if (!(speed > 0.0001) || !(dt > 0)) {
@@ -13291,12 +13256,13 @@
       resetTristarPulseState(target, false);
     }
 
+    const maximumSpeed = tristarMaximumSpeed(target);
     let speed = magnitude(target.vx, target.vy);
-    if (speed > TRISTAR_RULES.maximumSpeed) {
-      const capScale = TRISTAR_RULES.maximumSpeed / speed;
+    if (speed > maximumSpeed) {
+      const capScale = maximumSpeed / speed;
       target.vx *= capScale;
       target.vy *= capScale;
-      speed = TRISTAR_RULES.maximumSpeed;
+      speed = maximumSpeed;
     }
     target.tristarSpeed = speed;
     const steeringAngle = tristarSteeringAngle(target, desiredAngle);
@@ -13390,10 +13356,12 @@
 
   function enterTristarOffMinimapSimulation(target) {
     if (target.tristarOffMinimap || tristarHasHeldPrey(target)) return false;
+    target.tristarWormHuntActive = false;
+    target.tristarWormMovingAway = false;
+    target.tristarWormFleeActive = false;
     resetTristarPulseState(target, false);
     target.tristarOffMinimap = true;
     target.tristarDetailedTerrainAvoidance = false;
-    target.tristarWormHuntActive = false;
     target.tristarOffMinimapTarget = null;
     target.tristarHuntTarget = null;
     target.tristarHuntMode = "none";
@@ -13407,11 +13375,6 @@
       target.tristarOffMinimapSearchCooldown =
         positiveModulo(target.id * 0.61803398875, 1) *
         TRISTAR_RULES.offMinimapSearchInterval;
-    }
-    if (!Number.isFinite(target.tristarOffMinimapDevourCooldown)) {
-      target.tristarOffMinimapDevourCooldown =
-        positiveModulo(target.id * 0.754877666, 1) *
-        TRISTAR_RULES.offMinimapMaximumDevourInterval;
     }
     if (
       target.regionType === BLOCK_TYPES.GROUND &&
@@ -13430,6 +13393,8 @@
     target.tristarOffMinimapBlockedUntil = 0;
     target.tristarHuntTarget = null;
     target.tristarHuntMode = "none";
+    target.tristarWormMovingAway = false;
+    target.tristarWormFleeActive = false;
     target.tristarClusterCount = 0;
     target.tristarClusterAnchorId = null;
     target.tristarClusterHarvesting = false;
@@ -13449,78 +13414,6 @@
     });
     if (target.regionType === BLOCK_TYPES.GROUND) {
       target.movementMode = "tristar-roaming";
-    }
-  }
-
-  function nearestOffMinimapTristarBeetleToDevour(
-    predator,
-    tristarFrameContext,
-    minimapBounds,
-  ) {
-    const devourRadius =
-      TRISTAR_RULES.offMinimapDevourRadiusBlocks * game.map.cellSize;
-    let nearest = null;
-    let nearestDistanceSquared = Infinity;
-    visitTristarPreyInRadius(
-      predator,
-      devourRadius,
-      tristarFrameContext,
-      (prey, _preyX, distanceSquared) => {
-        if (
-          prey.kind !== ENEMY_TYPES.BEETLE ||
-          minimapTargetMarkerIsVisible(prey, minimapBounds) ||
-          !tristarPreyIsAvailable(prey, tristarFrameContext)
-        ) {
-          return true;
-        }
-        if (
-          distanceSquared < nearestDistanceSquared ||
-          (distanceSquared === nearestDistanceSquared &&
-            prey.id < (nearest?.id ?? Infinity))
-        ) {
-          nearest = prey;
-          nearestDistanceSquared = distanceSquared;
-        }
-        return true;
-      },
-    );
-    return nearest;
-  }
-
-  function queueOffMinimapTristarDevour(
-    predator,
-    dt,
-    devouredTargets,
-    tristarFrameContext,
-    minimapBounds,
-  ) {
-    if (
-      predator.regionType !== BLOCK_TYPES.GROUND ||
-      predator.movementMode === "burrowing" ||
-      predator.movementMode === "falling"
-    ) {
-      return;
-    }
-    predator.tristarOffMinimapDevourCooldown = Math.max(
-      0,
-      (Number(predator.tristarOffMinimapDevourCooldown) || 0) - dt,
-    );
-    if (predator.tristarOffMinimapDevourCooldown > 0) return;
-    const prey = nearestOffMinimapTristarBeetleToDevour(
-      predator,
-      tristarFrameContext,
-      minimapBounds,
-    );
-    if (!prey) return;
-    prey.tristarDevourQueued = true;
-    devouredTargets.push({ predator, prey, emitEffects: false });
-    predator.tristarOffMinimapDevourCooldown = randomRange(
-      TRISTAR_RULES.offMinimapMinimumDevourInterval,
-      TRISTAR_RULES.offMinimapMaximumDevourInterval,
-    );
-    if (predator.tristarOffMinimapTarget === prey) {
-      predator.tristarOffMinimapTarget = null;
-      predator.tristarOffMinimapSearchCooldown = 0;
     }
   }
 
@@ -13605,21 +13498,12 @@
   function updateTristarOffMinimap(
     target,
     dt,
-    devouredTargets,
     tristarFrameContext,
     minimapBounds,
   ) {
     if (!target.tristarOffMinimap && !enterTristarOffMinimapSimulation(target)) {
       return false;
     }
-    queueOffMinimapTristarDevour(
-      target,
-      dt,
-      devouredTargets,
-      tristarFrameContext,
-      minimapBounds,
-    );
-
     if (target.movementMode === "burrowing") {
       updateBurrowingEnemy(target, dt);
     } else if (
@@ -13642,7 +13526,7 @@
         const dx = huntX - target.x;
         const dy = huntTarget.y - target.y;
         const stopRadius =
-          TRISTAR_RULES.offMinimapDevourRadiusBlocks * game.map.cellSize;
+          TRISTAR_RULES.offMinimapStopRadiusBlocks * game.map.cellSize;
         const huntTargetMarkerIsVisible = minimapTargetMarkerIsVisible(
           huntTarget,
           minimapBounds,
@@ -13881,8 +13765,9 @@
       (Number(target.tristarClusterRepositionCooldown) || 0) - dt,
     );
 
-    const wormHunt = updateTristarWormHunt(target, dt);
-    if (!wormHunt) {
+    const wormFlee = updateTristarWormFlee(target);
+    const wormHunt = wormFlee ? null : updateTristarWormHunt(target, dt);
+    if (!wormHunt && !wormFlee) {
       target.tristarSearchCooldown -= dt;
       if (target.tristarSearchCooldown <= 0) {
         target.tristarSearchCooldown = TRISTAR_RULES.scanInterval;
@@ -13890,8 +13775,14 @@
       }
     }
 
-    let desiredAngle = wormHunt?.desiredAngle ?? target.tristarWanderAngle;
-    let desiredSpeed = wormHunt?.desiredSpeed ?? target.tristarDesiredSpeed;
+    let desiredAngle =
+      wormFlee?.desiredAngle ??
+      wormHunt?.desiredAngle ??
+      target.tristarWanderAngle;
+    let desiredSpeed =
+      wormFlee?.desiredSpeed ??
+      wormHunt?.desiredSpeed ??
+      target.tristarDesiredSpeed;
     const huntTarget = target.tristarHuntTarget;
     const releaseRadius =
       TRISTAR_RULES.releaseRadiusBlocks * game.map.cellSize;
@@ -13914,7 +13805,7 @@
       }
     }
 
-    if (wormHunt) {
+    if (wormHunt || wormFlee) {
       hasHuntDestination = true;
     } else if (target.tristarClusterHolding) {
       desiredAngle = target.angle;
@@ -13941,17 +13832,19 @@
       desiredSpeed = target.tristarDesiredSpeed;
     }
 
+    const suppressLocomotion = wormHunt
+      ? Boolean(wormHunt.captured)
+      : !wormFlee &&
+        tristarShouldSuppressLocomotionForPrey(
+          target,
+          tristarFrameContext,
+        );
     updateTristarPulseLocomotion(
       target,
       desiredAngle,
       desiredSpeed,
       dt,
-      wormHunt
-        ? Boolean(wormHunt.captured)
-        : tristarShouldSuppressLocomotionForPrey(
-            target,
-            tristarFrameContext,
-          ),
+      suppressLocomotion,
     );
     updateTristarFreeArms(target, dt);
     const heldCount = updateTristarCapturedPrey(
@@ -13961,19 +13854,21 @@
       tristarFrameContext,
     );
     projectTristarFreeArmSeparation(target, dt);
-    target.movementMode = wormHunt?.captured
-      ? "tristar-eating-worm"
-      : wormHunt?.reaching
-        ? "tristar-grabbing-worm"
-        : wormHunt
-          ? "tristar-hunting-worm"
-          : target.tristarClusterHolding
-            ? "tristar-feeding"
-            : heldCount > 0
-              ? "tristar-carrying"
-              : hasHuntDestination
-                ? "tristar-hunting"
-                : "tristar-roaming";
+    target.movementMode = wormFlee
+      ? "tristar-fleeing-worm"
+      : wormHunt?.captured
+        ? "tristar-eating-worm"
+        : wormHunt?.reaching
+          ? "tristar-grabbing-worm"
+          : wormHunt
+            ? "tristar-hunting-worm"
+            : target.tristarClusterHolding
+              ? "tristar-feeding"
+              : heldCount > 0
+                ? "tristar-carrying"
+                : hasHuntDestination
+                  ? "tristar-hunting"
+                  : "tristar-roaming";
   }
 
   function finishTristarDevours(devouredTargets) {
@@ -14498,9 +14393,8 @@
 
   function tristarIsOnScreen(target, visibleBounds) {
     if (!visibleBounds) return false;
-    // The arms are the majority of a Tri-Star's rendered footprint. Using
-    // only its small core here left it visibly on screen for several hundred
-    // world units before worm aggro could activate.
+    // The arms are the majority of a Tri-Star's rendered footprint. Keep an
+    // acquired worm hunt latched until that entire footprint leaves view.
     const radius = Math.max(
       0,
       Number(target.radius) || 0,
@@ -14667,7 +14561,6 @@
         updateTristarOffMinimap(
           target,
           dt,
-          devouredTargets,
           tristarFrameContext,
           tristarMinimapBounds,
         );
@@ -14677,7 +14570,7 @@
         tristarMinimapBounds,
       );
       // The remote ecological tier may contain hundreds of Tri-Stars. Keep
-      // its direct pursuit/feeding simulation active, but begin and end the
+      // its direct pursuit simulation active, but begin and end the
       // observable body trail at the circular minimap boundary so remote
       // terrain writes cannot outrun the tunnel-expiry queue.
       if (markerIsVisible || endingMarkerIsVisible) {
@@ -20613,10 +20506,34 @@
     game.acceleration.y =
       (game.velocity.y - previousVelocityY) / Math.max(dt, 0.000001);
     game.shake *= Math.pow(0.0002, dt);
-    if (game.wormDefeated) showDeathScreen();
+  }
+
+  function updatePostDevourWorld(dt) {
+    game.boosting = false;
+    game.acidSpraying = false;
+    game.speed = 0;
+    game.velocity.x = 0;
+    game.velocity.y = 0;
+    game.acceleration.x = 0;
+    game.acceleration.y = 0;
+    updateTargets(dt);
+    refillRoundTargetsTimeSliced();
+    updateAcidTunnelDecay();
+    updateTunnelDecay();
+    updateParticles(dt);
+    game.shake *= Math.pow(0.0002, dt);
+    game.postDevourWorldTimer = Math.max(
+      0,
+      game.postDevourWorldTimer - dt,
+    );
+    if (game.postDevourWorldTimer <= 0) showDeathScreen();
   }
 
   function updatePhysics(dt) {
+    if (game.wormDefeated) {
+      updatePostDevourWorld(dt);
+      return;
+    }
     // Repair the compact ownership index once per frame as well as updating
     // it at mutations. This keeps developer/test-injected tongues safe while
     // every hot-path ownership query remains constant-time.
@@ -22181,6 +22098,7 @@
     game.started = false;
     game.paused = false;
     game.wormDefeated = false;
+    game.postDevourWorldTimer = 0;
     gameShell.dataset.paused = "false";
     gameShell.dataset.defeated = "false";
     game.activeWorldId = null;
@@ -28138,26 +28056,34 @@
     if (!game.levelLoaded) return;
 
     const zoom = cameraZoom();
+    const shake = screenShakeOffset();
 
     ctx.save();
+    ctx.translate(shake.x, shake.y);
     ctx.scale(zoom, zoom);
     ctx.translate(-game.camera.x, -game.camera.y);
 
     drawBackground();
     drawTargets();
-    drawSprinterAreaIndicator();
+    if (!game.wormDefeated) drawSprinterAreaIndicator();
     drawAcidFluid();
     drawParticles("back");
-    drawTongues();
-    const wormRenderState = buildActiveWormRenderState();
-    drawWorm(wormRenderState);
+    const wormRenderState = game.wormDefeated
+      ? null
+      : buildActiveWormRenderState();
+    if (wormRenderState) {
+      drawTongues();
+      drawWorm(wormRenderState);
+    }
     drawParticles("front");
     drawEnemyHealthBars();
     drawGridOverlay();
-    drawCollisionOverlays();
-    drawCombatStatsOverlay();
-    drawDirectionVectors();
-    drawSteeringVectors();
+    if (!game.wormDefeated) {
+      drawCollisionOverlays();
+      drawCombatStatsOverlay();
+      drawDirectionVectors();
+      drawSteeringVectors();
+    }
     drawFrame();
     ctx.restore();
     drawMinimap(wormRenderState);
@@ -28219,15 +28145,17 @@
     wormHealthMeter.setAttribute("aria-valuenow", currentHealth.toFixed(2));
     wormHealthHud.classList.toggle("injured", healthRatio <= 0.5);
     wormHealthHud.classList.toggle("critical", healthRatio <= 0.25);
-    stateReadout.textContent = game.tristarWormCapture
-      ? "Tri-Star captured"
-      : activeHeavyTongueGrapple()
-        ? "Tongue grapple"
-        : game.inGround
-          ? "Subterranean"
-          : game.onStoneSurface
-            ? "Surface rolling"
-            : "Airborne";
+    stateReadout.textContent = game.wormDefeated
+      ? "Worm devoured"
+      : game.tristarWormCapture
+        ? "Tri-Star captured"
+        : activeHeavyTongueGrapple()
+          ? "Tongue grapple"
+          : game.inGround
+            ? "Subterranean"
+            : game.onStoneSurface
+              ? "Surface rolling"
+              : "Airborne";
     statePill.classList.toggle(
       "airborne",
       !game.inGround && !game.onStoneSurface,
@@ -28408,6 +28336,10 @@
   canvas.addEventListener("pointerdown", (event) => {
     if (!event.isPrimary) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (game.wormDefeated) {
+      event.preventDefault();
+      return;
+    }
     if (game.tristarWormCapture) {
       event.preventDefault();
       return;
@@ -28549,7 +28481,6 @@
       drawWorldEditor();
     }
   });
-  editorCanvas.addEventListener("contextmenu", (event) => event.preventDefault());
   editorCanvas.addEventListener(
     "wheel",
     (event) => {
@@ -28610,8 +28541,6 @@
 
   wormLayerCanvas.addEventListener("pointerup", finishWormPaintPointer);
   wormLayerCanvas.addEventListener("pointercancel", finishWormPaintPointer);
-  wormLayerCanvas.addEventListener("contextmenu", (event) => event.preventDefault());
-
   window.addEventListener("keydown", (event) => {
     if (wormPainter.open) {
       if (event.code === "Escape") {
@@ -28657,7 +28586,9 @@
     }
     if (event.code === "KeyF") {
       event.preventDefault();
-      if (game.levelLoaded && !event.repeat) toggleDevMenu();
+      if (game.levelLoaded && !game.wormDefeated && !event.repeat) {
+        toggleDevMenu();
+      }
       return;
     }
     if (devMenu.classList.contains("open") && event.code === "Escape") {
@@ -28666,7 +28597,14 @@
       return;
     }
     if (keyMap[event.code]) {
-      if (!game.levelLoaded || game.paused || game.menuOpen) return;
+      if (
+        !game.levelLoaded ||
+        game.paused ||
+        game.menuOpen ||
+        game.wormDefeated
+      ) {
+        return;
+      }
       event.preventDefault();
       keys[keyMap[event.code]] = true;
     } else if (event.code === "Escape") {
@@ -28702,7 +28640,14 @@
     const control = button.dataset.control;
     const engage = (event) => {
       event.preventDefault();
-      if (!game.levelLoaded || game.paused || game.menuOpen) return;
+      if (
+        !game.levelLoaded ||
+        game.paused ||
+        game.menuOpen ||
+        game.wormDefeated
+      ) {
+        return;
+      }
       keys[control] = true;
       button.classList.add("active");
     };
@@ -28719,12 +28664,13 @@
 
   function toggleDevMenu(force) {
     const open = typeof force === "boolean" ? force : !devMenu.classList.contains("open");
+    if (open && game.wormDefeated) return;
     devMenu.classList.toggle("open", open);
     gameShell.classList.toggle("dev-tools-open", open);
     devMenuToggle.setAttribute("aria-expanded", String(open));
     statePill.setAttribute("aria-hidden", String(!open));
     setDevProfilerActive(open);
-    if (open) syncDevWormLevelControl();
+    if (open) syncDevGameplayControls();
   }
 
   function syncDevWormLevelControl() {
@@ -28735,6 +28681,19 @@
     devWormLevelMode.textContent = overridden
       ? `Override active · score level ${game.scoreGrowthLevel}`
       : `Following score · level ${game.scoreGrowthLevel}`;
+  }
+
+  function syncDevLevelCostControl() {
+    const displayMultiplier = String(
+      Number(game.levelCostMultiplier.toFixed(2)),
+    );
+    devLevelCostMultiplierInput.value = displayMultiplier;
+    devLevelCostMode.textContent = `${displayMultiplier}× point requirements`;
+  }
+
+  function syncDevGameplayControls() {
+    syncDevWormLevelControl();
+    syncDevLevelCostControl();
   }
 
   function setDevWormLevelOverride(rawValue) {
@@ -28753,6 +28712,20 @@
     updateHud();
   }
 
+  function setDevLevelCostMultiplier(rawValue) {
+    const normalizedValue = String(rawValue).trim();
+    const parsedValue = normalizedValue === "" ? 1 : Number(normalizedValue);
+    game.levelCostMultiplier = clamp(
+      Number.isFinite(parsedValue) ? parsedValue : 1,
+      DEV_LEVEL_COST_MULTIPLIER_MIN,
+      DEV_LEVEL_COST_MULTIPLIER_MAX,
+    );
+    game.growthCost = growthCostForLevel(game.scoreGrowthLevel);
+    applyPendingGrowthProgress(true);
+    syncDevGameplayControls();
+    updateHud();
+  }
+
   function populateDevEnemyButtons() {
     devEnemyButtons.replaceChildren();
     Object.entries(ENEMY_DEFINITIONS).forEach(([kind, definition]) => {
@@ -28761,16 +28734,52 @@
       button.type = "button";
       button.dataset.devEnemyKind = kind;
       button.textContent = definition.label;
-      button.title = `Place ${definition.label.toLowerCase()} in view`;
+      button.title = `Replace a random enemy with ${definition.label.toLowerCase()}`;
       devEnemyButtons.appendChild(button);
     });
+  }
+
+  function devEnemyReplacementCandidates(kind) {
+    const replacementMustMatchKind = availableEnemyKindSlots(kind) <= 0;
+    return game.targets.filter(
+      (target) =>
+        target.kind !== ENEMY_TYPES.MEAT &&
+        target.health > 0 &&
+        !target.latched &&
+        !target.tongueCaptured &&
+        !target.paralyzed &&
+        !target.tristarDevourQueued &&
+        target.tristarCaptorId === null &&
+        !targetHasActiveTongue(target) &&
+        !targetHasBoostLatchReservation(target) &&
+        (!replacementMustMatchKind || target.kind === kind),
+    );
+  }
+
+  function destroyDevEnemyForReplacement(target) {
+    const targetIndex = game.targets.indexOf(target);
+    if (targetIndex < 0) return false;
+    clearTristarRelationships(target);
+    releaseAcidParticlesAttachedToTargets(new Set([target]));
+    acidLatchedTargetSeconds.delete(target);
+    acidActiveTargets.delete(target);
+    game.targets.splice(targetIndex, 1);
+    game.targetById.delete(target.id);
+    spawnParticles(
+      target.x,
+      target.y,
+      Math.max(4, Math.round(7 * Math.min(3, target.sizeScale))),
+      target.kind,
+      target.sizeScale,
+    );
+    return true;
   }
 
   function placeDevEnemyInView(kind) {
     const definition = ENEMY_DEFINITIONS[kind];
     if (!definition || definition.devSpawnable === false) return;
-    if (liveEnemyCount() >= enemyPopulationLimit()) return;
-    if (availableEnemyKindSlots(kind) <= 0) return;
+    const replacementCandidates = devEnemyReplacementCandidates(kind);
+    if (replacementCandidates.length === 0) return;
 
     const visible = getVisibleWorldBounds(0);
     const spawnPosition =
@@ -28812,13 +28821,23 @@
         `${game.activeWorldId}:${kind}:${game.nextTargetId}:${game.devEnemySpawnIndex}:dev`,
       ),
     );
+    const replacedTarget =
+      replacementCandidates[
+        Math.floor(random() * replacementCandidates.length)
+      ];
+    const inheritedRoundBudget = Boolean(replacedTarget.roundBudgeted);
+    const inheritedScoreValue = inheritedRoundBudget
+      ? Math.max(0, Number(replacedTarget.scoreValue) || 0)
+      : 0;
+    if (!destroyDevEnemyForReplacement(replacedTarget)) return;
 
     const target = createEnemyTarget(kind, x, y, regionType, random);
-    // Developer targets exercise behavior without increasing the selected
-    // round's obtainable score.
-    target.scoreValue = 0;
-    target.roundBudgeted = false;
+    // Transfer the victim's existing allocation so replacement changes
+    // neither the round's obtainable score nor its live population.
+    target.scoreValue = inheritedScoreValue;
+    target.roundBudgeted = inheritedRoundBudget;
     game.targets.push(target);
+    if (game.targetByIdReady) game.targetById.set(target.id, target);
     game.totalTargets += 1;
     updateHud();
   }
@@ -28878,6 +28897,9 @@
   devMenuToggle.addEventListener("click", () => toggleDevMenu());
   devWormLevelInput.addEventListener("input", () =>
     setDevWormLevelOverride(devWormLevelInput.value),
+  );
+  devLevelCostMultiplierInput.addEventListener("change", () =>
+    setDevLevelCostMultiplier(devLevelCostMultiplierInput.value),
   );
   devEnemyButtons.addEventListener("click", (event) => {
     const button = event.target.closest("[data-dev-enemy-kind]");
