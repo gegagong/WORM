@@ -144,7 +144,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260902-worm-health-hud-v12";
+    const styleUrl = "./styles.css?v=20260905-mobile-controls-v13";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -433,13 +433,10 @@
   );
 
   const TAU = Math.PI * 2;
-  const keys = {
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-    boost: false,
-  };
+  const controlInput = WormControls.createInput();
+  const controls = controlInput.state;
+  let touchControls = null;
+  const abilityPointer = { pointerId: null };
   const tonguePointer = {
     pointerId: null,
   };
@@ -5869,8 +5866,8 @@
   }
 
   function resize() {
-    game.viewport.width = window.innerWidth;
-    game.viewport.height = window.innerHeight;
+    game.viewport.width = gameShell.clientWidth;
+    game.viewport.height = gameShell.clientHeight;
     game.dpr = Math.min(window.devicePixelRatio || 1, 2);
 
     canvas.width = Math.round(game.viewport.width * game.dpr);
@@ -5883,6 +5880,7 @@
   }
 
   function reset() {
+    clearControlKeys();
     cancelHeldTonguePointer();
     cancelSpitterPointer();
     clearSprinterAreaTarget(true);
@@ -5953,14 +5951,16 @@
   }
 
   function clearControlKeys() {
-    keys.left = false;
-    keys.right = false;
-    keys.up = false;
-    keys.down = false;
-    keys.boost = false;
+    controlInput.reset();
+    touchControls?.reset();
     clearSprinterAreaTarget();
-    cancelHeldTonguePointer();
-    cancelSpitterPointer();
+    cancelCanvasAbility();
+  }
+
+  function playerCanControl() {
+    return game.levelLoaded && game.started && !game.paused &&
+      !game.menuOpen && !game.wormDefeated && !game.tristarWormCapture &&
+      !gameShell.classList.contains("touch-portrait");
   }
 
   function updateActiveWormTypeLabels() {
@@ -5972,7 +5972,7 @@
     gameShell.dataset.wormAbility = type.ability || "none";
     if (boostTouchButton) {
       const multiplier = formatSpeedMultiplier(wormBoostSpeedMultiplier());
-      boostTouchButton.textContent = `${multiplier}×`;
+      boostTouchButton.querySelector("#touch-boost-multiplier").textContent = `${multiplier}×`;
       const actionDescription = wormHasAbility(WORM_ABILITIES.SPRINT)
         ? " or latch onto nearby hard prey"
         : wormHasAbility(WORM_ABILITIES.TONGUE)
@@ -5983,6 +5983,12 @@
         `Boost to ${multiplier} times speed${actionDescription}`,
       );
     }
+    document.querySelector("#touch-ability-hint").textContent =
+      wormHasAbility(WORM_ABILITIES.SPRINT)
+        ? "Tap an area to hunt"
+        : wormHasAbility(WORM_ABILITIES.ACID)
+          ? "Hold and drag to spray"
+          : "Tap prey · hold to grapple";
   }
 
   function persistActiveWormType() {
@@ -6058,6 +6064,7 @@
   async function setActiveWormType(typeId) {
     const nextType = WORM_TYPES[typeId];
     if (!nextType) return false;
+    clearControlKeys();
     if (typeId === game.activeWormTypeId) {
       updateActiveWormTypeLabels();
       await loadSavedWormAppearance();
@@ -12111,6 +12118,7 @@
     }
     if (!attached) return false;
 
+    clearControlKeys();
     clearSprinterAreaTarget(true);
     discardActiveTongues();
     cancelSpitterPointer();
@@ -16533,7 +16541,7 @@
       sprinterAreaTargetClaimedElsewhere(target) ||
       target.boostLatchHitboxDisabled ||
       target.biteBounceCooldown > 0 ||
-      keys.down ||
+      controls.brake > 0 ||
       game.boostCharge <= 0
     ) {
       return null;
@@ -16633,8 +16641,8 @@
       game.onStoneSurface ||
       game.tongues.some((tongue) => tongue.heavyHold) ||
       !game.boostLatchReady ||
-      !keys.boost ||
-      keys.down ||
+      !controls.boostHeld ||
+      controls.brake > 0 ||
       game.boostCharge <= 0 ||
       game.capturedTargets.length > 0
     ) {
@@ -18822,7 +18830,7 @@
 
     const enemyNearby = enemyIsNearHead();
     const airborneBoostHeld =
-      keys.boost && !game.inGround && !game.onStoneSurface;
+      controls.boostHeld && !game.inGround && !game.onStoneSurface;
     const shouldHoldOpen =
       enemyNearby ||
       airborneBoostHeld ||
@@ -19074,8 +19082,8 @@
       if (Number.isFinite(target.boostDropReleaseX)) {
         if (!target.boostDropMovementArmed) {
           const playerDirectedMotion = game.inGround
-            ? keys.up
-            : keys.left || keys.right;
+            ? controls.throttle > 0
+            : controls.steer !== 0;
           if (!playerDirectedMotion) continue;
           target.boostDropMovementArmed = true;
         }
@@ -19778,14 +19786,14 @@
         (areaTarget.y - contact.wheelY) * surface.unitY;
       if (Math.abs(tangentOffset) > 1) activeSteer = Math.sign(tangentOffset);
     }
-    if (activeSteer !== 0) game.stoneSurfaceDirection = activeSteer;
+    if (activeSteer !== 0) game.stoneSurfaceDirection = Math.sign(activeSteer);
 
     contact.velocityY += motion.airGravity * dt;
     let tangentSpeed =
       contact.velocityX * surface.unitX +
       contact.velocityY * surface.unitY;
-    const accelerating =
-      Boolean(areaTarget || (!suppressManualInput && keys.up)) && !keys.down;
+    const throttle = areaTarget ? 1 : suppressManualInput ? 0 : controls.throttle;
+    const accelerating = throttle > 0 && controls.brake === 0;
     const levelTurnScale =
       1 +
       game.growthLevel *
@@ -19795,17 +19803,17 @@
     const huntTurnMultiplier = areaTarget
       ? sprinterHuntTurnMultiplier()
       : 1;
-    const targetSpeed = keys.down
+    const targetSpeed = controls.brake > 0
       ? 0
       : accelerating
         ? game.stoneSurfaceDirection *
           STONE_RULES.surfaceTargetSpeed *
-          activeTurnScale
+          activeTurnScale * throttle
         : 0;
-    const traction = keys.down
-      ? STONE_RULES.surfaceBrakeDeceleration * levelTurnScale
+    const traction = controls.brake > 0
+      ? STONE_RULES.surfaceBrakeDeceleration * levelTurnScale * controls.brake
       : accelerating
-        ? STONE_RULES.surfaceAcceleration * activeTurnScale
+        ? STONE_RULES.surfaceAcceleration * activeTurnScale * throttle
         : STONE_RULES.surfaceCoastDeceleration * levelTurnScale;
     tangentSpeed = moveToward(tangentSpeed, targetSpeed, traction * dt);
     const normalSpeed =
@@ -20086,11 +20094,11 @@
       distance = 0;
     }
 
-    if (keys.up) {
+    if (controls.throttle > 0) {
       const reelSpeed =
         TONGUE_GRAPPLE_RULES.reelSpeed *
         (pullBoosting ? TONGUE_GRAPPLE_RULES.reelBoostMultiplier : 1);
-      const reelDistance = reelSpeed * dt;
+      const reelDistance = reelSpeed * controls.throttle * dt;
       tongue.grappleRopeLength = Math.max(
         0,
         tongue.grappleRopeLength - reelDistance,
@@ -20538,7 +20546,7 @@
     // it at mutations. This keeps developer/test-injected tongues safe while
     // every hot-path ownership query remains constant-time.
     rebuildActiveTongueTargetCounts();
-    const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    const steer = controls.steer;
     const radius = wormDimension("collisionRadius");
     const previousVelocityX = game.velocity.x;
     const previousVelocityY = game.velocity.y;
@@ -20581,9 +20589,9 @@
     let stoneCollisionResolved = false;
     let worldBoundaryResolved = false;
 
-    if (!keys.boost) game.boostLatchReady = true;
+    if (!controls.boostHeld) game.boostLatchReady = true;
     const sprinterMovement = wormHasAbility(WORM_ABILITIES.SPRINT);
-    if (keys.down) clearSprinterAreaTarget();
+    if (controls.brake > 0) clearSprinterAreaTarget();
     let sprinterAreaTarget = activeSprinterAreaTarget();
     refreshSprinterAreaHuntTarget(
       sprinterAreaTarget,
@@ -20613,12 +20621,12 @@
     const areaLatchControlHeld = Boolean(
       game.latchAttack?.areaHunt &&
       sprinterAreaTarget &&
-      !keys.down &&
+      controls.brake === 0 &&
       game.boostCharge > 0,
     );
     const latchControlHeld =
-      (keys.boost || areaLatchControlHeld) &&
-      !keys.down &&
+      (controls.boostHeld || areaLatchControlHeld) &&
+      controls.brake === 0 &&
       game.boostCharge > 0;
     if (game.latchAttack && !latchControlHeld) {
       releaseBoostLatchAttack(
@@ -20655,27 +20663,27 @@
     const movementBoosting =
       !sprinterAreaTarget &&
       game.inGround &&
-      keys.up &&
-      keys.boost &&
-      !keys.down &&
+      controls.throttle > 0 &&
+      controls.boostHeld &&
+      controls.brake === 0 &&
       game.boostCharge > 0;
     const surfaceRollingBoosting =
       !sprinterAreaTarget &&
       Boolean(stoneSurfaceContact) &&
-      keys.up &&
-      keys.boost &&
-      !keys.down &&
+      controls.throttle > 0 &&
+      controls.boostHeld &&
+      controls.brake === 0 &&
       game.boostCharge > 0;
     const grapplePullBoosting =
       Boolean(heavyTongueGrapple) &&
-      keys.up &&
-      keys.boost &&
-      !keys.down &&
+      controls.throttle > 0 &&
+      controls.boostHeld &&
+      controls.brake === 0 &&
       game.boostCharge > 0;
     const areaTargetBoosting =
       Boolean(sprinterAreaPursuit) &&
       Boolean(game.inGround || stoneSurfaceContact) &&
-      !keys.down &&
+      controls.brake === 0 &&
       game.boostCharge > 0;
     game.boosting =
       Boolean(game.latchAttack) ||
@@ -20693,7 +20701,7 @@
         0,
         game.boostCharge - boostDrainRate * dt,
       );
-    } else if (!keys.boost && !acidSprayRequested) {
+    } else if (!controls.boostHeld && !acidSprayRequested) {
       game.boostCharge = Math.min(
         boostCapacity(),
         game.boostCharge + BOOST_RULES.rechargeRate * dt,
@@ -20734,16 +20742,17 @@
           activeSteer * motion.groundTurnSpeed * speedTurnFactor * dt;
       }
 
+      const throttle = sprinterAreaTarget ? 0 : controls.throttle;
       const activeMaximumSpeed =
         wormMaximumSpeed() *
-        (game.boosting ? wormBoostSpeedMultiplier() : 1);
+        (game.boosting ? wormBoostSpeedMultiplier() : 1) * throttle;
       const activeAcceleration =
         motion.acceleration *
-        (game.boosting ? wormBoostSpeedMultiplier() : 1);
+        (game.boosting ? wormBoostSpeedMultiplier() : 1) * throttle;
 
-      const forwardHeld = !sprinterAreaTarget && keys.up;
-      if (keys.down) {
-        game.speed = Math.max(0, game.speed - motion.brakeDeceleration * dt);
+      const forwardHeld = throttle > 0;
+      if (controls.brake > 0) {
+        game.speed = Math.max(0, game.speed - motion.brakeDeceleration * controls.brake * dt);
       } else if (forwardHeld && game.speed < activeMaximumSpeed) {
         game.speed = Math.min(
           activeMaximumSpeed,
@@ -20886,10 +20895,10 @@
         game.latchAttack = null;
         game.boosting =
           game.inGround &&
-          keys.boost &&
-          !keys.down &&
+          controls.boostHeld &&
+          controls.brake === 0 &&
           game.boostCharge > 0 &&
-          (keys.up || wormHasAbility(WORM_ABILITIES.SPRINT));
+          (controls.throttle > 0 || wormHasAbility(WORM_ABILITIES.SPRINT));
       } else {
         releaseBoostLatchAttack(
           true,
@@ -20930,9 +20939,9 @@
           game.head.y,
         );
       }
-      const particleRate = keys.up ? 0.62 : 0.25;
+      const particleRate = lerp(0.25, 0.62, controls.throttle);
       if (game.speed > 1 && Math.random() < particleRate) {
-        spawnParticles(game.head.x, game.head.y, keys.up ? 2 : 1, "dirt");
+        spawnParticles(game.head.x, game.head.y, controls.throttle > 0 ? 2 : 1, "dirt");
       }
     }
     if (dt > 0) {
@@ -27505,7 +27514,7 @@
   }
 
   function getTurnInputVector() {
-    const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    const steer = controls.steer;
     if (steer === 0 || game.speed <= 0.5) return null;
 
     return getLocalTurnVector(steer);
@@ -27517,7 +27526,7 @@
 
     const turnInput = getTurnInputVector();
     if (!turnInput) return;
-    const turnLabel = keys.right && !keys.left ? "TURN R" : "TURN L";
+    const turnLabel = controls.steer > 0 ? "TURN R" : "TURN L";
     drawVectorArrow(
       turnInput,
       62,
@@ -28219,7 +28228,8 @@
     game.lastTime = time;
 
     const gameplayActive =
-      game.started && !game.paused && !game.menuOpen;
+      game.started && !game.paused && !game.menuOpen &&
+      !gameShell.classList.contains("touch-portrait");
     const updateStart = profiling && gameplayActive ? performance.now() : 0;
     if (gameplayActive) {
       game.elapsed += dt;
@@ -28334,16 +28344,13 @@
   }
 
   canvas.addEventListener("pointerdown", (event) => {
-    if (!event.isPrimary) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    if (game.wormDefeated) {
-      event.preventDefault();
-      return;
-    }
-    if (game.tristarWormCapture) {
-      event.preventDefault();
-      return;
-    }
+    event.preventDefault();
+    if (!playerCanControl() || abilityPointer.pointerId !== null ||
+      touchControls?.ownsPointer(event.pointerId)) return;
+    // The ability finger can be a non-primary touch while the stick is held.
+    abilityPointer.pointerId = event.pointerId;
+    canvas.setPointerCapture(event.pointerId);
     if (
       wormHasAbility(WORM_ABILITIES.SPRINT) &&
       game.levelLoaded &&
@@ -28410,17 +28417,23 @@
     event.preventDefault();
   });
 
-  const finishCanvasTonguePointer = (event) => {
-    if (event.pointerId === spitterPointer.pointerId) {
-      if (cancelSpitterPointer(event.pointerId)) event.preventDefault();
-      return;
+  function cancelCanvasAbility() {
+    const pointerId = abilityPointer.pointerId;
+    abilityPointer.pointerId = null;
+    cancelSpitterPointer();
+    cancelHeldTonguePointer();
+    if (pointerId !== null && canvas.hasPointerCapture?.(pointerId)) {
+      canvas.releasePointerCapture(pointerId);
     }
-    if (event.pointerId !== tonguePointer.pointerId) return;
-    if (cancelHeldTonguePointer(event.pointerId)) event.preventDefault();
+  }
+  const finishCanvasAbilityPointer = (event) => {
+    if (event.pointerId !== abilityPointer.pointerId) return;
+    event.preventDefault();
+    cancelCanvasAbility();
   };
-  canvas.addEventListener("pointerup", finishCanvasTonguePointer);
-  canvas.addEventListener("pointercancel", finishCanvasTonguePointer);
-  canvas.addEventListener("lostpointercapture", finishCanvasTonguePointer);
+  canvas.addEventListener("pointerup", finishCanvasAbilityPointer);
+  canvas.addEventListener("pointercancel", finishCanvasAbilityPointer);
+  canvas.addEventListener("lostpointercapture", finishCanvasAbilityPointer);
 
   function finishEditorPointer(event) {
     if (editor.pointerId !== event.pointerId) return;
@@ -28597,16 +28610,9 @@
       return;
     }
     if (keyMap[event.code]) {
-      if (
-        !game.levelLoaded ||
-        game.paused ||
-        game.menuOpen ||
-        game.wormDefeated
-      ) {
-        return;
-      }
+      if (!playerCanControl()) return;
       event.preventDefault();
-      keys[keyMap[event.code]] = true;
+      controlInput.setKey(keyMap[event.code], true);
     } else if (event.code === "Escape") {
       event.preventDefault();
       openMainMenu();
@@ -28616,7 +28622,7 @@
   window.addEventListener("keyup", (event) => {
     if (keyMap[event.code]) {
       event.preventDefault();
-      keys[keyMap[event.code]] = false;
+      controlInput.setKey(keyMap[event.code], false);
     }
   });
 
@@ -28626,6 +28632,7 @@
   });
 
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden) clearControlKeys();
     if (
       document.hidden &&
       game.levelLoaded &&
@@ -28634,32 +28641,6 @@
     ) {
       openMainMenu();
     }
-  });
-
-  document.querySelectorAll("[data-control]").forEach((button) => {
-    const control = button.dataset.control;
-    const engage = (event) => {
-      event.preventDefault();
-      if (
-        !game.levelLoaded ||
-        game.paused ||
-        game.menuOpen ||
-        game.wormDefeated
-      ) {
-        return;
-      }
-      keys[control] = true;
-      button.classList.add("active");
-    };
-    const release = (event) => {
-      event.preventDefault();
-      keys[control] = false;
-      button.classList.remove("active");
-    };
-    button.addEventListener("pointerdown", engage);
-    button.addEventListener("pointerup", release);
-    button.addEventListener("pointercancel", release);
-    button.addEventListener("pointerleave", release);
   });
 
   function toggleDevMenu(force) {
@@ -29082,7 +29063,16 @@
     reset();
     closeMainMenu(true);
   });
-  window.addEventListener("resize", resize);
+  touchControls = WormControls.mountTouchControls({
+    shell: gameShell,
+    input: controlInput,
+    canPlay: playerCanControl,
+    onPortrait: openMainMenu,
+    onLayoutChange() {
+      clearControlKeys();
+      resize();
+    },
+  });
 
   async function initialize() {
     populateDevEnemyButtons();

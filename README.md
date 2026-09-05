@@ -30,6 +30,34 @@ Then open `http://localhost:4173`.
 - `F` — open or close Developer Tools
 - `Esc` — open or close the game menu
 
+### Mobile-control prototype
+
+Touch devices automatically get landscape controls. Open `/?touch=1` to preview
+the same layout on a desktop browser. On a phone, open the static server's LAN
+address (for example, `http://<computer-lan-ip>:4173`) while on the same network.
+
+- The fixed left stick steers horizontally. Push up for proportional acceleration
+  and speed, or pull down for proportional braking and Sprinter hunt cancellation.
+- The center 16% is neutral. The upper rim engages Boost at 88% travel inside the
+  forward ±50° arc and releases below 78%, avoiding flicker near the threshold.
+- Hold the separate right Boost button for hard-prey latching or airborne mouth
+  opening. It can stay held independently of the stick and the ability finger.
+- Tap the world to launch Licker's tongue or mark a Sprinter hunt; hold/drag to
+  aim Spitter's acid. Licker can still hold near hard airborne prey to grapple,
+  then push the stick upward to reel in.
+- Menu, rotation into portrait, app backgrounding, death, and worm capture clear
+  held input. Turning back to landscape leaves the run paused until Continue.
+
+This phase implements browser controls and the responsive HUD. It keeps the existing
+refresh-driven game loop and development tools; native packaging, the 60 Hz simulation /
+120 Hz interpolated renderer, production-only builds, accounts, ads, and purchases remain
+subsequent phases. Physical-phone performance and comfort still need device testing.
+
+Input regressions: `node --test tests/mobile-controls.test.cjs`.
+For browser verification, run `geckodriver --port 4444` and then
+`node tools/mobile-controls-qa.mjs`. The latter serves an isolated loopback test build,
+uses real WebDriver touch actions, and writes screenshots to a temporary directory.
+
 The Home screen provides World, Worm Type, and Edit Worm selection. During a run, the
 **Menu** button provides Continue, Enemy Information, Reset, Developer Tools, and Return Home.
 **Enemy Information** opens a full-screen field guide generated from

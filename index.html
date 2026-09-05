@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta
       name="description"
       content="WORM — a tiny, high-speed underground flight experiment."
@@ -15,7 +15,7 @@
         { capture: true },
       );
     </script>
-    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260902-worm-health-hud-v12" />
+    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260905-mobile-controls-v13" />
     <link rel="preload" as="image" href="./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-upper.png?v=20260815-shared-current-default" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-lower.png?v=20260815-shared-current-default" />
@@ -125,6 +125,7 @@
             <span>Play selected world</span>
             <span aria-hidden="true">→</span>
           </button>
+          <p class="mobile-help">Left stick: steer, push up to move, pull down to brake. Push to the upper rim to Boost. Touch the world to use your worm’s ability.</p>
         </div>
       </section>
 
@@ -371,12 +372,30 @@
       </aside>
 
       <nav class="touch-controls" aria-label="Touch controls">
-        <button data-control="left" type="button" aria-label="Turn or choose left">←</button>
-        <button class="thrust" data-control="up" type="button" aria-label="Accelerate or grapple pull">↑</button>
-        <button class="boost" data-control="boost" type="button" aria-label="Boost or amplify grapple pull">1.5×</button>
-        <button class="brake" data-control="down" type="button" aria-label="Brake">↓</button>
-        <button data-control="right" type="button" aria-label="Turn or choose right">→</button>
+        <div class="touch-stick-wrap">
+          <div id="touch-stick" class="touch-stick" role="group" aria-label="Movement joystick: up to accelerate, down to brake, left and right to steer; upper rim to boost">
+            <span class="touch-stick-boost-arc" aria-hidden="true"></span>
+            <span class="touch-stick-forward" aria-hidden="true">BOOST ↑</span>
+            <span class="touch-stick-left" aria-hidden="true">‹</span>
+            <span class="touch-stick-right" aria-hidden="true">›</span>
+            <span class="touch-stick-back" aria-hidden="true">BRAKE</span>
+            <span class="touch-stick-thumb" aria-hidden="true"></span>
+          </div>
+          <span id="touch-stick-status" aria-hidden="true">Steer</span>
+        </div>
+        <div class="touch-ability-hint" id="touch-ability-hint" aria-hidden="true">Tap prey · hold to grapple</div>
+        <button id="touch-boost" class="touch-boost" data-control="boost" type="button" aria-label="Hold Boost to latch onto hard prey" aria-pressed="false">
+          <strong>Boost</strong><span id="touch-boost-multiplier">1.5×</span><small>Hold to latch</small>
+        </button>
       </nav>
+
+      <section id="rotate-notice" class="rotate-notice" role="dialog" aria-modal="true" aria-labelledby="rotate-title" aria-describedby="rotate-copy" hidden>
+        <div class="rotate-card">
+          <span class="rotate-phone" aria-hidden="true">↻</span>
+          <h2 id="rotate-title">Turn your phone sideways</h2>
+          <p id="rotate-copy">WORM plays in landscape. Your run will wait for you.</p>
+        </div>
+      </section>
 
       <section class="world-select-overlay" id="world-select" aria-hidden="true">
         <div class="world-select-card" role="dialog" aria-modal="true" aria-labelledby="world-select-title">
@@ -646,6 +665,7 @@
 
     </main>
 
-    <script src="./game.js?v=20260904-tristar-beetle-prey-v54"></script>
+    <script src="./mobile-controls.js?v=20260905-mobile-controls-v1"></script>
+    <script src="./game.js?v=20260905-mobile-controls-v55"></script>
   </body>
 </html>

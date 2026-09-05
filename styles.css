@@ -1373,47 +1373,144 @@ kbd {
 .touch-controls {
   position: absolute;
   z-index: 4;
-  bottom: 20px;
-  left: 50%;
+  inset: 0;
   display: none;
-  gap: 10px;
   pointer-events: none;
-  transform: translateX(-50%);
 }
 
-.touch-controls button {
-  width: clamp(48px, 15vw, 58px);
-  height: clamp(48px, 15vw, 58px);
-  border: 1px solid rgba(248, 240, 221, 0.48);
-  border-radius: 50%;
-  background: rgba(24, 34, 29, 0.8);
+.touch-stick-wrap {
+  position: absolute;
+  left: calc(env(safe-area-inset-left, 0px) + 32px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+  display: grid;
+  justify-items: center;
+  gap: 9px;
   color: var(--cream);
-  font-size: 22px;
-  backdrop-filter: blur(8px);
+  font: 700 10px/1 "Courier New", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 3px #000;
+}
+
+.touch-stick {
+  position: relative;
+  width: var(--stick-size);
+  height: var(--stick-size);
+  border: 1px solid rgba(255, 247, 239, 0.5);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 247, 239, 0.1) 0 16%, transparent 17%), rgba(29, 16, 17, 0.48);
   pointer-events: auto;
   touch-action: none;
 }
 
-.touch-controls .thrust {
-  background: var(--acid);
-  color: var(--ink);
+.touch-stick > span {
+  position: absolute;
+  pointer-events: none;
 }
 
-.touch-controls .brake {
-  background: var(--sun);
-  color: var(--ink);
+.touch-stick-boost-arc {
+  inset: -3px;
+  border: 4px solid transparent;
+  border-top-color: var(--acid);
+  border-radius: 50%;
 }
 
-.touch-controls .boost {
-  background: var(--worm);
+.touch-stick-forward,
+.touch-stick-back {
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 9px;
+}
+
+.touch-stick-forward { top: 13px; color: #ffa27a; }
+.touch-stick-back { bottom: 12px; }
+.touch-stick-left,
+.touch-stick-right { top: calc(50% - 12px); font-size: 24px; }
+.touch-stick-left { left: 10px; }
+.touch-stick-right { right: 10px; }
+
+.touch-stick-thumb {
+  top: 50%;
+  left: 50%;
+  width: 42px;
+  height: 42px;
+  border: 2px solid rgba(255, 247, 239, 0.85);
+  border-radius: 50%;
+  background: rgba(255, 247, 239, 0.28);
+  transform: translate(calc(-50% + var(--stick-x, 0px)), calc(-50% + var(--stick-y, 0px)));
+}
+
+.touch-stick.active { background-color: rgba(29, 16, 17, 0.65); }
+.touch-stick.boosting .touch-stick-thumb { background: var(--acid); }
+.touch-stick.boosting .touch-stick-boost-arc { border-top-color: var(--cream); }
+.touch-stick.braking .touch-stick-thumb { background: var(--sun); }
+
+.touch-boost {
+  position: absolute;
+  right: calc(env(safe-area-inset-right, 0px) + 32px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 38px);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  width: 86px;
+  height: 86px;
+  padding: 0;
+  border: 2px solid rgba(255, 247, 239, 0.72);
+  border-radius: 50%;
+  background: rgba(115, 33, 12, 0.8);
   color: var(--cream);
-  font-family: "Courier New", ui-monospace, monospace;
-  font-size: 12px;
-  font-weight: 700;
+  font: 700 12px/1 "Courier New", monospace;
+  text-transform: uppercase;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
 }
 
-.touch-controls button.active {
-  transform: scale(0.92);
+.touch-boost small { font-size: 8px; }
+.touch-boost.active { background: var(--acid); }
+.touch-boost:focus-visible { outline: 3px solid var(--sun); outline-offset: 4px; }
+
+.touch-ability-hint {
+  position: absolute;
+  right: calc(env(safe-area-inset-right, 0px) + 134px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
+  max-width: calc(100% - var(--stick-size) - 196px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  color: var(--cream);
+  font: 700 11px/1.4 "Courier New", monospace;
+  text-align: right;
+  text-shadow: 0 1px 4px #000, 0 1px 8px #000;
+}
+
+.mobile-help { display: none; }
+
+.rotate-notice {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: #270a11;
+  color: var(--cream);
+  text-align: center;
+  touch-action: none;
+}
+
+.rotate-notice[hidden] { display: none; }
+.rotate-card { max-width: 340px; }
+.rotate-card h2 { font-size: 25px; }
+.rotate-card p { font-size: 15px; line-height: 1.5; }
+.rotate-phone {
+  display: inline-grid;
+  place-items: center;
+  width: 94px;
+  height: 56px;
+  border: 3px solid var(--acid);
+  border-radius: 10px;
+  color: var(--acid);
+  font-size: 38px;
 }
 
 .world-select-overlay,
@@ -2197,10 +2294,6 @@ kbd {
     bottom: 92px;
   }
 
-  .touch-controls {
-    display: flex;
-  }
-
   .dev-menu {
     bottom: 92px;
     left: 18px;
@@ -2473,18 +2566,101 @@ kbd {
   }
 }
 
-@media (pointer: coarse) {
-  .touch-controls {
-    display: flex;
-  }
+.game-shell.touch-mode {
+  --stick-size: clamp(112px, 32dvh, 164px);
+  --touch-top: calc(env(safe-area-inset-top, 0px) + 12px);
+  --touch-right: calc(env(safe-area-inset-right, 0px) + 12px);
+  --touch-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  --touch-left: calc(env(safe-area-inset-left, 0px) + 12px);
+  height: 100dvh;
+  min-height: 0;
+  overscroll-behavior: none;
+}
 
-  .utility {
-    bottom: 92px;
-  }
+.touch-mode .touch-controls { display: block; }
+.touch-mode.home-active .touch-controls,
+.touch-mode[data-paused="true"] .touch-controls,
+.touch-mode[data-defeated="true"] .touch-controls,
+.touch-mode.touch-portrait .touch-controls { display: none; }
 
-  .dev-menu {
-    bottom: 92px;
-  }
+.touch-mode .masthead { padding: var(--touch-top) var(--touch-right) 0 var(--touch-left); }
+.touch-mode .minimap { width: clamp(76px, 24dvh, 140px); height: clamp(76px, 24dvh, 140px); }
+.touch-mode .minimap-label { top: 8px; font-size: 7px; }
+.touch-mode .worm-health-hud {
+  top: var(--touch-top);
+  left: 50%;
+  width: clamp(170px, 32vw, 480px);
+  padding: 7px 8px 8px;
+  gap: 5px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.touch-mode .worm-health-heading { gap: 8px; font-size: 10px; letter-spacing: 0.04em; }
+.touch-mode .worm-health-heading strong { font-size: 11px; }
+.touch-mode .worm-health-meter { height: 22px; border-width: 2px; }
+.touch-mode .telemetry {
+  width: 168px;
+  max-width: none;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  padding: 7px 9px;
+  gap: 7px;
+  background: rgba(255, 247, 239, 0.88);
+  backdrop-filter: none;
+}
+.touch-mode .metric { justify-items: start; }
+.touch-mode .metric-label { display: block; font-size: 8px; letter-spacing: 0.03em; }
+.touch-mode .metric strong { font-size: 19px; }
+.touch-mode .metric small { font-size: 9px; }
+.touch-mode .boost-metric { min-width: 0; width: 100%; order: 1; }
+.touch-mode .boost-meter { width: 100%; height: 10px; margin-top: 2px; }
+.touch-mode .boost-copy,
+.touch-mode .growth-copy { display: none; }
+.touch-mode .utility { top: calc(var(--touch-top) + 86px); right: var(--touch-right); bottom: auto; }
+.touch-mode button { min-height: 48px; }
+.touch-mode .icon-button { min-width: 48px; }
+.touch-mode .main-menu-button { min-width: 80px; font-size: 11px; }
+.touch-mode .dev-menu { left: var(--touch-left); bottom: var(--touch-bottom); max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom)); overflow-y: auto; }
+.touch-mode .dev-menu:not(.open) { display: none; }
+
+.touch-mode .home-screen,
+.touch-mode .game-menu,
+.touch-mode .world-select-overlay,
+.touch-mode .worm-type-overlay,
+.touch-mode .enemy-info-overlay {
+  padding: var(--touch-top) var(--touch-right) var(--touch-bottom) var(--touch-left);
+}
+.touch-mode .game-menu-card,
+.touch-mode .world-select-card,
+.touch-mode .worm-type-select-card,
+.touch-mode .enemy-info-card { max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom)); }
+.touch-mode .game-menu-heading { padding: 10px 14px; }
+.touch-mode .game-menu-heading h2 { font-size: 30px; }
+.touch-mode .game-menu-actions { min-height: 0; padding: 10px; }
+.touch-mode .game-menu-actions button { min-height: 54px; padding: 10px; }
+.touch-mode .game-menu-actions strong { font-size: 12px; }
+.touch-mode .game-menu-actions small { font-size: 10px; }
+.touch-mode .home-card {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.85fr) minmax(220px, 1.4fr);
+  column-gap: 24px;
+  width: min(680px, 100%);
+  padding: 18px;
+  box-shadow: 6px 6px 0 rgba(115, 33, 12, 0.22);
+}
+.touch-mode .home-heading { grid-row: 1 / 3; }
+.touch-mode .home-heading h1 { font-size: clamp(48px, 12dvh, 74px); }
+.touch-mode .home-heading > p:last-child { font-size: 12px; }
+.touch-mode .home-selections { margin: 0 0 10px; gap: 6px; }
+.touch-mode .home-choice,
+.touch-mode .home-edit-button { padding: 8px 10px; }
+.touch-mode .mobile-help {
+  display: block;
+  grid-column: 1 / -1;
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 @media (prefers-reduced-motion: reduce) {
