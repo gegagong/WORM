@@ -59,7 +59,10 @@ address (for example, `http://<computer-lan-ip>:4173`) while on the same network
   held input. Turning back to landscape leaves the run paused until Continue.
 
 This phase implements browser controls and the responsive HUD. It keeps the existing
-refresh-driven game loop and development tools; native packaging, the 60 Hz simulation /
+refresh-driven game loop; mobile Developer Tools now shows only FPS and the likely
+performance limit below the health bar. This readout ignores touches and stays clear
+of the joystick, Boost button, and Menu button. Desktop retains the other dev panels.
+Native packaging, the 60 Hz simulation /
 120 Hz interpolated renderer, production-only builds, accounts, ads, and purchases remain
 subsequent phases. Physical-phone performance and comfort still need device testing.
 
@@ -187,7 +190,7 @@ so the radar never scans or renders the entire world. Dense enemy scans are asse
 in bounded offscreen slices and committed only when complete, avoiding a periodic scan
 hitch or partially painted echo at the 180 Hz performance target.
 During normal play the top-right HUD is limited to score, level, velocity, and boost.
-Opening Developer Tools additionally reveals the enemy count, growth progress, current
+On desktop, opening Developer Tools additionally reveals the enemy count, growth progress, current
 terrain state, live FPS readout, FPS-limit selector, and performance-gate panel. The frame
 cap can be set to 30, 60, or 120 FPS, or left uncapped. Uncapped rendering
 still follows the browser's `requestAnimationFrame` cadence, which browsers normally
@@ -200,6 +203,13 @@ main-thread Canvas pressure, mixed pressure, and likely raster/GPU presentation 
 Because Canvas 2D does not expose direct GPU timers, the raster/GPU result is explicitly a
 heuristic used only when presentation is late while measured main-thread work remains
 below budget.
+On mobile, Developer Tools instead displays just FPS and the live **Likely limit**
+result. The three desktop windows, extra HUD diagnostics, and their controls are hidden.
+The compact readout is positioned below the health bar and cannot intercept gameplay
+touches. Open it through Menu → Developer tools; opening Menu again dismisses it.
+Hidden detailed profiler stats and cache-memory scans are skipped on mobile.
+Reveal Grid has been removed from Developer Tools on all devices; the world editor's
+terrain grid is unchanged.
 Pressing `F` toggles the panel directly. Its individual developer overlays and Swarm
 remain controlled by the toggles inside the panel. The **Hitboxes / hurtboxes** overlay displays
 the worm's swept cone-shaped eating hitbox, enemy hurtboxes, and the larger

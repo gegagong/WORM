@@ -144,7 +144,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260906-button-boost-v15";
+    const styleUrl = "./styles.css?v=20260906-mobile-dev-readouts-v16";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -164,6 +164,8 @@
 
   function ensureDevMenu() {
     let menu = document.querySelector("#dev-menu");
+    // Older cached markup must not bring the removed control back.
+    menu?.querySelector('label[for="reveal-grid"]')?.remove();
     if (
       menu?.querySelector("#reveal-vectors") &&
       menu.querySelector("#reveal-steering") &&
@@ -202,14 +204,6 @@
             <option value="60">60 FPS</option>
             <option value="120">120 FPS</option>
           </select>
-        </label>
-        <label class="dev-option" for="reveal-grid">
-          <input id="reveal-grid" type="checkbox" />
-          <span class="dev-checkbox" aria-hidden="true"></span>
-          <span class="dev-option-copy">
-            <strong>Reveal grid</strong>
-            <small>Show block boundaries</small>
-          </span>
         </label>
         <label class="dev-option" for="reveal-vectors">
           <input id="reveal-vectors" type="checkbox" />
@@ -362,7 +356,6 @@
   const devMenuToggle = devMenu.querySelector("#dev-menu-toggle");
   const devFpsReadout = devMenu.querySelector("#dev-fps");
   const fpsLimitInput = devMenu.querySelector("#fps-limit");
-  const revealGridInput = devMenu.querySelector("#reveal-grid");
   const revealVectorsInput = devMenu.querySelector("#reveal-vectors");
   const revealSteeringInput = devMenu.querySelector("#reveal-steering");
   const revealHitboxesInput = devMenu.querySelector("#reveal-hitboxes");
@@ -1634,7 +1627,6 @@
     sprinterAreaTarget: null,
     sprinterAreaCompletion: null,
     boostLatchReady: true,
-    showGrid: false,
     showVectors: false,
     showSteeringVectors: false,
     showHitboxes: false,
@@ -2134,6 +2126,14 @@
       droppedFrames: devProfiler.droppedFrames,
     };
     const classification = classifyDevProfilerSample(sample);
+    devProfilerGate.dataset.gate = classification.gate;
+    devProfilerLabel.textContent = classification.label;
+    if (gameShell.classList.contains("touch-mode")) {
+      // Mobile exposes only the classification, not the detailed windows.
+      // Avoid hidden stats updates and the terrain-cache memory scan there.
+      resetDevProfilerSample(time);
+      return;
+    }
     const updatePercent = clamp(
       (sample.averageUpdate / sample.budget) * 100,
       0,
@@ -2145,8 +2145,6 @@
       100 - updatePercent,
     );
 
-    devProfilerGate.dataset.gate = classification.gate;
-    devProfilerLabel.textContent = classification.label;
     devProfilerDetail.textContent = classification.detail;
     devProfilerFrame.textContent = sample.averageInterval.toFixed(1);
     devProfilerBudget.textContent = sample.budget.toFixed(1);
@@ -27422,35 +27420,6 @@
     );
   }
 
-  function drawGridOverlay() {
-    if (!game.showGrid) return;
-    const size = game.map.cellSize;
-    const visible = getVisibleWorldBounds(size);
-    const startX = Math.floor(visible.x / size) * size;
-    const endX = Math.ceil((visible.x + visible.width) / size) * size;
-    const startY = Math.max(0, Math.floor(visible.y / size) * size);
-    const endY = Math.min(game.height, Math.ceil((visible.y + visible.height) / size) * size);
-
-    ctx.save();
-    ctx.beginPath();
-    for (let x = startX; x <= endX; x += size) {
-      ctx.moveTo(x, startY);
-      ctx.lineTo(x, endY);
-    }
-    for (let y = startY; y <= endY; y += size) {
-      ctx.moveTo(startX, y);
-      ctx.lineTo(endX, y);
-    }
-    ctx.strokeStyle = "rgba(58, 36, 31, 0.55)";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ctx.setLineDash([5, 4]);
-    ctx.strokeStyle = "rgba(245, 194, 98, 0.72)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.restore();
-  }
-
   function drawVectorArrow(
     vector,
     scale,
@@ -28124,7 +28093,6 @@
     }
     drawParticles("front");
     drawEnemyHealthBars();
-    drawGridOverlay();
     if (!game.wormDefeated) {
       drawCollisionOverlays();
       drawCombatStatsOverlay();
@@ -28681,13 +28649,24 @@
     }
   });
 
+  function syncDevToolsLayout() {
+    const mobile = gameShell.classList.contains("touch-mode");
+    menuDevToolsButton.querySelector("small").textContent = mobile
+      ? "FPS and likely limit"
+      : "Diagnostics, worm level, and enemy placement";
+    statePill.setAttribute(
+      "aria-hidden",
+      String(mobile || !devMenu.classList.contains("open")),
+    );
+  }
+
   function toggleDevMenu(force) {
     const open = typeof force === "boolean" ? force : !devMenu.classList.contains("open");
     if (open && game.wormDefeated) return;
     devMenu.classList.toggle("open", open);
     gameShell.classList.toggle("dev-tools-open", open);
     devMenuToggle.setAttribute("aria-expanded", String(open));
-    statePill.setAttribute("aria-hidden", String(!open));
+    syncDevToolsLayout();
     setDevProfilerActive(open);
     if (open) syncDevGameplayControls();
   }
@@ -28861,12 +28840,6 @@
     updateHud();
   }
 
-  function setGridVisible(visible) {
-    game.showGrid = visible;
-    revealGridInput.checked = visible;
-    devMenu.classList.toggle("grid-active", visible);
-  }
-
   function setVectorsVisible(visible) {
     game.showVectors = visible;
     revealVectorsInput.checked = visible;
@@ -28925,7 +28898,6 @@
     if (!button || !devEnemyButtons.contains(button)) return;
     placeDevEnemyInView(button.dataset.devEnemyKind);
   });
-  revealGridInput.addEventListener("change", () => setGridVisible(revealGridInput.checked));
   revealVectorsInput.addEventListener("change", () =>
     setVectorsVisible(revealVectorsInput.checked),
   );
@@ -29108,6 +29080,7 @@
     onPortrait: openMainMenu,
     onLayoutChange() {
       clearControlKeys();
+      syncDevToolsLayout();
       resize();
     },
   });

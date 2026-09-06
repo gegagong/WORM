@@ -2613,8 +2613,52 @@ kbd {
 .touch-mode button { min-height: 48px; }
 .touch-mode .icon-button { min-width: 48px; }
 .touch-mode .main-menu-button { min-width: 80px; font-size: 11px; }
-.touch-mode .dev-menu { left: var(--touch-left); bottom: var(--touch-bottom); max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom)); overflow-y: auto; }
+.touch-mode .dev-menu {
+  top: calc(var(--touch-top) + 64px);
+  left: 50%;
+  bottom: auto;
+  width: clamp(170px, 32vw, 480px);
+  max-height: none;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 0 8px;
+  overflow: visible;
+  transform: translateX(-50%);
+  color: var(--cream);
+  text-shadow: 0 1px 3px #000, 0 1px 6px #000;
+}
 .touch-mode .dev-menu:not(.open) { display: none; }
+.touch-mode .dev-menu.open,
+.touch-mode .dev-menu.open * { pointer-events: none; }
+.touch-mode .dev-menu-panel,
+.touch-mode .dev-profiler-panel { display: contents; }
+.touch-mode .dev-menu-panel > :not(.dev-performance),
+.touch-mode .dev-profiler-panel > :not(.dev-profiler-gate),
+.touch-mode .dev-gameplay-panel,
+.touch-mode .dev-performance > span,
+.touch-mode .dev-profiler-gate > small { display: none; }
+.touch-mode .dev-performance,
+.touch-mode .dev-profiler-gate {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.touch-mode .dev-performance { padding-top: 9px; }
+.touch-mode .dev-performance strong { font: 700 10px/1 "Courier New", monospace; }
+.touch-mode .dev-performance strong span { font-size: 18px; }
+.touch-mode .dev-profiler-gate { gap: 4px; }
+.touch-mode .dev-profiler-gate > span { color: inherit; font-size: 7px; }
+.touch-mode .dev-profiler-gate > strong {
+  color: inherit;
+  font: 700 11px/1.2 "Courier New", monospace;
+  overflow-wrap: anywhere;
+}
+.touch-mode.dev-tools-open .target-metric,
+.touch-mode.dev-tools-open .growth-copy,
+.touch-mode.dev-tools-open .state-pill { display: none; }
 
 .touch-mode .home-screen,
 .touch-mode .game-menu,

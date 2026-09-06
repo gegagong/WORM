@@ -18,6 +18,12 @@ const server = createServer(async (request, response) => {
     if (!path.startsWith(root.endsWith(sep) ? root : root + sep)) throw new Error("Outside root");
     let body = await readFile(path);
     if (path.endsWith("index.html")) {
+      if (url.searchParams.get("qa-dev") === "legacy") {
+        body = body.toString().replace('<div class="dev-menu-panel">',
+          '<div class="dev-menu-panel"><label for="reveal-grid"><input id="reveal-grid" type="checkbox">Reveal grid</label>');
+      } else if (url.searchParams.get("qa-dev") === "fallback") {
+        body = body.toString().replace(/<aside class="dev-menu"[\s\S]*?<\/aside>/, "");
+      }
       body = body.toString().replace("<head>", `<head><script>
         window.__pauseQALoop = true;
         window.__qaErrors = [];
@@ -33,6 +39,7 @@ const server = createServer(async (request, response) => {
           window.__wormQA = { game, motion, controls, controlInput, abilityPointer, spitterPointer,
             tonguePointer, startSelectedWorld, setActiveWormType, updatePhysics, reset,
             clearControlKeys, updateMovementInput, openMainMenu, closeMainMenu, render, updateHud,
+            toggleDevMenu, devProfiler, publishDevProfilerSample, updateFps, setFpsLimit,
             canvasWorldPointFromClient, showDeathScreen, showHomeScreen };
           window.__wormQAReady = initialize();
         })();`);
@@ -79,6 +86,13 @@ async function neutral() {
 async function geometry() {
   return js(`const r = id => { const b=document.getElementById(id).getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2,r:b.width/2,left:b.left,right:b.right,top:b.top,bottom:b.bottom}; }; return {stick:r('touch-stick'),boost:r('touch-boost'),health:r('worm-health-hud'),radar:r('minimap'),menu:r('main-menu-button'),w:innerWidth,h:innerHeight};`);
 }
+async function tapElement(id) {
+  await asyncJs("const done=arguments[arguments.length-1];Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))).then(()=>done(true));");
+  const point = await js("const e=document.getElementById(arguments[0]);e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};", id);
+  assert.equal(await js("return document.elementFromPoint(arguments[0],arguments[1])?.closest('button')?.id;",point.x,point.y),id);
+  await actions([touch("menu-tap", [move(point.x,point.y),down,up])]);
+  await asyncJs("const done=arguments[arguments.length-1];requestAnimationFrame(()=>requestAnimationFrame(()=>done(true)));");
+}
 try {
   const created = await call("/session", { capabilities: { alwaysMatch: { browserName: "firefox", "moz:firefoxOptions": { args: ["-headless"], prefs: { "dom.w3c_touch_events.enabled": 1 } } } } });
   session = created.sessionId;
@@ -101,13 +115,65 @@ try {
     const telemetry = await js("return document.querySelector('.telemetry').getBoundingClientRect().left;");
     assert.ok(g.health.right < telemetry, "health overlaps telemetry");
     await capture(`play-${w}x${h}`);
+
+    await js("__wormQA.toggleDevMenu(true);");
+    const dev = await js(`const menu=document.getElementById('dev-menu'),r=menu.getBoundingClientRect();
+      const visible=e=>e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden';
+      return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,
+        fps:visible(document.getElementById('dev-fps')),limit:visible(document.getElementById('dev-profiler-label')),
+        hiddenControls:[...menu.querySelectorAll('input,button,select,.dev-profiler-stats,.dev-profiler-budget,#dev-profiler-detail')].every(e=>!visible(e)),
+        otherHud:['target-metric','state-pill'].every(id=>!visible(document.getElementById(id)))&&!visible(document.querySelector('.growth-copy')),
+        panelModes:[...menu.children].map(e=>getComputedStyle(e).display),
+        hasGrid:!!document.getElementById('reveal-grid'),
+        hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.id};`);
+    assert.ok(dev.fps && dev.limit && dev.hiddenControls && dev.otherHud);
+    assert.deepEqual(dev.panelModes, ["contents","none","contents"]);
+    assert.equal(dev.hasGrid, false);
+    assert.ok(dev.top > g.health.bottom && dev.left >= 0 && dev.right <= g.w && dev.bottom <= g.h);
+    for (const key of ["stick","boost","menu","radar"]) {
+      const b=g[key];
+      assert.ok(dev.right<=b.left||dev.left>=b.right||dev.bottom<=b.top||dev.top>=b.bottom, `dev readouts overlap ${key} at ${w}x${h}`);
+    }
+    assert.equal(dev.hit, "game", "readouts must let gameplay touches pass through");
+    await actions([touch("dev-stick", [move(g.stick.x,g.stick.y),down,move(g.stick.x,g.stick.y-g.stick.r*0.65)])]);
+    assert.ok(await js("return __wormQA.controlInput.stick.active;"), "dev tools must not block joystick touches");
+    await neutral();
+    await capture(`mobile-dev-${w}x${h}`);
+    await js("__wormQA.toggleDevMenu(false);");
+    assert.equal(await js("return __wormQA.devProfiler.active;"), false);
   }
-  console.log("PASS: landscape layout at 568×320, 667×375, 844×390, and 1024×768");
+  console.log("PASS: four landscape layouts; mobile dev tools show only FPS/likely limit and never block controls");
   await viewport(844, 390);
   const g = await geometry();
+  await tapElement("main-menu-button");
+  assert.equal(await js("return document.querySelector('#menu-dev-tools small').textContent;"), "FPS and likely limit");
+  await tapElement("menu-dev-tools");
+  const menuResult = await js("return {active:__wormQA.devProfiler.active,paused:__wormQA.game.paused,menu:__wormQA.game.menuOpen,touches:__qaTouches.slice(-2)};");
+  assert.ok(menuResult.active&&!menuResult.paused&&!menuResult.menu,JSON.stringify(menuResult));
+  const readings = await js(`const q=__wormQA, start=performance.now()-1000;
+    q.game.fps=0;q.game.fpsFrames=0;q.game.fpsLastFrameTime=start;q.game.fpsSampleStart=start;
+    for(let i=1;i<=90;i++)q.updateFps(start+i*1000/180);
+    Object.assign(q.devProfiler,{estimatedBudgetMs:1000/180,frameCount:30,intervalCount:30,
+      intervalTotal:300,intervalPeak:16,updateTotal:210,renderTotal:30,workTotal:240,workPeak:12,
+      droppedFrames:5,chunkBuilds:0});
+    const hiddenMemory=document.getElementById('dev-profiler-memory').textContent;
+    q.publishDevProfilerSample(performance.now());
+    return {fps:document.getElementById('dev-fps').textContent,label:document.getElementById('dev-profiler-label').textContent,
+      skippedHiddenStats:hiddenMemory===document.getElementById('dev-profiler-memory').textContent};`);
+  assert.equal(readings.fps,"180");
+  assert.equal(readings.label,"CPU / main");
+  assert.equal(readings.skippedHiddenStats,true);
+  await capture("mobile-dev-live-readouts");
+  await tapElement("main-menu-button");
+  assert.equal(await js("return __wormQA.devProfiler.active;"),false);
+  await js("__wormQA.closeMainMenu();__wormQA.setFpsLimit(0);");
+  await neutral();
+  await asyncJs("const done=arguments[arguments.length-1];Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))).then(()=>done(true));");
+  console.log("PASS: touch menu opens/dismisses mobile diagnostics, with updating FPS and likely-limit values");
   await actions([touch("stick", [move(g.stick.x, g.stick.y), down, move(g.stick.x, g.stick.y - g.stick.r * 0.65)])]);
   let state = await js("return {...__wormQA.controls};");
-  assert.ok(state.throttle > 0.5 && state.throttle < 0.7 && !state.boostHeld);
+  assert.ok(state.throttle > 0.5 && state.throttle < 0.7 && !state.boostHeld,
+    JSON.stringify(await js("return {state:{...__wormQA.controls},paused:__wormQA.game.paused,menu:__wormQA.game.menuOpen,touches:__qaTouches.slice(-3),stick:document.getElementById('touch-stick').className};")));
   await actions([touch("button", [move(g.boost.x, g.boost.y), down])]);
   assert.equal(await js("return __wormQA.controls.boostHeld;"), true);
   await actions([touch("stick", [up])]);
@@ -252,6 +318,12 @@ try {
   await asyncJs("const done=arguments[arguments.length-1]; __wormQA.setActiveWormType('licker').then(()=>done(true));");
   await js("__wormQA.startSelectedWorld();");
   assert.equal(await js("return getComputedStyle(document.querySelector('.touch-controls')).display;"), "none");
+  await js("__wormQA.toggleDevMenu(true);");
+  assert.equal(await js("return document.getElementById('reveal-grid');"),null);
+  assert.equal(await js("return getComputedStyle(document.querySelector('.dev-gameplay-panel')).display;"),"block");
+  assert.ok(await js("return document.getElementById('fps-limit').getClientRects().length>0&&document.querySelector('.dev-profiler-stats').getClientRects().length>0;"));
+  await capture("desktop-dev-panels");
+  await js("__wormQA.toggleDevMenu(false);");
   await actions([{type:"key",id:"keyboard",actions:[{type:"keyDown",value:"w"},{type:"keyDown",value:"d"},{type:"keyDown",value:" "}]}]);
   assert.deepEqual(await js("return {...__wormQA.controls};"), {steer:1,throttle:1,brake:0,boostHeld:true});
   await neutral();
@@ -259,7 +331,20 @@ try {
   assert.ok(await js("return __wormQA.game.tongues.length > 0;"));
   console.log("PASS: desktop WASD/Space and mouse targeting remain available");
   assert.deepEqual(await js("return __qaErrors;"), []);
+  for (const mode of ["legacy","fallback"]) {
+    await call(`/session/${session}/url`,{url:base+`/?touch=1&qa-dev=${mode}`});
+    await asyncJs("const done=arguments[arguments.length-1];__wormQAReady.then(()=>done(true));");
+    await js("__wormQA.startSelectedWorld();__wormQA.toggleDevMenu(true);");
+    assert.equal(await js("return document.getElementById('reveal-grid');"),null);
+    assert.ok(await js("return document.getElementById('dev-fps').getClientRects().length>0&&document.getElementById('dev-profiler-label').getClientRects().length>0;"));
+    assert.deepEqual(await js("return __qaErrors;"),[]);
+  }
+  console.log("PASS: Reveal Grid is absent on desktop, in cached legacy markup, and in runtime fallback panels");
   console.log(`PASS: no browser errors. Screenshots: ${artifacts}`);
+} catch (error) {
+  if (session) await capture("failure").catch(()=>{});
+  console.error(`Failure screenshots: ${artifacts}`);
+  throw error;
 } finally {
   if (session) await call(`/session/${session}`, undefined, "DELETE").catch(() => {});
   server.close();
