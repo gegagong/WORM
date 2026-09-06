@@ -160,12 +160,17 @@ try {
       if(air)q.game.inGround=false;
       const a=degrees*Math.PI/180;q.controlInput.setStick(Math.cos(a)*0.75,Math.sin(a)*0.75);
       q.updatePhysics(1/120);
-      return {heading:q.game.heading,speed:q.game.speed,input:{...q.controls}};
+      return {heading:q.game.heading,speed:q.game.speed,input:{...q.controls},
+        status:document.getElementById('touch-stick-status').textContent,
+        brakeZone:getComputedStyle(document.querySelector('.touch-stick-brake-zone')).display};
     };
     const gravity=q.motion.airGravity;q.motion.airGravity=0;
     const result={north:sample(-90),angledBrake:sample(130),straightBrake:sample(175),
       nearAim:sample(0.05),restTurn:sample(130,0),restStop:sample(180,0),
-      airAim:sample(-60,200,true),airBrake:sample(130,200,true),airStop:sample(180,200,true)};
+      airAim:sample(-60,200,true),airRearTurn:sample(130,200,true),airReverse:sample(180,200,true)};
+    q.reset();q.game.heading=0;q.game.speed=200;q.game.velocity.x=200;q.game.velocity.y=0;
+    q.game.inGround=false;q.controlInput.setKey('down',true);q.updatePhysics(1/120);
+    result.desktopAirReverseSpeed=q.game.speed;
     q.motion.airGravity=gravity;q.reset();return result;`);
   assert.ok(directional.north.heading < 0 && directional.north.input.brake === 0);
   assert.ok(directional.angledBrake.heading > 0 && directional.angledBrake.speed < 200);
@@ -175,9 +180,14 @@ try {
   assert.ok(directional.restTurn.heading > 0 && directional.restTurn.speed === 0);
   assert.ok(directional.restStop.heading === 0 && directional.restStop.speed === 0);
   assert.ok(directional.airAim.heading < 0 && Math.abs(directional.airAim.speed-200) < 1e-8);
-  assert.ok(directional.airBrake.heading > 0 && directional.airBrake.speed < 200);
-  assert.ok(Math.abs(directional.airStop.heading) < 1e-9 && directional.airStop.speed < 200);
-  console.log("PASS: ground/air aim, angled braking, brake-only cone, at-rest turns, and no aerial thrust");
+  assert.ok(directional.airRearTurn.heading > 0 && Math.abs(directional.airRearTurn.speed-200) < 1e-8);
+  assert.ok(Math.abs(directional.airReverse.heading) < 1e-9 && Math.abs(directional.airReverse.speed-200) < 1e-8);
+  assert.ok(Math.abs(directional.airReverse.speed-directional.desktopAirReverseSpeed) < 1e-8);
+  for (const air of [directional.airAim, directional.airRearTurn, directional.airReverse]) {
+    assert.equal(air.status, "Aim", "airborne joystick should not claim to be braking");
+    assert.equal(air.brakeZone, "none");
+  }
+  console.log("PASS: ground braking unchanged; aerial aim preserves momentum with no braking, like desktop");
 
   await js("const q=__wormQA;q.game.heading=0;q.game.speed=200;q.game.velocity.x=200;q.game.velocity.y=0;q.updateMovementInput();");
   await actions([touch("stick",[move(g.stick.x,g.stick.y),down,move(g.stick.x+g.stick.r*0.75,g.stick.y)])]);
@@ -200,6 +210,15 @@ try {
   console.log("PASS: pointer cancellation releases the joystick");
 
   await actions([touch("stick", [move(g.stick.x,g.stick.y),down,move(forwardX,forwardY)])]);
+  assert.equal(await js("return __wormQA.controls.boostHeld;"), false, "full joystick travel must not boost");
+  assert.equal(await js("return document.querySelector('.touch-stick-boost-arc');"), null);
+  await actions([touch("button", [move(g.boost.x,g.boost.y),down])]);
+  assert.equal(await js("return __wormQA.controls.boostHeld;"), true);
+  await actions([touch("button", [up])]);
+  assert.equal(await js("return __wormQA.controls.boostHeld;"), false, "button release stops Boost with the joystick still held");
+  assert.ok(await js("return __wormQA.controlInput.stick.active;"));
+  console.log("PASS: only the right button activates touch Boost, including at full stick travel");
+  await actions([touch("button", [move(g.boost.x,g.boost.y),down])]);
   assert.equal(await js("return __wormQA.controls.boostHeld;"), true);
   await js("__wormQA.openMainMenu();");
   assert.deepEqual(await js("return {...__wormQA.controls};"), { steer:0, throttle:0, brake:0, boostHeld:false });

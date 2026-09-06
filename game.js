@@ -144,7 +144,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260905-directional-stick-v14";
+    const styleUrl = "./styles.css?v=20260906-button-boost-v15";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -5955,7 +5955,7 @@
     // Resolve the held world-space aim every tick, not only on pointermove:
     // momentum can change underneath a stationary thumb after a turn/bounce.
     controlInput.setMotion(game.heading, game.velocity.x, game.velocity.y);
-    touchControls?.refresh();
+    touchControls?.refresh(game.inGround || game.onStoneSurface);
   }
 
   function clearControlKeys() {
@@ -20089,7 +20089,7 @@
     return true;
   }
 
-  function applyJoystickVelocityControl(dt) {
+  function steerJoystickVelocity(dt) {
     const stick = controlInput.stick;
     if (!stick.active) return;
     const speed = magnitude(game.velocity.x, game.velocity.y);
@@ -20097,11 +20097,11 @@
     const angle = Math.atan2(game.velocity.y, game.velocity.x);
     const maximumTurn = Math.atan2(wormAirTurnForce() * dt, Math.max(0.5, speed));
     const nextAngle = angle + controlInput.turnDelta(angle, maximumTurn);
-    const nextSpeed = Math.max(0, speed - motion.brakeDeceleration * stick.brake * dt);
-    // Directional air control redirects momentum without adding thrust.
-    // Gravity and any tether/surface constraints still run normally.
-    game.velocity.x = Math.cos(nextAngle) * nextSpeed;
-    game.velocity.y = Math.sin(nextAngle) * nextSpeed;
+    // Like desktop, airborne input cannot brake. Reverse input still cancels
+    // hunts/releases latches, but aiming only redirects existing momentum.
+    // Gravity and any tether constraints still run normally.
+    game.velocity.x = Math.cos(nextAngle) * speed;
+    game.velocity.y = Math.sin(nextAngle) * speed;
   }
 
   function updateHeavyTongueGrappleMovement(
@@ -20113,7 +20113,7 @@
     if (!target) return;
     endStoneSurfaceContact();
 
-    applyJoystickVelocityControl(dt);
+    steerJoystickVelocity(dt);
     game.velocity.y += motion.airGravity * dt;
 
     const { front } = tongueHeadAnchors();
@@ -20833,7 +20833,7 @@
       );
       if (!automaticallySteered && !sprinterAreaTarget) {
         if (controlInput.stick.active) {
-          applyJoystickVelocityControl(dt);
+          steerJoystickVelocity(dt);
         } else if (steer !== 0 && currentSpeed > 0.5) {
           const turnForce = getLocalTurnVector(steer);
           game.velocity.x += turnForce.x * wormAirTurnForce() * dt;

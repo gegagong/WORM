@@ -4,9 +4,6 @@
 
   const STICK_RULES = Object.freeze({
     deadZone: 0.16,
-    boostEnter: 0.88,
-    boostExit: 0.78,
-    boostHalfAngle: 50 * Math.PI / 180,
     reverseNoTurnHalfAngle: 15 * Math.PI / 180,
     movementEpsilon: 0.5,
   });
@@ -17,7 +14,7 @@
     return Math.abs(difference) < 1e-10 ? 0 : difference;
   };
 
-  function sampleStick(rawX, rawY, wasBoosting = false, heading = 0, velocityX = 0, velocityY = 0) {
+  function sampleStick(rawX, rawY, heading = 0, velocityX = 0, velocityY = 0) {
     const x = Number.isFinite(rawX) ? rawX : 0;
     const y = Number.isFinite(rawY) ? rawY : 0;
     const length = Math.hypot(x, y);
@@ -46,8 +43,6 @@
       steer: turnAllowed ? clamp(angleDifference(aimAngle, facing) / (Math.PI / 2), -1, 1) * strength : 0,
       throttle: active && !braking ? strength : 0,
       brake: braking ? strength : 0,
-      boostHeld: active && radius >= (wasBoosting ? STICK_RULES.boostExit : STICK_RULES.boostEnter) &&
-        motionOffset <= STICK_RULES.boostHalfAngle,
       x: length ? x / length * radius : 0,
       y: length ? y / length * radius : 0,
     };
@@ -63,11 +58,11 @@
     let velocityY = 0;
 
     function sync() {
-      stick = sampleStick(stick.x, stick.y, stick.boostHeld, heading, velocityX, velocityY);
+      stick = sampleStick(stick.x, stick.y, heading, velocityX, velocityY);
       state.steer = clamp(Number(keyboard.right) - Number(keyboard.left) + stick.steer, -1, 1);
       state.throttle = Math.max(Number(keyboard.up), stick.throttle);
       state.brake = Math.max(Number(keyboard.down), stick.brake);
-      state.boostHeld = keyboard.boost || stick.boostHeld || buttonBoost;
+      state.boostHeld = keyboard.boost || buttonBoost;
     }
 
     return {
@@ -94,7 +89,7 @@
         sync();
       },
       setStick(x, y) {
-        stick = sampleStick(x, y, stick.boostHeld, heading, velocityX, velocityY);
+        stick = sampleStick(x, y, heading, velocityX, velocityY);
         sync();
         return stick;
       },
@@ -129,6 +124,7 @@
     let lastStickX = "";
     let lastStickY = "";
     let lastMovementAngle = "";
+    let brakingAvailable = true;
 
     function releaseCapture(element, pointerId) {
       if (pointerId !== null && element.hasPointerCapture?.(pointerId)) {
@@ -145,10 +141,10 @@
       if (stickX !== lastStickX) joystick.style.setProperty("--stick-x", lastStickX = stickX);
       if (stickY !== lastStickY) joystick.style.setProperty("--stick-y", lastStickY = stickY);
       if (movementAngle !== lastMovementAngle) joystick.style.setProperty("--movement-angle", lastMovementAngle = movementAngle);
-      joystick.classList.toggle("boosting", stick.boostHeld);
-      joystick.classList.toggle("braking", stick.brake > 0);
-      const label = stick.brake > 0 ? stick.turnAllowed ? "Brake · Turn" : "Brake"
-        : stick.boostHeld ? "Boost" : "Aim";
+      const braking = brakingAvailable && stick.brake > 0;
+      joystick.classList.toggle("airborne", !brakingAvailable);
+      joystick.classList.toggle("braking", braking);
+      const label = braking ? stick.turnAllowed ? "Brake · Turn" : "Brake" : "Aim";
       if (stickStatus.textContent !== label) stickStatus.textContent = label;
     }
 
@@ -272,7 +268,10 @@
 
     return {
       reset,
-      refresh() { if (enabled && !portrait) paintStick(input.stick); },
+      refresh(canBrake = true) {
+        brakingAvailable = canBrake;
+        if (enabled && !portrait) paintStick(input.stick);
+      },
       get portrait() { return portrait; },
       ownsPointer(id) { return id === stickPointer || id === boostPointer; },
     };

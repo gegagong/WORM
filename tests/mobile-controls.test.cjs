@@ -9,7 +9,6 @@ test("center dead zone is neutral and strength is analog outside it", () => {
     near(value.steer, 0);
     near(value.throttle, 0);
     near(value.brake, 0);
-    assert.equal(value.boostHeld, false);
   }
   near(sampleStick(0.58, 0).throttle, 0.5);
   near(sampleStick(-0.58, 0).brake, 0.5);
@@ -28,22 +27,17 @@ test("diagonal movement is bounded and never presses throttle and brake together
   near(neutral.throttle, 0);
 });
 
-test("Boost ring has radial hysteresis and only works in the forward arc", () => {
+test("the joystick never triggers Boost at any radius or direction", () => {
   const input = createInput();
-  input.setStick(0.87, 0);
-  assert.equal(input.state.boostHeld, false);
-  input.setStick(0.88, 0);
-  assert.equal(input.state.boostHeld, true);
-  input.setStick(0.79, 0);
-  assert.equal(input.state.boostHeld, true);
-  input.setStick(0.77, 0);
-  assert.equal(input.state.boostHeld, false);
-  assert.equal(sampleStick(0.7, -0.7).boostHeld, true);
-  assert.equal(sampleStick(0.1, -1, true).boostHeld, false);
-  assert.equal(sampleStick(0, 1, true).boostHeld, false);
-  input.setMotion(Math.PI / 2, 0, 100);
-  input.setStick(0, 1);
-  assert.equal(input.state.boostHeld, true, "the Boost arc rotates with movement");
+  for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    input.setMotion(heading, Math.cos(heading) * 100, Math.sin(heading) * 100);
+    for (const radius of [0, 0.5, 0.87, 0.88, 0.99, 1, 1.5]) {
+      for (let angle = -Math.PI; angle < Math.PI; angle += Math.PI / 4) {
+        input.setStick(Math.cos(angle) * radius, Math.sin(angle) * radius);
+        assert.equal(input.state.boostHeld, false);
+      }
+    }
+  }
 });
 
 test("releasing one Boost source leaves the other held sources active", () => {
@@ -57,6 +51,10 @@ test("releasing one Boost source leaves the other held sources active", () => {
   assert.equal(input.state.boostHeld, true);
   input.setKey("boost", false);
   assert.equal(input.state.boostHeld, false);
+  input.setStick(1, 0);
+  input.setBoost(true);
+  input.setBoost(false);
+  assert.equal(input.state.boostHeld, false, "a fully held joystick cannot keep Boost on after button release");
 });
 
 test("touch cancellation preserves keyboard holds; complete reset clears everything", () => {
@@ -78,7 +76,7 @@ test("touch cancellation preserves keyboard holds; complete reset clears everyth
 const radians = (degrees) => degrees * Math.PI / 180;
 const aimAt = (degrees, heading = 0, vx = 100, vy = 0) => {
   const angle = radians(degrees);
-  return sampleStick(Math.cos(angle) * 0.75, Math.sin(angle) * 0.75, false, heading, vx, vy);
+  return sampleStick(Math.cos(angle) * 0.75, Math.sin(angle) * 0.75, heading, vx, vy);
 };
 
 test("the entire rear half-plane brakes; the perpendicular boundary does not", () => {
@@ -106,10 +104,10 @@ test("rearward aim keeps turning except in the full 30° brake-only cone", () =>
 });
 
 test("braking and its no-turn cone follow velocity rather than facing", () => {
-  const backward = sampleStick(-0.8, 0, false, Math.PI, 100, 0);
+  const backward = sampleStick(-0.8, 0, Math.PI, 100, 0);
   assert.ok(backward.brake > 0, "facing left does not override rightward momentum");
   assert.equal(backward.turnAllowed, false);
-  const forward = sampleStick(0.8, 0, false, Math.PI, 100, 0);
+  const forward = sampleStick(0.8, 0, Math.PI, 100, 0);
   assert.equal(forward.brake, 0);
   assert.ok(forward.throttle > 0);
   for (const headingDegrees of [0, 45, 90, 175, 210, 270]) {
