@@ -1413,22 +1413,23 @@ kbd {
   border: 4px solid transparent;
   border-top-color: var(--acid);
   border-radius: 50%;
+  transform: rotate(var(--movement-angle, 90deg));
 }
 
-.touch-stick-forward,
-.touch-stick-back {
+.touch-stick-brake-zone {
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 90deg, rgba(255, 198, 87, 0.12) 0deg 75deg, rgba(255, 198, 87, 0.32) 75deg 105deg, rgba(255, 198, 87, 0.12) 105deg 180deg, transparent 180deg);
+  transform: rotate(var(--movement-angle, 90deg));
+}
+
+.touch-stick-caption {
+  top: 13px;
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;
   font-size: 9px;
 }
-
-.touch-stick-forward { top: 13px; color: #ffa27a; }
-.touch-stick-back { bottom: 12px; }
-.touch-stick-left,
-.touch-stick-right { top: calc(50% - 12px); font-size: 24px; }
-.touch-stick-left { left: 10px; }
-.touch-stick-right { right: 10px; }
 
 .touch-stick-thumb {
   top: 50%;

@@ -30,9 +30,9 @@ const server = createServer(async (request, response) => {
       body = body.toString()
         .replace("function loop(time) {", "function loop(time) { if (window.__pauseQALoop) { requestAnimationFrame(loop); return; }")
         .replace("  initialize();\n})();", `
-          window.__wormQA = { game, controls, controlInput, abilityPointer, spitterPointer,
+          window.__wormQA = { game, motion, controls, controlInput, abilityPointer, spitterPointer,
             tonguePointer, startSelectedWorld, setActiveWormType, updatePhysics, reset,
-            clearControlKeys, openMainMenu, closeMainMenu, render, updateHud,
+            clearControlKeys, updateMovementInput, openMainMenu, closeMainMenu, render, updateHud,
             canvasWorldPointFromClient, showDeathScreen, showHomeScreen };
           window.__wormQAReady = initialize();
         })();`);
@@ -148,18 +148,58 @@ try {
     await actions([touch("ability", [up])]);
     assert.equal(await js("return __wormQA.abilityPointer.pointerId;"), null);
     assert.equal(await js("return __wormQA.spitterPointer.pointerId;"), null);
-    assert.ok(await js("return __wormQA.controls.throttle > 0;"));
+    assert.ok(await js("return __wormQA.controlInput.stick.active;"));
     await neutral();
   }
   console.log("PASS: all three worms accept a non-primary ability touch while steering and run live frames without errors");
 
-  await actions([touch("stick", [move(g.stick.x,g.stick.y),down,move(g.stick.x,g.stick.y-g.stick.r)])]);
+  await asyncJs("const done=arguments[arguments.length-1]; __wormQA.setActiveWormType('licker').then(()=>{__wormQA.reset();done(true)});");
+  const directional = await js(`const q=__wormQA;
+    const sample=(degrees,speed=200,air=false)=>{
+      q.reset();q.game.heading=0;q.game.speed=speed;q.game.velocity.x=speed;q.game.velocity.y=0;
+      if(air)q.game.inGround=false;
+      const a=degrees*Math.PI/180;q.controlInput.setStick(Math.cos(a)*0.75,Math.sin(a)*0.75);
+      q.updatePhysics(1/120);
+      return {heading:q.game.heading,speed:q.game.speed,input:{...q.controls}};
+    };
+    const gravity=q.motion.airGravity;q.motion.airGravity=0;
+    const result={north:sample(-90),angledBrake:sample(130),straightBrake:sample(175),
+      nearAim:sample(0.05),restTurn:sample(130,0),restStop:sample(180,0),
+      airAim:sample(-60,200,true),airBrake:sample(130,200,true),airStop:sample(180,200,true)};
+    q.motion.airGravity=gravity;q.reset();return result;`);
+  assert.ok(directional.north.heading < 0 && directional.north.input.brake === 0);
+  assert.ok(directional.angledBrake.heading > 0 && directional.angledBrake.speed < 200);
+  assert.ok(directional.straightBrake.input.brake > 0 && directional.straightBrake.speed < 200);
+  assert.ok(Math.abs(directional.straightBrake.heading) < 1e-9);
+  assert.ok(Math.abs(directional.nearAim.heading - 0.05*Math.PI/180) < 1e-9, "small aim changes must not overshoot");
+  assert.ok(directional.restTurn.heading > 0 && directional.restTurn.speed === 0);
+  assert.ok(directional.restStop.heading === 0 && directional.restStop.speed === 0);
+  assert.ok(directional.airAim.heading < 0 && Math.abs(directional.airAim.speed-200) < 1e-8);
+  assert.ok(directional.airBrake.heading > 0 && directional.airBrake.speed < 200);
+  assert.ok(Math.abs(directional.airStop.heading) < 1e-9 && directional.airStop.speed < 200);
+  console.log("PASS: ground/air aim, angled braking, brake-only cone, at-rest turns, and no aerial thrust");
+
+  await js("const q=__wormQA;q.game.heading=0;q.game.speed=200;q.game.velocity.x=200;q.game.velocity.y=0;q.updateMovementInput();");
+  await actions([touch("stick",[move(g.stick.x,g.stick.y),down,move(g.stick.x+g.stick.r*0.75,g.stick.y)])]);
+  assert.ok(await js("return __wormQA.controls.throttle > 0;"));
+  await js("const q=__wormQA;q.game.heading=Math.PI;q.game.velocity.x=-200;q.updatePhysics(1/120);");
+  assert.ok(await js("return __wormQA.controls.brake > 0 && __wormQA.controlInput.stick.active;"));
+  assert.equal(await js("return document.getElementById('touch-stick-status').textContent;"), "Brake");
+  await capture("held-stick-after-bounce");
+  await neutral();
+  await js("__wormQA.reset();");
+  console.log("PASS: a stationary held touch and joystick markings react to reversed momentum");
+
+  const forwardAngle = await js("return __wormQA.controlInput.stick.movementAngle;");
+  const forwardX = g.stick.x + Math.cos(forwardAngle) * g.stick.r;
+  const forwardY = g.stick.y + Math.sin(forwardAngle) * g.stick.r;
+  await actions([touch("stick", [move(g.stick.x,g.stick.y),down,move(forwardX,forwardY)])]);
   await js("const p=__qaTouches.at(-1).id; document.getElementById('touch-stick').dispatchEvent(new PointerEvent('pointercancel',{pointerId:p,bubbles:true}));");
   assert.equal(await js("return __wormQA.controls.throttle;"), 0);
   await neutral();
   console.log("PASS: pointer cancellation releases the joystick");
 
-  await actions([touch("stick", [move(g.stick.x,g.stick.y),down,move(g.stick.x,g.stick.y-g.stick.r)])]);
+  await actions([touch("stick", [move(g.stick.x,g.stick.y),down,move(forwardX,forwardY)])]);
   assert.equal(await js("return __wormQA.controls.boostHeld;"), true);
   await js("__wormQA.openMainMenu();");
   assert.deepEqual(await js("return {...__wormQA.controls};"), { steer:0, throttle:0, brake:0, boostHeld:false });

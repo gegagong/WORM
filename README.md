@@ -36,15 +36,24 @@ Touch devices automatically get landscape controls. Open `/?touch=1` to preview
 the same layout on a desktop browser. On a phone, open the static server's LAN
 address (for example, `http://<computer-lan-ip>:4173`) while on the same network.
 
-- The fixed left stick steers horizontally. Push up for proportional acceleration
-  and speed, or pull down for proportional braking and Sprinter hunt cancellation.
-- The center 16% is neutral. The upper rim engages Boost at 88% travel inside the
-  forward ±50° arc and releases below 78%, avoiding flicker near the threshold.
+- Aim the fixed left stick in the world direction you want the worm to face.
+  Stick travel controls acceleration/speed and braking strength. The center 16%
+  is neutral, and steering takes the shortest bounded turn toward the aim.
+- Aim anywhere behind the line perpendicular to the worm's actual velocity to
+  brake and cancel a Sprinter hunt. The worm still turns toward the aim, except
+  inside a 30° cone centered on directly backward (±15°), which only brakes.
+  These regions follow momentum every tick, even with a stationary thumb. At rest,
+  the worm's heading is the reference; angled braking turns can finish at rest.
+- The shaded rear half indicates braking, with a brighter brake-only cone. The
+  orange Boost rim follows the movement direction: it engages at 88% travel within
+  the forward ±50° arc and releases below 78%, avoiding threshold flicker.
+- Aerial joystick steering redirects existing momentum without adding thrust;
+  reverse aiming applies braking while gravity continues to act normally.
 - Hold the separate right Boost button for hard-prey latching or airborne mouth
   opening. It can stay held independently of the stick and the ability finger.
 - Tap the world to launch Licker's tongue or mark a Sprinter hunt; hold/drag to
   aim Spitter's acid. Licker can still hold near hard airborne prey to grapple,
-  then push the stick upward to reel in.
+  then aim into the forward movement half to reel in.
 - Menu, rotation into portrait, app backgrounding, death, and worm capture clear
   held input. Turning back to landscape leaves the run paused until Continue.
 

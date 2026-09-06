@@ -144,7 +144,7 @@
   // Keep the dev controls usable if a server or browser combines a newer
   // script with an older cached copy of the page markup or stylesheet.
   function ensureRuntimeStyles() {
-    const styleUrl = "./styles.css?v=20260905-mobile-controls-v13";
+    const styleUrl = "./styles.css?v=20260905-directional-stick-v14";
     const existingStylesheet = document.querySelector(
       "link[data-worm-runtime-styles]",
     );
@@ -5947,7 +5947,15 @@
     snapCameraToWorm();
     syncDevGameplayControls();
 
+    updateMovementInput();
     updateHud();
+  }
+
+  function updateMovementInput() {
+    // Resolve the held world-space aim every tick, not only on pointermove:
+    // momentum can change underneath a stationary thumb after a turn/bounce.
+    controlInput.setMotion(game.heading, game.velocity.x, game.velocity.y);
+    touchControls?.refresh();
   }
 
   function clearControlKeys() {
@@ -19776,6 +19784,8 @@
     contact.path = surface.path;
     contact.clusterId = surface.path.clusterId;
     let activeSteer = suppressManualInput ? 0 : steer;
+    const stick = controlInput.stick;
+    const manualAim = !areaTarget && !suppressManualInput && stick.active;
     if (areaTarget) {
       const targetX = nearestPeriodicWorldX(
         areaTarget.x,
@@ -19785,6 +19795,12 @@
         (targetX - contact.wheelX) * surface.unitX +
         (areaTarget.y - contact.wheelY) * surface.unitY;
       if (Math.abs(tangentOffset) > 1) activeSteer = Math.sign(tangentOffset);
+    } else if (manualAim) {
+      // Crawling chooses a direction along the surface, not a yaw direction.
+      activeSteer = stick.turnAllowed
+        ? stick.x * surface.unitX + stick.y * surface.unitY
+        : 0;
+      if (Math.abs(activeSteer) < 1e-6) activeSteer = 0;
     }
     if (activeSteer !== 0) game.stoneSurfaceDirection = Math.sign(activeSteer);
 
@@ -19869,7 +19885,9 @@
       contact.velocityX,
       contact.velocityY,
     );
-    const targetHeading = wheelMomentum > 1
+    const targetHeading = manualAim
+      ? stick.turnAllowed ? stick.aimAngle : game.heading
+      : wheelMomentum > 1
       ? Math.atan2(contact.velocityY, contact.velocityX)
       : Math.atan2(
           surface.unitY * direction,
@@ -19883,6 +19901,7 @@
       STONE_RULES.surfaceHeadTurnSpeed *
       activeTurnScale *
       huntTurnMultiplier *
+      (manualAim ? stick.strength : 1) *
       dt;
     game.heading += clamp(
       headingDifference,
@@ -20070,6 +20089,21 @@
     return true;
   }
 
+  function applyJoystickVelocityControl(dt) {
+    const stick = controlInput.stick;
+    if (!stick.active) return;
+    const speed = magnitude(game.velocity.x, game.velocity.y);
+    if (speed <= 0) return;
+    const angle = Math.atan2(game.velocity.y, game.velocity.x);
+    const maximumTurn = Math.atan2(wormAirTurnForce() * dt, Math.max(0.5, speed));
+    const nextAngle = angle + controlInput.turnDelta(angle, maximumTurn);
+    const nextSpeed = Math.max(0, speed - motion.brakeDeceleration * stick.brake * dt);
+    // Directional air control redirects momentum without adding thrust.
+    // Gravity and any tether/surface constraints still run normally.
+    game.velocity.x = Math.cos(nextAngle) * nextSpeed;
+    game.velocity.y = Math.sin(nextAngle) * nextSpeed;
+  }
+
   function updateHeavyTongueGrappleMovement(
     tongue,
     dt,
@@ -20079,6 +20113,7 @@
     if (!target) return;
     endStoneSurfaceContact();
 
+    applyJoystickVelocityControl(dt);
     game.velocity.y += motion.airGravity * dt;
 
     const { front } = tongueHeadAnchors();
@@ -20542,6 +20577,7 @@
       updatePostDevourWorld(dt);
       return;
     }
+    updateMovementInput();
     // Repair the compact ownership index once per frame as well as updating
     // it at mutations. This keeps developer/test-injected tongues safe while
     // every hot-path ownership query remains constant-time.
@@ -20730,16 +20766,19 @@
         grapplePullBoosting,
       );
     } else if (game.inGround) {
-      const canTurn = game.speed > 0.5;
+      // An angled braking turn can finish even after it has brought the worm
+      // to rest; the narrow straight-back brake cone still prevents turning.
+      const canTurn = game.speed > 0.5 || controlInput.stick.active;
       const speedTurnFactor = lerp(
         1,
         0.58,
         clamp((game.speed - 230) / 540, 0, 1),
       );
-      if (canTurn) {
-        const activeSteer = sprinterAreaTarget ? 0 : steer;
-        game.heading +=
-          activeSteer * motion.groundTurnSpeed * speedTurnFactor * dt;
+      if (canTurn && !sprinterAreaTarget) {
+        game.heading += controlInput.turnDelta(
+          game.heading,
+          motion.groundTurnSpeed * speedTurnFactor * dt,
+        );
       }
 
       const throttle = sprinterAreaTarget ? 0 : controls.throttle;
@@ -20792,15 +20831,14 @@
             sprinterHuntTurnMultiplier(sprinterAreaTarget),
         ),
       );
-      if (
-        !automaticallySteered &&
-        !sprinterAreaTarget &&
-        steer !== 0 &&
-        currentSpeed > 0.5
-      ) {
-        const turnForce = getLocalTurnVector(steer);
-        game.velocity.x += turnForce.x * wormAirTurnForce() * dt;
-        game.velocity.y += turnForce.y * wormAirTurnForce() * dt;
+      if (!automaticallySteered && !sprinterAreaTarget) {
+        if (controlInput.stick.active) {
+          applyJoystickVelocityControl(dt);
+        } else if (steer !== 0 && currentSpeed > 0.5) {
+          const turnForce = getLocalTurnVector(steer);
+          game.velocity.x += turnForce.x * wormAirTurnForce() * dt;
+          game.velocity.y += turnForce.y * wormAirTurnForce() * dt;
+        }
       }
       game.velocity.y += worldGravityAcceleration() * dt;
       game.speed = magnitude(game.velocity.x, game.velocity.y);

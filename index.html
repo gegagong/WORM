@@ -15,7 +15,7 @@
         { capture: true },
       );
     </script>
-    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260905-mobile-controls-v13" />
+    <link data-worm-runtime-styles rel="stylesheet" href="./styles.css?v=20260905-directional-stick-v14" />
     <link rel="preload" as="image" href="./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-upper.png?v=20260815-shared-current-default" />
     <link rel="preload" as="image" href="./assets/worm/shared-default-head-lower.png?v=20260815-shared-current-default" />
@@ -125,7 +125,7 @@
             <span>Play selected world</span>
             <span aria-hidden="true">→</span>
           </button>
-          <p class="mobile-help">Left stick: steer, push up to move, pull down to brake. Push to the upper rim to Boost. Touch the world to use your worm’s ability.</p>
+          <p class="mobile-help">Aim the left stick where you want to go. Aim against your movement to brake; aim straight back to brake without turning. The orange rim follows your movement for Boost. Touch the world to use your worm’s ability.</p>
         </div>
       </section>
 
@@ -373,15 +373,13 @@
 
       <nav class="touch-controls" aria-label="Touch controls">
         <div class="touch-stick-wrap">
-          <div id="touch-stick" class="touch-stick" role="group" aria-label="Movement joystick: up to accelerate, down to brake, left and right to steer; upper rim to boost">
+          <div id="touch-stick" class="touch-stick" role="group" aria-label="Aim where you want to move. The shaded rear half brakes while turning, except within 15 degrees of straight back, which only brakes. The orange forward rim boosts.">
+            <span class="touch-stick-brake-zone" aria-hidden="true"></span>
             <span class="touch-stick-boost-arc" aria-hidden="true"></span>
-            <span class="touch-stick-forward" aria-hidden="true">BOOST ↑</span>
-            <span class="touch-stick-left" aria-hidden="true">‹</span>
-            <span class="touch-stick-right" aria-hidden="true">›</span>
-            <span class="touch-stick-back" aria-hidden="true">BRAKE</span>
+            <span class="touch-stick-caption" aria-hidden="true">AIM</span>
             <span class="touch-stick-thumb" aria-hidden="true"></span>
           </div>
-          <span id="touch-stick-status" aria-hidden="true">Steer</span>
+          <span id="touch-stick-status" aria-hidden="true">Aim</span>
         </div>
         <div class="touch-ability-hint" id="touch-ability-hint" aria-hidden="true">Tap prey · hold to grapple</div>
         <button id="touch-boost" class="touch-boost" data-control="boost" type="button" aria-label="Hold Boost to latch onto hard prey" aria-pressed="false">
@@ -665,7 +663,7 @@
 
     </main>
 
-    <script src="./mobile-controls.js?v=20260905-mobile-controls-v1"></script>
-    <script src="./game.js?v=20260905-mobile-controls-v55"></script>
+    <script src="./mobile-controls.js?v=20260905-directional-stick-v2"></script>
+    <script src="./game.js?v=20260905-directional-stick-v56"></script>
   </body>
 </html>
