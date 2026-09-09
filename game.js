@@ -825,6 +825,7 @@
     maximumCount: 1000,
     maximumKindShare: 0.5,
     maximumRefillSpawnsPerUpdate: 4,
+    maximumRefillWorkMs: 1,
     placementAttempts: 32,
     failedPlacementRetryDelay: 0.5,
     beetleColonyChance: 0.8,
@@ -882,6 +883,9 @@
   });
   const SKY_PHOTO_FILE =
     "./assets/backgrounds/post-apocalyptic-sky-v2.webp?v=20260818-hyper-real-sky";
+  const ENEMY_BEHAVIOR_RULES = Object.freeze({
+    maximumChecksPerSecond: 30,
+  });
   const ENEMY_MOTION = Object.freeze({
     moveSpeed: 6.25,
     turnSpeed: 0.52,
@@ -1485,6 +1489,11 @@
   const MIN_TERRAIN_CHUNKS = 16;
   const TERRAIN_PREFETCH_MINIMUM_SPEED = 20;
   const TERRAIN_PREFETCH_FRAME_RESERVE = 2.5;
+  const TERRAIN_DEPTH_CACHE_RULES = Object.freeze({
+    paddingPixels: 64,
+    maximumPixels: 8 * 1024 * 1024,
+    maximumBuildsPerFrame: 1,
+  });
   const DEFAULT_WORLD_ID = "default-flat";
   const WORLD_STORAGE_KEY = "worm.custom-worlds.v1";
   const SELECTED_WORLD_STORAGE_KEY = "worm.selected-world.v1";
@@ -1662,6 +1671,8 @@
     bodyPath: [],
     bodyPathStartIndex: 0,
     particles: [],
+    particlePool: [],
+    particleSpawnsRemaining: BITE_SPLATTER_RULES.particleLimit,
     clouds: [],
     targets: [],
     capturedTargets: [],
@@ -1674,6 +1685,7 @@
     roundSpawnRegionType: null,
     roundSpawnSerial: 0,
     roundSpawnAttemptSerial: 0,
+    roundSpawnPending: null,
     roundSpawnBlockedLiveCount: -1,
     roundSpawnBlockedPoints: -1,
     roundSpawnBlockedNextTargetId: -1,
@@ -1715,6 +1727,14 @@
   const terrainLayerRenderState = {
     drawItems: [],
     zoom: 1,
+  };
+  const terrainDepthCache = {
+    layers: new Map(),
+    zoom: NaN,
+    dpr: 0,
+    width: 0,
+    height: 0,
+    buildsRemaining: 0,
   };
 
   const spitterCraneRenderState = {
@@ -2049,6 +2069,9 @@
     let bytes = 0;
     game.terrainChunks.forEach((chunk) => {
       bytes += chunk.canvas.width * chunk.canvas.height * 4;
+    });
+    terrainDepthCache.layers.forEach((layer) => {
+      bytes += layer.canvas.width * layer.canvas.height * 4;
     });
     return bytes / (1024 * 1024);
   }
@@ -3806,7 +3829,9 @@
     return candidate;
   }
 
-  function createEnemyTarget(kind, x, y, regionType, random) {
+  function createEnemyTarget(
+    kind, x, y, regionType, random, initializeProcedural = true,
+  ) {
     const definition = ENEMY_DEFINITIONS[kind];
     const moveSpeed = ENEMY_MOTION.moveSpeed * definition.sizeScale;
     const angle = random() * TAU;
@@ -3857,14 +3882,22 @@
       burrowRemaining: 0,
       animationProgress,
       animationFrame: Math.floor(animationProgress),
+      behaviorElapsed: 0,
+      behaviorCooldown: 0,
+      behaviorDue: false,
+      behaviorDt: 0,
     };
+    // Spread decisions across frames without consuming the spawn RNG.
+    target.behaviorCooldown =
+      positiveModulo(target.id * 0.61803398875, 1) /
+      ENEMY_BEHAVIOR_RULES.maximumChecksPerSecond;
     if (kind === ENEMY_TYPES.RABBIT) {
       initializeRabbitTarget(target, random);
     } else if (definition.flightBehavior === "dragonfly") {
       initializeDragonflyTarget(target, random);
     } else if (definition.flightBehavior === "vulture") {
       initializeVultureTarget(target, random);
-    } else if (kind === ENEMY_TYPES.TRISTAR) {
+    } else if (kind === ENEMY_TYPES.TRISTAR && initializeProcedural) {
       initializeTristarTarget(target, random);
     }
     return target;
@@ -3942,6 +3975,7 @@
   }
 
   function resetRoundPointLedger() {
+    game.roundSpawnPending = null;
     game.roundUnspawnedPoints = Math.max(
       0,
       Math.round(game.activeRoundPointLimit),
@@ -4322,6 +4356,7 @@
   }
 
   function deferRoundSpawnRetry() {
+    game.roundSpawnPending = null;
     game.roundSpawnBlockedLiveCount = liveEnemyCount();
     game.roundSpawnBlockedPoints = game.roundUnspawnedPoints;
     game.roundSpawnBlockedNextTargetId = game.nextTargetId;
@@ -4329,16 +4364,78 @@
       game.elapsed + ENEMY_SPAWN_RULES.failedPlacementRetryDelay;
   }
 
+  function* searchRoundSpawnTarget(kind, random) {
+    const placementChoices =
+      kind === ENEMY_TYPES.VULTURE
+        ? ENEMY_SPAWN_RULES.vulturePlacementChoices
+        : kind === ENEMY_TYPES.TRISTAR
+          ? ENEMY_SPAWN_RULES.tristarPlacementChoices
+          : kind === ENEMY_TYPES.MOLE
+            ? ENEMY_SPAWN_RULES.molePlacementChoices
+            : 1;
+    const beetleAnchor =
+      kind === ENEMY_TYPES.BEETLE &&
+      random() < ENEMY_SPAWN_RULES.beetleColonyChance
+        ? randomActiveTargetOfKind(kind, random)
+        : null;
+    let best = null;
+    let bestSeparationSquared = -1;
+    let validChoices = 0;
+    for (
+      let attempt = 0;
+      attempt < ENEMY_SPAWN_RULES.placementAttempts &&
+      validChoices < placementChoices;
+      attempt += 1
+    ) {
+      const source = roundSpawnSourcePoint(kind, random, attempt, beetleAnchor);
+      if (!source) {
+        yield;
+        continue;
+      }
+      // Flight/rest initializers determine placement height. Tri-Star arm
+      // buffers do not affect placement, so allocate them only for the winner.
+      const candidate = createEnemyTarget(
+        kind, source.x, source.y, source.regionType, random, false,
+      );
+      game.nextTargetId -= 1;
+      keepEnemyInsideWorld(candidate);
+      yield;
+      const allowVisible =
+        attempt >= Math.floor(ENEMY_SPAWN_RULES.placementAttempts * 0.75);
+      if (!roundSpawnPointIsAvailable(
+        candidate, candidate.radius, getVisibleWorldBounds(BLOCK_SIZE * 4),
+        allowVisible,
+      )) {
+        yield;
+        continue;
+      }
+      validChoices += 1;
+      if (placementChoices === 1) return { target: candidate, allowVisible };
+      yield;
+      const separationSquared = sameKindSpawnSeparationSquared(candidate);
+      if (separationSquared > bestSeparationSquared) {
+        best = { target: candidate, allowVisible };
+        bestSeparationSquared = separationSquared;
+      }
+      if (separationSquared === Infinity) break;
+      yield;
+    }
+    return best;
+  }
+
   function refillRoundTargetsTimeSliced() {
     if (
       game.roundUnspawnedPoints <= 0 ||
       game.roundPopulationCap <= 0
     ) {
+      game.roundSpawnPending = null;
       return;
     }
+    const deadline = performance.now() + ENEMY_SPAWN_RULES.maximumRefillWorkMs;
     const populationLimit = enemyPopulationLimit();
     const currentLiveCount = liveEnemyCount();
     if (currentLiveCount >= populationLimit) {
+      game.roundSpawnPending = null;
       game.roundSpawnBlockedLiveCount = -1;
       game.roundSpawnBlockedPoints = -1;
       game.roundSpawnBlockedNextTargetId = -1;
@@ -4362,34 +4459,69 @@
     while (
       availableSlots > 0 &&
       game.roundUnspawnedPoints > 0 &&
-      spawnedThisUpdate < ENEMY_SPAWN_RULES.maximumRefillSpawnsPerUpdate
+      spawnedThisUpdate < ENEMY_SPAWN_RULES.maximumRefillSpawnsPerUpdate &&
+      performance.now() < deadline
     ) {
-      const attemptSerial = game.roundSpawnAttemptSerial;
-      game.roundSpawnAttemptSerial += 1;
-      const random = seededRandom(
-        hashString(
+      let pending = game.roundSpawnPending;
+      if (pending && (
+        pending.map !== game.map ||
+        pending.worldId !== game.activeWorldId ||
+        availableEnemyKindSlots(pending.kind, kindCounts) <= 0 ||
+        ENEMY_DEFINITIONS[pending.kind].score > game.roundUnspawnedPoints
+      )) {
+        game.roundSpawnPending = pending = null;
+      }
+      if (!pending) {
+        const attemptSerial = game.roundSpawnAttemptSerial++;
+        const random = seededRandom(hashString(
           `${game.activeWorldId}:${attemptSerial}:${game.roundSpawnSerial}:instant-spawn`,
-        ),
-      );
-      const kind = randomAffordableRoundSpawnKind(random, kindCounts);
-      if (!kind) {
-        // The remaining points may only afford a kind that is already at its
-        // 50% quota. Preserve those points until a matching slot opens rather
-        // than violating the cap or repeating this scan every frame.
+        ));
+        const kind = randomAffordableRoundSpawnKind(random, kindCounts);
+        if (!kind) {
+          deferRoundSpawnRetry();
+          break;
+        }
+        pending = game.roundSpawnPending = {
+          kind, random, map: game.map, worldId: game.activeWorldId,
+          search: searchRoundSpawnTarget(kind, random), result: null,
+        };
+      }
+      if (!pending.result) {
+        // Each resume is one placement phase, not an entire 32-probe search.
+        // A single phase/commit is atomic and can exceed this soft deadline.
+        const result = pending.search.next();
+        if (!result.done) continue;
+        if (!result.value) {
+          deferRoundSpawnRetry();
+          break;
+        }
+        pending.result = result.value;
+        if (performance.now() >= deadline) break;
+      }
+      const { target, allowVisible } = pending.result;
+      // A search can span frames: the worm, camera, targets, IDs, and available
+      // points may have changed since this candidate was originally chosen.
+      if (!roundSpawnPointIsAvailable(
+        target, target.radius, getVisibleWorldBounds(BLOCK_SIZE * 4), allowVisible,
+      )) {
         deferRoundSpawnRetry();
         break;
       }
-      const target = createRoundSpawnTarget(kind, random);
-      if (!target || !reserveRoundPointsForTarget(target)) {
-        // Do not repeat the same bounded 32-probe failure every frame on a
-        // saturated custom map. Any later population, reserve, or target-set
-        // change makes the state eligible immediately; otherwise a short
-        // backoff allows moving geometry to make the next search viable.
+      target.id = game.nextTargetId;
+      target.behaviorCooldown =
+        positiveModulo(target.id * 0.61803398875, 1) /
+        ENEMY_BEHAVIOR_RULES.maximumChecksPerSecond;
+      if (target.kind === ENEMY_TYPES.TRISTAR) {
+        initializeTristarTarget(target, pending.random);
+      }
+      if (!reserveRoundPointsForTarget(target)) {
         deferRoundSpawnRetry();
         break;
       }
+      game.nextTargetId += 1;
+      game.roundSpawnPending = null;
       game.targets.push(target);
-      kindCounts.set(kind, (kindCounts.get(kind) || 0) + 1);
+      kindCounts.set(target.kind, (kindCounts.get(target.kind) || 0) + 1);
       game.totalTargets += 1;
       availableSlots -= 1;
       spawnedThisUpdate += 1;
@@ -5918,7 +6050,7 @@
     game.stoneCollisionGraceTimer = 0;
     game.stoneSurfaceDirection = Math.cos(game.heading) < 0 ? -1 : 1;
     resetTunneledGroundBlocks();
-    game.particles = [];
+    clearParticles();
     game.elapsed = 0;
     buildTargets();
     resetMinimapRadar();
@@ -9124,8 +9256,47 @@
     closeWormAppearanceEditor();
   }
 
+  function clearParticles() {
+    for (const particle of game.particles) game.particlePool.push(particle);
+    game.particles.length = 0;
+    game.particlePool.length = Math.min(
+      game.particlePool.length,
+      BITE_SPLATTER_RULES.particleLimit,
+    );
+    game.particleSpawnsRemaining = BITE_SPLATTER_RULES.particleLimit;
+  }
+
+  function reserveParticleSpawns(requestedCount) {
+    // Bound creation as well as the live count. A large meal must not generate
+    // thousands of objects only to throw all but the last 280 away.
+    const count = Math.min(
+      game.particleSpawnsRemaining,
+      Math.max(0, Math.ceil(Number(requestedCount) || 0)),
+    );
+    game.particleSpawnsRemaining -= count;
+    const overflow = Math.max(
+      0,
+      game.particles.length + count - BITE_SPLATTER_RULES.particleLimit,
+    );
+    for (let index = 0; index < overflow; index += 1) {
+      game.particlePool.push(game.particles[index]);
+    }
+    if (overflow > 0) {
+      game.particles.copyWithin(0, overflow);
+      game.particles.length -= overflow;
+    }
+    return count;
+  }
+
+  function acquireParticle() {
+    const particle = game.particlePool.pop() || {};
+    game.particles.push(particle);
+    return particle;
+  }
 
   function spawnParticles(x, y, count, kind, sizeScale = 1) {
+    count = reserveParticleSpawns(count);
+    if (count === 0) return;
     const effectScale = Math.sqrt(sizeScale);
     for (let index = 0; index < count; index += 1) {
       const angle =
@@ -9142,29 +9313,22 @@
         kind === "splatter"
           ? 0.24 + Math.random() * 0.35
           : 0.35 + Math.random() * 0.45;
-      game.particles.push({
-        x,
-        y,
-        vx: Math.cos(angle) * force,
-        vy:
+      const particle = acquireParticle();
+      particle.x = x;
+      particle.y = y;
+      particle.vx = Math.cos(angle) * force;
+      particle.vy =
           Math.sin(angle) * force -
           (kind === "burst" || kind === "beetle" || kind === "dragonfly" || kind === "vulture" || kind === "mole" || kind === "rabbit" || kind === "tristar" || kind === "meat" || kind === "stone" || kind === "growth" || kind === "splatter"
             ? 70
-            : 0),
-        life,
-        maxLife: life,
-        size: (1.5 + Math.random() * 4) * effectScale,
-        tone: Math.random(),
-        kind,
-        renderLayer:
-          kind === "splatter" && index % 2 === 0 ? "front" : "back",
-      });
-    }
-    if (game.particles.length > BITE_SPLATTER_RULES.particleLimit) {
-      game.particles.splice(
-        0,
-        game.particles.length - BITE_SPLATTER_RULES.particleLimit,
-      );
+            : 0);
+      particle.life = life;
+      particle.maxLife = life;
+      particle.size = (1.5 + Math.random() * 4) * effectScale;
+      particle.tone = Math.random();
+      particle.kind = kind;
+      particle.renderLayer =
+        kind === "splatter" && index % 2 === 0 ? "front" : "back";
     }
   }
 
@@ -9175,6 +9339,8 @@
     sizeScale = 1,
     count = BITE_SPLATTER_RULES.baseCount,
   ) {
+    count = reserveParticleSpawns(count);
+    if (count === 0) return;
     const effectScale = Math.sqrt(Math.max(0.25, sizeScale));
     const tangentX = Math.cos(biteAngle);
     const tangentY = Math.sin(biteAngle);
@@ -9198,28 +9364,21 @@
       );
       const mouthJitter = (Math.random() - 0.5) * 5 * effectScale;
       const sideJitter = side * Math.random() * 3 * effectScale;
-      game.particles.push({
-        x: x + tangentX * mouthJitter + normalX * sideJitter,
-        y: y + tangentY * mouthJitter + normalY * sideJitter,
-        vx:
+      const particle = acquireParticle();
+      particle.x = x + tangentX * mouthJitter + normalX * sideJitter;
+      particle.y = y + tangentY * mouthJitter + normalY * sideJitter;
+      particle.vx =
           Math.cos(sprayAngle) * force +
-          game.velocity.x * BITE_SPLATTER_RULES.velocityCarry,
-        vy:
+          game.velocity.x * BITE_SPLATTER_RULES.velocityCarry;
+      particle.vy =
           Math.sin(sprayAngle) * force +
-          game.velocity.y * BITE_SPLATTER_RULES.velocityCarry,
-        life,
-        maxLife: life,
-        size: (0.55 + Math.random() * 1.35) * effectScale,
-        tone: Math.random(),
-        kind: "splatter",
-        renderLayer: index % 4 < 2 ? "front" : "back",
-      });
-    }
-    if (game.particles.length > BITE_SPLATTER_RULES.particleLimit) {
-      game.particles.splice(
-        0,
-        game.particles.length - BITE_SPLATTER_RULES.particleLimit,
-      );
+          game.velocity.y * BITE_SPLATTER_RULES.velocityCarry;
+      particle.life = life;
+      particle.maxLife = life;
+      particle.size = (0.55 + Math.random() * 1.35) * effectScale;
+      particle.tone = Math.random();
+      particle.kind = "splatter";
+      particle.renderLayer = index % 4 < 2 ? "front" : "back";
     }
   }
 
@@ -9230,6 +9389,8 @@
     sizeScale = 1,
     count = TRISTAR_RULES.wormLethalChunkParticlesPerSegment,
   ) {
+    count = reserveParticleSpawns(count);
+    if (count === 0) return;
     const effectScale = clamp(
       Math.sqrt(Math.max(0.25, sizeScale)),
       0.7,
@@ -9243,40 +9404,39 @@
         : outwardAngle + (Math.random() - 0.5) * 1.35;
       const force = (70 + Math.random() * 190) * effectScale;
       const life = 0.34 + Math.random() * 0.42;
-      game.particles.push({
-        x: x + (Math.random() - 0.5) * 5 * effectScale,
-        y: y + (Math.random() - 0.5) * 5 * effectScale,
-        vx: Math.cos(angle) * force,
-        vy: Math.sin(angle) * force - 55 * effectScale,
-        life,
-        maxLife: life,
-        size: (2.5 + Math.random() * 4.5) * effectScale,
-        tone: Math.random(),
-        kind: "worm-chunk",
-        chunkShape: index % 3 === 2 ? "drop" : "piece",
-        rotation: Math.random() * TAU,
-        spin: (Math.random() - 0.5) * 15,
-        renderLayer: index % 3 === 0 ? "back" : "front",
-      });
-    }
-    if (game.particles.length > BITE_SPLATTER_RULES.particleLimit) {
-      game.particles.splice(
-        0,
-        game.particles.length - BITE_SPLATTER_RULES.particleLimit,
-      );
+      const particle = acquireParticle();
+      particle.x = x + (Math.random() - 0.5) * 5 * effectScale;
+      particle.y = y + (Math.random() - 0.5) * 5 * effectScale;
+      particle.vx = Math.cos(angle) * force;
+      particle.vy = Math.sin(angle) * force - 55 * effectScale;
+      particle.life = life;
+      particle.maxLife = life;
+      particle.size = (2.5 + Math.random() * 4.5) * effectScale;
+      particle.tone = Math.random();
+      particle.kind = "worm-chunk";
+      particle.chunkShape = index % 3 === 2 ? "drop" : "piece";
+      particle.rotation = Math.random() * TAU;
+      particle.spin = (Math.random() - 0.5) * 15;
+      particle.renderLayer = index % 3 === 0 ? "back" : "front";
     }
   }
 
   function updateParticles(dt) {
-    game.particles = game.particles.filter((particle) => {
+    let activeCount = 0;
+    const drag = Math.pow(0.08, dt);
+    const spinDrag = Math.pow(0.16, dt);
+    for (const particle of game.particles) {
       particle.life -= dt;
-      if (particle.life <= 0) return false;
+      if (particle.life <= 0) {
+        game.particlePool.push(particle);
+        continue;
+      }
       particle.x += particle.vx * dt;
       particle.y += particle.vy * dt;
-      particle.vx *= Math.pow(0.08, dt);
+      particle.vx *= drag;
       if (particle.kind === "worm-chunk") {
         particle.rotation += particle.spin * dt;
-        particle.spin *= Math.pow(0.16, dt);
+        particle.spin *= spinDrag;
       }
       particle.vy +=
         (particle.kind === "burst"
@@ -9290,8 +9450,9 @@
               : particle.kind === "worm-chunk"
                 ? 360
               : 240) * dt;
-      return true;
-    });
+      game.particles[activeCount++] = particle;
+    }
+    game.particles.length = activeCount;
   }
 
   function initializeBodyPath() {
@@ -10129,10 +10290,6 @@
       : knownTarget;
     const target = lockedTarget && !tongue.freefallNodes
       ? { x: lockedTarget.x, y: lockedTarget.y }
-      : tongue.aimOnly &&
-          Number.isFinite(tongue.selectionX) &&
-          Number.isFinite(tongue.selectionY)
-        ? { x: tongue.selectionX, y: tongue.selectionY }
       : {
           x: game.head.x + tongue.aimOffsetX,
           y: game.head.y + tongue.aimOffsetY,
@@ -10324,7 +10481,31 @@
     return closestDistanceSquared <= radiusSquared;
   }
 
+  function eatConeSweepBounds(sweep, cone) {
+    if (sweep.broadphaseCone === cone) return sweep.broadphaseBounds;
+    // The pivot rotates around the swept pose. Enclose its entire arc and
+    // cone, not just the endpoint cones: sharp turns must never skip a hit.
+    const reach = Math.abs(cone.pivotOffset) + cone.range;
+    const bounds = {
+      centerX: (sweep.previous.x + sweep.current.x) * 0.5,
+      centerY: (sweep.previous.y + sweep.current.y) * 0.5,
+      halfWidth: Math.abs(sweep.current.x - sweep.previous.x) * 0.5 + reach,
+      halfHeight: Math.abs(sweep.current.y - sweep.previous.y) * 0.5 + reach,
+    };
+    sweep.broadphaseCone = cone;
+    sweep.broadphaseBounds = bounds;
+    return bounds;
+  }
+
   function targetTouchesEatCone(target, sweep, cone) {
+    const bounds = eatConeSweepBounds(sweep, cone);
+    if (Math.abs(target.y - bounds.centerY) > bounds.halfHeight + target.radius) {
+      return false;
+    }
+    const targetX = nearestPeriodicWorldX(target.x, bounds.centerX);
+    if (Math.abs(targetX - bounds.centerX) > bounds.halfWidth + target.radius) {
+      return false;
+    }
     for (let step = 0; step <= sweep.steps; step += 1) {
       if (
         targetOverlapsEatConeAtPose(
@@ -10475,6 +10656,22 @@
       (kindCounts.get(consumedTarget.kind) || 0) + spawned.length,
     );
     game.totalTargets += spawned.length;
+  }
+
+  function updateEnemyBehaviorClock(target, dt) {
+    target.behaviorDue = false;
+    target.behaviorDt = 0;
+    if (!(dt > 0)) return;
+    target.behaviorElapsed = (target.behaviorElapsed || 0) + dt;
+    target.behaviorCooldown = (target.behaviorCooldown || 0) - dt;
+    if (target.behaviorCooldown > 0.000000001) return;
+    target.behaviorDue = true;
+    target.tristarPulsePlanChecked = false;
+    target.behaviorDt = target.behaviorElapsed;
+    target.behaviorElapsed = 0;
+    // Start a fresh interval: no catch-up bursts after a slow frame, and no
+    // pair of decisions less than 1/30 simulated second apart.
+    target.behaviorCooldown = 1 / ENEMY_BEHAVIOR_RULES.maximumChecksPerSecond;
   }
 
   function enemyMoveSpeed(target) {
@@ -10757,7 +10954,7 @@
     const previousX = target.x;
     const previousY = target.y;
     target.panicRetargetTimer -= dt;
-    if (target.panicRetargetTimer <= 0) {
+    if (target.behaviorDue && target.panicRetargetTimer <= 0) {
       retargetDragonflyPanicOrbit(target);
     }
 
@@ -10825,20 +11022,22 @@
   }
 
   function updateDragonfly(target, dt) {
-    const wormDistanceSquared = game.wormDefeated
-      ? Infinity
-      : (target.x - game.head.x) ** 2 +
-        (target.y - game.head.y) ** 2;
-    const panicking = target.movementMode === "dragonfly-panicking";
-    const proximityRadius = panicking
-      ? DRAGONFLY_MOTION.wormReleaseRadius
-      : DRAGONFLY_MOTION.wormSenseRadius;
-    if (wormDistanceSquared <= proximityRadius * proximityRadius) {
-      if (!panicking) beginDragonflyPanic(target);
-    } else if (panicking) {
-      target.verticalFollowVelocity =
-        Number(target.panicCenterVerticalVelocity) || target.vy || 0;
-      beginDragonflyHover(target);
+    if (target.behaviorDue) {
+      const wormDistanceSquared = game.wormDefeated
+        ? Infinity
+        : (target.x - game.head.x) ** 2 +
+          (target.y - game.head.y) ** 2;
+      const panicking = target.movementMode === "dragonfly-panicking";
+      const proximityRadius = panicking
+        ? DRAGONFLY_MOTION.wormReleaseRadius
+        : DRAGONFLY_MOTION.wormSenseRadius;
+      if (wormDistanceSquared <= proximityRadius * proximityRadius) {
+        if (!panicking) beginDragonflyPanic(target);
+      } else if (panicking) {
+        target.verticalFollowVelocity =
+          Number(target.panicCenterVerticalVelocity) || target.vy || 0;
+        beginDragonflyHover(target);
+      }
     }
     if (target.movementMode === "dragonfly-panicking") {
       updateDragonflyPanic(target, dt);
@@ -10849,6 +11048,10 @@
     let phaseTransitions = 0;
     while (remainingTime > 0.00001 && phaseTransitions < 4) {
       if (target.flightPhaseRemaining <= 0.00001) {
+        if (!target.behaviorDue || phaseTransitions > 0) {
+          advanceEnemyAnimation(target, remainingTime, DRAGONFLY_MOTION.hoveringWingFps);
+          break;
+        }
         if (target.movementMode === "dragonfly-moving") {
           beginDragonflyHover(target);
         } else {
@@ -10906,7 +11109,8 @@
         target.verticalFollowVelocity,
       );
     }
-    target.vx = target.movementMode === "dragonfly-moving"
+    target.vx = target.movementMode === "dragonfly-moving" &&
+      target.flightPhaseRemaining > 0.00001
       ? target.flightDirection * DRAGONFLY_MOTION.moveSpeed
       : 0;
     target.vy = dt > 0 ? (target.y - previousY) / dt : 0;
@@ -10982,6 +11186,7 @@
 
       const completedTravel = target.vultureTravelRemaining <= 0.0001;
       if (completedTravel) {
+        if (!target.behaviorDue || reflection > 0) break;
         target.flightDirection *= -1;
         chooseVultureTravelDistance(target);
       } else {
@@ -11006,7 +11211,9 @@
       target.radius,
       game.height - target.radius,
     );
-    target.vx = target.flightDirection * VULTURE_MOTION.moveSpeed;
+    target.vx = target.vultureTravelRemaining > 0.0001
+      ? target.flightDirection * VULTURE_MOTION.moveSpeed
+      : 0;
     target.vy = dt > 0 ? (target.y - previousY) / dt : 0;
     target.regionType = BLOCK_TYPES.AIR;
     advanceEnemyAnimation(target, dt, VULTURE_MOTION.wingFps);
@@ -11068,6 +11275,9 @@
     target.tristarWormHuntActive = false;
     target.tristarWormMovingAway = false;
     target.tristarWormFleeActive = false;
+    target.tristarBehavior = null;
+    target.tristarSteeringAngle = null;
+    target.tristarOffMinimapSteeringAngle = null;
     target.tristarClusterCenterX = target.x;
     target.tristarClusterCenterY = target.y;
     target.tristarClusterCount = 0;
@@ -12249,7 +12459,7 @@
     return false;
   }
 
-  function updateTristarWormHunt(predator, dt) {
+  function updateTristarWormHunt(predator) {
     const activeCapture = tristarWormCaptureFor(predator);
     if (activeCapture) {
       predator.tristarWormMovingAway = false;
@@ -12312,7 +12522,6 @@
     }
     predator.tristarWormMovingAway = movingAway;
     if (canAttemptWormAttack) {
-      updateTristarWormReach(predator, dt);
       if (!game.tristarWormCapture) {
         beginTristarWormReach(predator, wormPoint);
       }
@@ -12756,6 +12965,8 @@
     desiredAngle,
     desiredSpeed = TRISTAR_RULES.maximumSpeed,
   ) {
+    if (!target.behaviorDue || target.tristarPulsePlanChecked) return;
+    target.tristarPulsePlanChecked = true;
     let closestIndex = 0;
     let closestAngle = tristarPulseVertexAngle(target, 0);
     let closestDifference = Infinity;
@@ -12856,7 +13067,7 @@
     previousProgress,
     nextProgress,
   ) {
-    if (target.tristarPulseLaunchBlocked) return;
+    if (!target.tristarPulseLaunchReady || target.tristarPulseLaunchBlocked) return;
     const danglingArmCount = target.tristarArms.reduce(
       (count, arm) => count + (tristarArmIsDangling(arm) ? 1 : 0),
       0,
@@ -12954,6 +13165,7 @@
     target.tristarPulsePhase = phase;
     target.tristarPulseElapsed = 0;
     if (phase === "contract") {
+      target.tristarPulseLaunchReady = false;
       target.tristarPulseDuration =
         TRISTAR_RULES.pulseContractDuration * durationScale;
       target.tristarPulsePushed = false;
@@ -12981,6 +13193,8 @@
           desiredSpeed,
         )
       ) {
+        target.tristarPulseLaunchReady = false;
+        target.tristarPulseLaunchBlocked = true;
         selectTristarPulseLaunchVertex(
           target,
           steeringAngle,
@@ -13069,7 +13283,8 @@
       );
     }
     if (
-      target.tristarPulsePhase === "contract" &&
+      (target.tristarPulsePhase === "contract" ||
+        target.tristarPulsePhase === "burst") &&
       !target.tristarPulseLaunchReady
     ) {
       selectTristarPulseLaunchVertex(
@@ -13279,7 +13494,10 @@
       speed = maximumSpeed;
     }
     target.tristarSpeed = speed;
-    const steeringAngle = tristarSteeringAngle(target, desiredAngle);
+    if (target.behaviorDue) {
+      target.tristarSteeringAngle = tristarSteeringAngle(target, desiredAngle);
+    }
+    const steeringAngle = target.tristarSteeringAngle;
     if (!Number.isFinite(steeringAngle)) {
       resetTristarPulseState(target);
       return "blocked";
@@ -13375,6 +13593,9 @@
     target.tristarWormFleeActive = false;
     resetTristarPulseState(target, false);
     target.tristarOffMinimap = true;
+    target.tristarBehavior = null;
+    target.tristarSteeringAngle = null;
+    target.tristarOffMinimapSteeringAngle = null;
     target.tristarDetailedTerrainAvoidance = false;
     target.tristarOffMinimapTarget = null;
     target.tristarHuntTarget = null;
@@ -13402,6 +13623,9 @@
   function leaveTristarOffMinimapSimulation(target) {
     if (!target.tristarOffMinimap) return;
     target.tristarOffMinimap = false;
+    target.tristarBehavior = null;
+    target.tristarSteeringAngle = null;
+    target.tristarOffMinimapSteeringAngle = null;
     target.tristarOffMinimapTarget = null;
     target.tristarOffMinimapBlockedTargetId = null;
     target.tristarOffMinimapBlockedUntil = 0;
@@ -13431,11 +13655,9 @@
     }
   }
 
-  function moveTristarOffMinimapThroughGround(
+  function chooseOffMinimapTristarSteeringAngle(
     target,
     desiredAngle,
-    dt,
-    minimapBounds,
   ) {
     const lookahead = tristarTerrainLookaheadForSpeed(
       target,
@@ -13464,6 +13686,11 @@
         steeringAngle = fallbackAngle;
       }
     }
+    return steeringAngle;
+  }
+
+  function moveTristarOffMinimapThroughGround(target, dt, minimapBounds) {
+    const steeringAngle = target.tristarOffMinimapSteeringAngle;
     if (steeringAngle === null) {
       target.vx = 0;
       target.vy = 0;
@@ -13526,11 +13753,31 @@
     ) {
       updateFallingEnemy(target, dt);
     } else {
-      const huntTarget = refreshOffMinimapTristarTarget(
-        target,
-        dt,
-        tristarFrameContext,
-      );
+      if (target.behaviorDue) {
+        const huntTarget = refreshOffMinimapTristarTarget(
+          target,
+          target.behaviorDt,
+          tristarFrameContext,
+        );
+        const huntX = huntTarget
+          ? nearestPeriodicWorldX(huntTarget.x, target.x)
+          : target.x;
+        target.tristarOffMinimapSteeringAngle = huntTarget
+          ? chooseOffMinimapTristarSteeringAngle(
+              target,
+              Math.atan2(huntTarget.y - target.y, huntX - target.x),
+            )
+          : null;
+      }
+      let huntTarget = target.tristarOffMinimapTarget;
+      if (huntTarget && (
+        !targetIsActive(huntTarget, tristarFrameContext) ||
+        !tristarPreyIsAvailable(huntTarget, tristarFrameContext)
+      )) {
+        target.tristarOffMinimapTarget = null;
+        target.tristarOffMinimapSearchCooldown = 0;
+        huntTarget = null;
+      }
       if (!huntTarget) {
         target.vx = 0;
         target.vy = 0;
@@ -13555,11 +13802,11 @@
         } else {
           const movementResult = moveTristarOffMinimapThroughGround(
             target,
-            Math.atan2(dy, dx),
             dt,
             minimapBounds,
           );
           if (movementResult === "blocked") {
+            target.tristarOffMinimapSteeringAngle = null;
             target.tristarOffMinimapBlockedTargetId = huntTarget.id;
             target.tristarOffMinimapBlockedUntil =
               game.elapsed + TRISTAR_RULES.offMinimapSearchInterval * 4;
@@ -13735,52 +13982,9 @@
     return heldCount;
   }
 
-  function updateTristar(
-    target,
-    dt,
-    devouredTargets,
-    tristarFrameContext = null,
-  ) {
-    if (target.movementMode === "burrowing") {
-      const wormCapture = tristarWormCaptureFor(target);
-      if (wormCapture) {
-        releaseTristarArm(target, wormCapture.armIndex, false);
-      }
-      cancelTristarWormReaches(target);
-      resetTristarPulseState(target, false);
-      updateBurrowingEnemy(target, dt);
-      updateTristarFreeArms(target, dt);
-      projectTristarFreeArmSeparation(target, dt);
-      return;
-    }
-    if (
-      target.movementMode === "falling" ||
-      target.regionType !== BLOCK_TYPES.GROUND
-    ) {
-      const wormCapture = tristarWormCaptureFor(target);
-      if (wormCapture) {
-        releaseTristarArm(target, wormCapture.armIndex, false);
-      }
-      cancelTristarWormReaches(target);
-      resetTristarPulseState(target, false);
-      updateFallingEnemy(target, dt);
-      updateTristarFreeArms(target, dt);
-      projectTristarFreeArmSeparation(target, dt);
-      return;
-    }
-
-    if (!String(target.movementMode).startsWith("tristar-")) {
-      resetTristarPulseState(target);
-      target.tristarWanderAngle = target.angle;
-    }
-
-    target.tristarClusterRepositionCooldown = Math.max(
-      0,
-      (Number(target.tristarClusterRepositionCooldown) || 0) - dt,
-    );
-
+  function refreshTristarBehavior(target, dt, tristarFrameContext) {
     const wormFlee = updateTristarWormFlee(target);
-    const wormHunt = wormFlee ? null : updateTristarWormHunt(target, dt);
+    const wormHunt = wormFlee ? null : updateTristarWormHunt(target);
     if (!wormHunt && !wormFlee) {
       target.tristarSearchCooldown -= dt;
       if (target.tristarSearchCooldown <= 0) {
@@ -13853,6 +14057,84 @@
           target,
           tristarFrameContext,
         );
+    target.tristarBehavior = {
+      wormFlee,
+      wormHunt,
+      desiredAngle,
+      desiredSpeed,
+      hasHuntDestination,
+      suppressLocomotion,
+    };
+  }
+
+  function updateTristar(
+    target,
+    dt,
+    devouredTargets,
+    tristarFrameContext = null,
+  ) {
+    if (target.movementMode === "burrowing") {
+      const wormCapture = tristarWormCaptureFor(target);
+      if (wormCapture) {
+        releaseTristarArm(target, wormCapture.armIndex, false);
+      }
+      cancelTristarWormReaches(target);
+      resetTristarPulseState(target, false);
+      target.tristarBehavior = null;
+      target.tristarSteeringAngle = null;
+      updateBurrowingEnemy(target, dt);
+      updateTristarFreeArms(target, dt);
+      projectTristarFreeArmSeparation(target, dt);
+      return;
+    }
+    if (
+      target.movementMode === "falling" ||
+      target.regionType !== BLOCK_TYPES.GROUND
+    ) {
+      const wormCapture = tristarWormCaptureFor(target);
+      if (wormCapture) {
+        releaseTristarArm(target, wormCapture.armIndex, false);
+      }
+      cancelTristarWormReaches(target);
+      resetTristarPulseState(target, false);
+      target.tristarBehavior = null;
+      target.tristarSteeringAngle = null;
+      updateFallingEnemy(target, dt);
+      updateTristarFreeArms(target, dt);
+      projectTristarFreeArmSeparation(target, dt);
+      return;
+    }
+
+    if (!String(target.movementMode).startsWith("tristar-")) {
+      resetTristarPulseState(target);
+      target.tristarWanderAngle = target.angle;
+    }
+
+    target.tristarClusterRepositionCooldown = Math.max(
+      0,
+      (Number(target.tristarClusterRepositionCooldown) || 0) - dt,
+    );
+    // Reaching arms and swept worm contacts remain at the physics cadence.
+    // Only choosing a new hunt, reach, flee direction, or route is throttled.
+    updateTristarWormReach(target, dt);
+    if (target.behaviorDue) {
+      refreshTristarBehavior(target, target.behaviorDt, tristarFrameContext);
+    }
+    const behavior = target.tristarBehavior;
+    const wormFlee = behavior?.wormFlee;
+    const wormHunt = behavior?.wormHunt;
+    const wormCaptured = Boolean(tristarWormCaptureFor(target));
+    const wormReaching = tristarHasActiveWormReach(target);
+    const desiredAngle = behavior?.desiredAngle ?? target.tristarWanderAngle;
+    const desiredSpeed = wormCaptured
+      ? 0
+      : wormHunt
+        ? tristarMaximumSpeed(target)
+        : behavior?.desiredSpeed ?? target.tristarDesiredSpeed;
+    const suppressLocomotion = wormCaptured || (
+      !wormHunt && (behavior?.suppressLocomotion ||
+        target.tristarArms.some((arm) => arm.prey))
+    );
     updateTristarPulseLocomotion(
       target,
       desiredAngle,
@@ -13870,9 +14152,9 @@
     projectTristarFreeArmSeparation(target, dt);
     target.movementMode = wormFlee
       ? "tristar-fleeing-worm"
-      : wormHunt?.captured
+      : wormCaptured
         ? "tristar-eating-worm"
-        : wormHunt?.reaching
+        : wormReaching
           ? "tristar-grabbing-worm"
           : wormHunt
             ? "tristar-hunting-worm"
@@ -13880,7 +14162,7 @@
               ? "tristar-feeding"
               : heldCount > 0
                 ? "tristar-carrying"
-                : hasHuntDestination
+                : behavior?.hasHuntDestination
                   ? "tristar-hunting"
                   : "tristar-roaming";
   }
@@ -13941,6 +14223,7 @@
           ENEMY_MOTION.turningScurryFps,
         );
         if (target.turnRemaining <= 0.00001) {
+          if (!target.behaviorDue || phaseTransitions > 0) break;
           beginEnemyMove(target, onWorldFloor);
           phaseTransitions += 1;
         }
@@ -13993,6 +14276,9 @@
       }
 
       if (target.moveRemaining <= 0.00001) {
+        target.vx = 0;
+        target.vy = 0;
+        if (!target.behaviorDue || phaseTransitions > 0) break;
         chooseEnemyTurn(target, onWorldFloor);
         phaseTransitions += 1;
       }
@@ -14019,6 +14305,9 @@
     target.regionType = block?.type || BLOCK_TYPES.AIR;
     if (target.y >= game.height - target.radius) {
       target.y = game.height - target.radius;
+      target.vx = 0;
+      target.vy = 0;
+      if (!target.behaviorDue) return;
       if (block?.type === BLOCK_TYPES.GROUND) {
         chooseEnemyTurn(target);
       } else {
@@ -14029,7 +14318,9 @@
 
     if (target.burrowRemaining > 0) return;
     if (block?.type === BLOCK_TYPES.GROUND) {
-      chooseEnemyTurn(target);
+      target.vx = 0;
+      target.vy = 0;
+      if (target.behaviorDue) chooseEnemyTurn(target);
     } else {
       beginEnemyFall(target);
     }
@@ -14066,7 +14357,9 @@
     }
     if (target.y >= game.height - target.radius) {
       target.y = game.height - target.radius;
-      chooseEnemyTurn(target, true);
+      target.vx = 0;
+      target.vy = 0;
+      if (target.behaviorDue) chooseEnemyTurn(target, true);
     }
   }
 
@@ -14278,7 +14571,9 @@
         0,
         (target.rabbitRestRemaining || 0) - dt,
       );
-      if (target.rabbitRestRemaining <= 0) beginRabbitJump(target);
+      if (target.behaviorDue && target.rabbitRestRemaining <= 0) {
+        beginRabbitJump(target);
+      }
       return;
     }
 
@@ -14528,6 +14823,7 @@
         0,
         (target.biteBounceCooldown || 0) - dt,
       );
+      if (target.kind !== ENEMY_TYPES.MEAT) updateEnemyBehaviorClock(target, dt);
       if (target.kind === ENEMY_TYPES.TRISTAR) {
         tristarTargets.push(target);
       } else if (target.kind === ENEMY_TYPES.RABBIT) {
@@ -18567,23 +18863,8 @@
       targetY,
       availableTongues,
     );
+    if (selectedTargets.length === 0) return false;
     const selectionRadius = tongueTargetingRadius();
-    if (selectedTargets.length === 0) {
-      appendTongue({
-        aimOnly: true,
-        aimOffsetX: targetX - game.head.x,
-        aimOffsetY: targetY - game.head.y,
-        selectionX: targetX,
-        selectionY: targetY,
-        selectionRadius,
-        targetId: null,
-        passengers: null,
-        progress: 0,
-        phase: "extending",
-        holdRemaining: TONGUE_RULES.holdDuration,
-      });
-      return true;
-    }
     selectedTargets.forEach((selectedTarget) => {
       appendTongue({
         aimOffsetX: targetX - game.head.x,
@@ -18598,7 +18879,7 @@
         holdRemaining: TONGUE_RULES.holdDuration,
       });
     });
-    return selectedTargets.length > 0;
+    return true;
   }
 
   function launchHeldHeavyTongue(
@@ -18668,7 +18949,6 @@
     }
 
     if (
-      !tongue.aimOnly &&
       !activeTongueTarget(tongue) &&
       !tongue.freefallNodes
     ) {
@@ -20571,6 +20851,7 @@
   }
 
   function updatePhysics(dt) {
+    game.particleSpawnsRemaining = BITE_SPLATTER_RULES.particleLimit;
     if (game.wormDefeated) {
       updatePostDevourWorld(dt);
       return;
@@ -21497,6 +21778,10 @@
     if (!depthPath) return;
     depthPath.path.moveTo(startX, startY);
     depthPath.path.lineTo(endX, endY);
+    depthPath.minimumX = Math.min(depthPath.minimumX ?? Infinity, startX, endX);
+    depthPath.minimumY = Math.min(depthPath.minimumY ?? Infinity, startY, endY);
+    depthPath.maximumX = Math.max(depthPath.maximumX ?? -Infinity, startX, endX);
+    depthPath.maximumY = Math.max(depthPath.maximumY ?? -Infinity, startY, endY);
     depthPath.hasEdges = true;
   }
 
@@ -22106,6 +22391,7 @@
   }
 
   function rebuildTerrainLayer() {
+    resetTerrainDepthCache();
     game.terrainChunks.clear();
     game.terrainPlaceholderChunks.clear();
     game.terrainPrefetchCandidates.length = 0;
@@ -22114,6 +22400,7 @@
   }
 
   function releaseTerrainChunks() {
+    resetTerrainDepthCache();
     game.terrainChunks.forEach((chunk) => {
       chunk.canvas.width = 1;
       chunk.canvas.height = 1;
@@ -22131,6 +22418,7 @@
   }
 
   function unloadLevel() {
+    game.roundSpawnPending = null;
     clearControlKeys();
     clearSprinterAreaTarget(true);
     snapCameraToWorm();
@@ -22164,7 +22452,7 @@
     game.roundSpawnBlockedPoints = -1;
     game.roundSpawnBlockedNextTargetId = -1;
     game.roundSpawnRetryAt = 0;
-    game.particles = [];
+    clearParticles();
     game.tongues = [];
     activeTongueTargetCounts.clear();
     activeHeavyTongueGrappleCache = null;
@@ -22369,7 +22657,133 @@
     );
   }
 
-  function drawTerrainContourLayer(
+  function resetTerrainDepthCache() {
+    terrainDepthCache.layers.forEach((entry) => {
+      entry.canvas.width = 1;
+      entry.canvas.height = 1;
+    });
+    terrainDepthCache.layers.clear();
+    terrainDepthCache.zoom = NaN;
+    terrainDepthCache.buildsRemaining = 0;
+  }
+
+  function prepareTerrainDepthCache(zoom) {
+    if (
+      terrainDepthCache.zoom !== zoom ||
+      terrainDepthCache.dpr !== game.dpr ||
+      terrainDepthCache.width !== game.viewport.width ||
+      terrainDepthCache.height !== game.viewport.height
+    ) {
+      resetTerrainDepthCache();
+      terrainDepthCache.zoom = zoom;
+      terrainDepthCache.dpr = game.dpr;
+      terrainDepthCache.width = game.viewport.width;
+      terrainDepthCache.height = game.viewport.height;
+      // Continuous zoom animations use the direct path instead of allocating
+      // new bitmaps every frame. Warm caches once the projection is stable.
+      return;
+    }
+    terrainDepthCache.buildsRemaining = TERRAIN_DEPTH_CACHE_RULES.maximumBuildsPerFrame;
+  }
+
+  function terrainDepthCacheMatches(entry, drawItems, left, top, right, bottom) {
+    if (
+      !entry.valid ||
+      left < entry.coverageLeft || top < entry.coverageTop ||
+      right > entry.coverageRight || bottom > entry.coverageBottom ||
+      entry.drawItems.length !== drawItems.length
+    ) return false;
+    return drawItems.every((item, index) => {
+      const previous = entry.drawItems[index];
+      return previous.chunk === item.chunk && previous.worldOffsetX === item.worldOffsetX;
+    });
+  }
+
+  function cachedTerrainDepthLayer(layer, drawItems, zoom) {
+    const scale = layer.perspectiveScale;
+    const pixelsPerWorldUnit = game.dpr * zoom * scale;
+    const left = game.camera.centerX + (game.camera.x - game.camera.centerX) / scale;
+    const top = game.camera.centerY + (game.camera.y - game.camera.centerY) / scale;
+    const width = game.viewport.width / (zoom * scale);
+    const height = game.viewport.height / (zoom * scale);
+    let entry = terrainDepthCache.layers.get(layer.id);
+    if (entry && terrainDepthCacheMatches(entry, drawItems, left, top, left + width, top + height)) {
+      return entry;
+    }
+    if (entry) {
+      entry.valid = false;
+      entry.drawItems.length = 0;
+    }
+    if (terrainDepthCache.buildsRemaining <= 0 || !drawItems.some(({ chunk }) =>
+      TERRAIN_MATERIALS.some((material) => chunk.depthPaths[material].hasEdges)
+    )) return null;
+
+    const padding = TERRAIN_DEPTH_CACHE_RULES.paddingPixels / (zoom * scale);
+    const strokePadding = (layer.visibleDepthPixels + 1 / game.dpr) / (zoom * scale);
+    let minimumX = Infinity, minimumY = Infinity;
+    let maximumX = -Infinity, maximumY = -Infinity;
+    for (const { chunk, worldOffsetX } of drawItems) {
+      for (const material of TERRAIN_MATERIALS) {
+        const path = chunk.depthPaths[material];
+        if (!path.hasEdges) continue;
+        minimumX = Math.min(minimumX, path.minimumX + worldOffsetX - strokePadding);
+        minimumY = Math.min(minimumY, path.minimumY - strokePadding);
+        maximumX = Math.max(maximumX, path.maximumX + worldOffsetX + strokePadding);
+        maximumY = Math.max(maximumY, path.maximumY + strokePadding);
+      }
+    }
+    const rasterLeft = Math.max(left - padding, minimumX);
+    const rasterTop = Math.max(top - padding, minimumY);
+    const rasterRight = Math.min(left + width + padding, maximumX);
+    const rasterBottom = Math.min(top + height + padding, maximumY);
+    const empty = rasterRight <= rasterLeft || rasterBottom <= rasterTop;
+    // Most flat-world depth is a narrow horizon strip. Never submit a whole
+    // transparent viewport when only that strip contains painted pixels.
+    const pixelWidth = empty ? 1 : Math.ceil((rasterRight - rasterLeft) * pixelsPerWorldUnit) + 1;
+    const pixelHeight = empty ? 1 : Math.ceil((rasterBottom - rasterTop) * pixelsPerWorldUnit) + 1;
+    let requiredPixels = pixelWidth * pixelHeight;
+    terrainDepthCache.layers.forEach((other, id) => {
+      if (id !== layer.id) requiredPixels += other.canvas.width * other.canvas.height;
+    });
+    // Bound added bitmap memory to 32 MiB, including high-DPI viewports.
+    // If a layer cannot fit, its unchanged direct renderer remains available.
+    if (requiredPixels > TERRAIN_DEPTH_CACHE_RULES.maximumPixels) return null;
+    terrainDepthCache.buildsRemaining -= 1;
+    if (!entry) {
+      const bitmap = document.createElement("canvas");
+      entry = { canvas: bitmap, context: bitmap.getContext("2d"), drawItems: [] };
+      terrainDepthCache.layers.set(layer.id, entry);
+    }
+    if (entry.canvas.width !== pixelWidth || entry.canvas.height !== pixelHeight) {
+      entry.canvas.width = pixelWidth;
+      entry.canvas.height = pixelHeight;
+    }
+    entry.x = Math.floor(rasterLeft * pixelsPerWorldUnit) / pixelsPerWorldUnit;
+    entry.y = Math.floor(rasterTop * pixelsPerWorldUnit) / pixelsPerWorldUnit;
+    entry.width = pixelWidth / pixelsPerWorldUnit;
+    entry.height = pixelHeight / pixelsPerWorldUnit;
+    entry.coverageLeft = left - padding;
+    entry.coverageTop = top - padding;
+    entry.coverageRight = left + width + padding;
+    entry.coverageBottom = top + height + padding;
+    entry.empty = empty;
+    const targetContext = entry.context;
+    targetContext.setTransform(1, 0, 0, 1, 0, 0);
+    targetContext.clearRect(0, 0, pixelWidth, pixelHeight);
+    targetContext.setTransform(
+      pixelsPerWorldUnit, 0, 0, pixelsPerWorldUnit,
+      -entry.x * pixelsPerWorldUnit, -entry.y * pixelsPerWorldUnit,
+    );
+    if (!empty) {
+      drawTerrainContourPaths(targetContext, layer, drawItems, zoom, terrainDepthTexturePatterns);
+    }
+    entry.drawItems = drawItems.slice();
+    entry.valid = true;
+    return entry;
+  }
+
+  function drawTerrainContourPaths(
+    targetContext,
     layer,
     drawItems,
     zoom,
@@ -22379,39 +22793,44 @@
     const lineWidth =
       (layer.visibleDepthPixels * 2) / Math.max(0.001, zoom * scale);
 
-    ctx.save();
-    ctx.translate(game.camera.centerX, game.camera.centerY);
-    ctx.scale(scale, scale);
-    ctx.translate(-game.camera.centerX, -game.camera.centerY);
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    targetContext.save();
+    targetContext.lineWidth = lineWidth;
+    targetContext.lineCap = "round";
+    targetContext.lineJoin = "round";
 
     drawItems.forEach(({ chunk, worldOffsetX }) => {
       const variant = terrainTexturePatternVariantForBounds(chunk.bounds);
-      ctx.save();
-      ctx.translate(worldOffsetX, 0);
+      targetContext.save();
+      targetContext.translate(worldOffsetX, 0);
       TERRAIN_MATERIALS.forEach((material) => {
         const depthPath = chunk.depthPaths[material];
         if (!depthPath.hasEdges) return;
-        ctx.strokeStyle = texturePatterns[material][layer.id][variant];
-        ctx.stroke(depthPath.path);
+        targetContext.strokeStyle = texturePatterns[material][layer.id][variant];
+        targetContext.stroke(depthPath.path);
       });
-      ctx.restore();
+      targetContext.restore();
     });
-    ctx.restore();
+    targetContext.restore();
   }
 
   function drawTerrainDepthLayer(layer, drawItems, zoom) {
-    drawTerrainContourLayer(
-      layer,
-      drawItems,
-      zoom,
-      terrainDepthTexturePatterns,
-    );
+    ctx.save();
+    ctx.translate(game.camera.centerX, game.camera.centerY);
+    ctx.scale(layer.perspectiveScale, layer.perspectiveScale);
+    ctx.translate(-game.camera.centerX, -game.camera.centerY);
+    const cached = cachedTerrainDepthLayer(layer, drawItems, zoom);
+    if (cached) {
+      if (!cached.empty) {
+        ctx.drawImage(cached.canvas, cached.x, cached.y, cached.width, cached.height);
+      }
+    } else {
+      drawTerrainContourPaths(ctx, layer, drawItems, zoom, terrainDepthTexturePatterns);
+    }
+    ctx.restore();
   }
 
   function drawMap() {
+    prepareTerrainDepthCache(cameraZoom());
     const foregroundVisible = getVisibleWorldBounds(2);
     const depthPadding = terrainDepthSourcePadding();
     const visible = getVisibleWorldBounds(depthPadding);

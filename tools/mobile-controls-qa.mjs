@@ -40,6 +40,8 @@ const server = createServer(async (request, response) => {
             tonguePointer, startSelectedWorld, setActiveWormType, updatePhysics, reset,
             clearControlKeys, updateMovementInput, openMainMenu, closeMainMenu, render, updateHud,
             toggleDevMenu, devProfiler, publishDevProfilerSample, updateFps, setFpsLimit,
+            createEnemyTarget, ENEMY_TYPES, BLOCK_TYPES, discardActiveTongues,
+            tongueTargetingRadius,
             canvasWorldPointFromClient, showDeathScreen, showHomeScreen };
           window.__wormQAReady = initialize();
         })();`);
@@ -82,6 +84,18 @@ async function capture(name) {
 async function neutral() {
   await call(`/session/${session}/actions`, undefined, "DELETE");
   await js("__wormQA.clearControlKeys();");
+}
+async function setLickerClickTargets(clientX, clientY, targets = [{}]) {
+  return js(`const q=__wormQA, point=q.canvasWorldPointFromClient(arguments[0],arguments[1]);
+    q.discardActiveTongues();q.game.targets=[];q.game.targetById.clear();q.game.targetByIdReady=false;
+    for(const spec of arguments[2]) {
+      const target=q.createEnemyTarget(q.ENEMY_TYPES.BEETLE,
+        point.x+(spec.radiusOffset||0)*q.tongueTargetingRadius(),point.y,
+        q.BLOCK_TYPES.GROUND,()=>0.37);
+      if(spec.unavailable)target.paralyzed=true;
+      q.game.targets.push(target);
+    }
+    return q.game.targets.map(t=>t.id);`, clientX, clientY, targets);
 }
 async function geometry() {
   return js(`const r = id => { const b=document.getElementById(id).getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2,r:b.width/2,left:b.left,right:b.right,top:b.top,bottom:b.bottom}; }; return {stick:r('touch-stick'),boost:r('touch-boost'),health:r('worm-health-hud'),radar:r('minimap'),menu:r('main-menu-button'),w:innerWidth,h:innerHeight};`);
@@ -183,8 +197,15 @@ try {
   await neutral();
   console.log("PASS: independent joystick and Boost pointer capture/release");
 
+  await asyncJs("const done=arguments[arguments.length-1]; __wormQA.setActiveWormType('licker').then(()=>{__wormQA.reset();done(true)});");
+  await setLickerClickTargets(500,220,[]);
+  await actions([touch("empty-ability", [move(500,220),down,up])]);
+  assert.equal(await js("return __wormQA.game.tongues.length;"),0,"an empty tap must not show a tongue");
+  assert.equal(await js("return __wormQA.abilityPointer.pointerId;"),null);
+
   for (const type of ["licker", "spitter", "sprinter"]) {
     await asyncJs("const done=arguments[arguments.length-1]; __wormQA.setActiveWormType(arguments[0]).then(()=>{__wormQA.reset();done(true)});", type);
+    if(type==="licker")await setLickerClickTargets(500,220);
     await actions([
       touch("stick", [move(g.stick.x, g.stick.y), down, move(g.stick.x, g.stick.y-g.stick.r*0.65), pause]),
       touch("ability", [pause, pause, move(500, 220), down]),
@@ -327,9 +348,21 @@ try {
   await actions([{type:"key",id:"keyboard",actions:[{type:"keyDown",value:"w"},{type:"keyDown",value:"d"},{type:"keyDown",value:" "}]}]);
   assert.deepEqual(await js("return {...__wormQA.controls};"), {steer:1,throttle:1,brake:0,boostHeld:true});
   await neutral();
+  for(const targets of [[],[{radiusOffset:2}],[{unavailable:true}]]) {
+    await setLickerClickTargets(720,430,targets);
+    await actions([{type:"pointer",id:"mouse",parameters:{pointerType:"mouse"},actions:[move(720,430),down,up]}]);
+    assert.equal(await js("return __wormQA.game.tongues.length;"),0,
+      "clicks without an eligible target must not show a tongue");
+    assert.equal(await js("return __wormQA.abilityPointer.pointerId;"),null);
+  }
+  const tongueTargetIds=await setLickerClickTargets(720,430);
+  await js("__wormQA.game.growthLevel=3;");
   await actions([{type:"pointer",id:"mouse",parameters:{pointerType:"mouse"},actions:[move(720,430),down,up]}]);
-  assert.ok(await js("return __wormQA.game.tongues.length > 0;"));
-  console.log("PASS: desktop WASD/Space and mouse targeting remain available");
+  assert.deepEqual(await js("return __wormQA.game.tongues.map(t=>t.targetId);"),tongueTargetIds);
+  // One slot is still free, but the sole target is already claimed.
+  await actions([{type:"pointer",id:"mouse",parameters:{pointerType:"mouse"},actions:[move(720,430),down,up]}]);
+  assert.deepEqual(await js("return __wormQA.game.tongues.map(t=>t.targetId);"),tongueTargetIds);
+  console.log("PASS: desktop WASD/Space and targeted tongues; empty, unavailable, out-of-range, and already-claimed clicks create no tongue");
   assert.deepEqual(await js("return __qaErrors;"), []);
   for (const mode of ["legacy","fallback"]) {
     await call(`/session/${session}/url`,{url:base+`/?touch=1&qa-dev=${mode}`});

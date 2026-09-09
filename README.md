@@ -19,7 +19,7 @@ Then open `http://localhost:4173`.
 - `S` — brake quickly while underground or crawling on stone; cancel a Sprinter area command
 - `Space` + `W` — boost underground to 1.5× speed, or 2.25× as Sprinter
 - Hold `Space` while airborne — hold the mouth open without spending boost
-- As Licker, click or tap anywhere — target easy or normal prey near that point and spit the tongue
+- As Licker, click or tap near easy or normal prey — target it and spit the tongue
 - As Spitter, hold click or touch — spray acid at twice the normal movement-boost drain rate
 - As Sprinter, click or tap — mark a mouth-sensor-sized hunting zone and pursue its easy and normal prey one by one
 - As Licker while airborne, hold click or touch near hard prey — tongue grapple
@@ -203,6 +203,43 @@ main-thread Canvas pressure, mixed pressure, and likely raster/GPU presentation 
 Because Canvas 2D does not expose direct GPU timers, the raster/GPU result is explicitly a
 heuristic used only when presentation is late while measured main-thread work remains
 below budget.
+
+Enemy behavior decisions are capped at 30 checks per simulated second per enemy,
+independently of the rendering cap. Checks are staggered across enemies; between
+checks they follow their last decision. Movement, animation, terrain collisions,
+active arm reaches, and captures still advance every gameplay frame. Slower prey-search
+timers remain in place (0.15 seconds for nearby Tri-Stars and 0.75 seconds outside the
+minimap), and slow frames never trigger a burst of catch-up decisions. This reduces
+decision work above 30 FPS; FPS gains depend on how much frame time AI consumes.
+Frame alignment can make checks slightly less frequent on refresh rates that are not
+multiples of 30. Timing regressions: `node --test tests/enemy-behavior.test.cjs`.
+With a local geckodriver running, `node tools/enemy-behavior-qa.mjs` also checks
+the actual enemy updates, smooth movement, and captures between AI decisions in Firefox.
+
+Mouth collisions first reject targets outside conservative swept bounds, including
+the full turning arc, target radius, and horizontal world wrap. Nearby candidates
+still use the same exact per-frame cone sweep; this does not lower collision frequency.
+Terrain depth outlines are raster-cached in tightly cropped, padded layers so small
+camera movements reuse their strokes. Zoom, DPI, viewport, world, and source-chunk
+changes invalidate those layers. Tunnel paint stays live in the foreground chunks.
+At most one depth layer warms per render, with a shared 32 MiB bitmap cap and the
+direct renderer as fallback. Continuous zoom uses the direct renderer.
+
+Replacement spawning keeps unfinished placement searches between updates under a
+1 ms cooperative time budget, while retaining the four-spawn limit, population/kind
+quotas, point accounting, and failed-placement backoff. One placement phase or final
+commit is atomic and may overrun the soft budget. Resumed winners are revalidated
+against current entities and the camera; Tri-Star arm buffers are allocated only
+after placement succeeds. Initial world population remains synchronous.
+Cosmetic particles share a 280-particle creation allowance per gameplay update and
+a 280-live-particle cap. Expired/evicted objects are reused, excess requests stop
+before allocation, and updates compact the active array in place. Acid's separate
+gameplay-particle pool and damage calculations are unchanged.
+
+Performance regressions: `node --test tests/performance.test.cjs`.
+With geckodriver running, `node tools/performance-qa.mjs` checks real browser
+collisions, refill accounting, particle bounds, and cached/direct terrain pixels.
+
 On mobile, Developer Tools instead displays just FPS and the live **Likely limit**
 result. The three desktop windows, extra HUD diagnostics, and their controls are hidden.
 The compact readout is positioned below the health bar and cannot intercept gameplay
@@ -289,8 +326,7 @@ Available
 tongues claim qualifying enemies from highest to lowest point value, using proximity to the
 click and then target ID to break ties, and every tongue must have a unique target. Only the
 number of tongues needed for the acquired targets appears. A click with no qualifying target
-launches one tongue toward the center of the clicked targeting circle, after which it holds
-briefly and retracts normally.
+does nothing: no tongue appears and no tongue slot is consumed.
 Each tongue's flexible mouth-to-tip reach equals the worm's current head-to-tail length,
 including growth levels. Its straight rear-to-front passage through the head is additional
 and no longer deducted from that usable range. The tip reaches the selected point when the
